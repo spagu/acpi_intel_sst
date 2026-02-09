@@ -186,28 +186,45 @@ sst_acpi_attach(device_t dev)
 	device_printf(dev, "PCI Config: 0x%lx, Size: 0x%lx\n",
 		      rman_get_start(sc->shim_res), rman_get_size(sc->shim_res));
 
-	/* 2.1 Disable power gating via PCI extended config (BAR1) */
+	/* 2.1 Read PCI config from BAR1 */
 	{
-		uint32_t vdrtctl0, vdrtctl2;
+		uint32_t cmd, bar0, bar1, vdrtctl0;
 
-		/* Read current power gating state */
+		/* Dump PCI config space */
+		device_printf(dev, "PCI Config Space:\n");
+		device_printf(dev, "  DevID/VenID: 0x%08x\n",
+		    bus_read_4(sc->shim_res, 0x00));
+		cmd = bus_read_4(sc->shim_res, 0x04);
+		device_printf(dev, "  Status/Cmd:  0x%08x\n", cmd);
+		device_printf(dev, "  Class/Rev:   0x%08x\n",
+		    bus_read_4(sc->shim_res, 0x08));
+		bar0 = bus_read_4(sc->shim_res, 0x10);
+		bar1 = bus_read_4(sc->shim_res, 0x14);
+		device_printf(dev, "  PCI BAR0:    0x%08x\n", bar0);
+		device_printf(dev, "  PCI BAR1:    0x%08x\n", bar1);
+		device_printf(dev, "  PCI BAR2:    0x%08x\n",
+		    bus_read_4(sc->shim_res, 0x18));
+
+		/* Ensure Memory Space Enable and Bus Master Enable */
+		if ((cmd & 0x06) != 0x06) {
+			device_printf(dev, "Enabling Memory/BusMaster...\n");
+			cmd |= 0x06;
+			bus_write_4(sc->shim_res, 0x04, cmd);
+			DELAY(1000);
+		}
+
+		/* Read power control register */
 		vdrtctl0 = bus_read_4(sc->shim_res, SST_PCI_VDRTCTL0);
-		device_printf(dev, "VDRTCTL0 before: 0x%08x\n", vdrtctl0);
+		device_printf(dev, "  VDRTCTL0:    0x%08x\n", vdrtctl0);
 
 		/* Disable D3 power gating */
 		vdrtctl0 |= (SST_VDRTCTL0_D3PGD | SST_VDRTCTL0_D3SRAMPGD);
 		bus_write_4(sc->shim_res, SST_PCI_VDRTCTL0, vdrtctl0);
-		DELAY(100);
+		DELAY(1000);
 
-		/* Disable clock gating */
-		vdrtctl2 = bus_read_4(sc->shim_res, SST_PCI_VDRTCTL2);
-		vdrtctl2 &= ~SST_VDRTCTL2_CGEALL;
-		bus_write_4(sc->shim_res, SST_PCI_VDRTCTL2, vdrtctl2);
-		DELAY(500);
-
-		/* Verify */
+		/* Read power control after */
 		vdrtctl0 = bus_read_4(sc->shim_res, SST_PCI_VDRTCTL0);
-		device_printf(dev, "VDRTCTL0 after: 0x%08x\n", vdrtctl0);
+		device_printf(dev, "  VDRTCTL0 after: 0x%08x\n", vdrtctl0);
 	}
 
 	/* 2.2 Probe memory to find SHIM location */

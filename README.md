@@ -264,34 +264,34 @@ sequenceDiagram
 ```mermaid
 sequenceDiagram
     participant APP as Application
-    participant DSP_DEV as /dev/dsp
+    participant DSP_DEV as dev-dsp
     participant PCM as sst_pcm
     participant SSP as sst_ssp
     participant DMA as sst_dma
     participant HW as DSP Hardware
     participant CODEC as ALC3263
 
-    APP->>DSP_DEV: open()
-    DSP_DEV->>PCM: channel_init()
+    APP->>DSP_DEV: open
+    DSP_DEV->>PCM: channel_init
     PCM->>DMA: Allocate DMA buffer
     PCM->>DMA: Allocate DMA channel
 
-    APP->>DSP_DEV: ioctl(SNDCTL_DSP_SPEED, 48000)
-    DSP_DEV->>PCM: channel_setspeed()
+    APP->>DSP_DEV: ioctl SPEED 48000
+    DSP_DEV->>PCM: channel_setspeed
 
-    APP->>DSP_DEV: ioctl(SNDCTL_DSP_SETFMT, S16_LE)
-    DSP_DEV->>PCM: channel_setformat()
+    APP->>DSP_DEV: ioctl SETFMT S16_LE
+    DSP_DEV->>PCM: channel_setformat
 
-    APP->>DSP_DEV: write(audio_data)
+    APP->>DSP_DEV: write audio_data
     DSP_DEV->>PCM: Copy to DMA buffer
 
-    PCM->>PCM: channel_trigger(START)
-    PCM->>SSP: sst_ssp_configure()
+    PCM->>PCM: channel_trigger START
+    PCM->>SSP: sst_ssp_configure
     SSP->>HW: Setup I2S clocks
-    PCM->>DMA: sst_dma_configure()
+    PCM->>DMA: sst_dma_configure
     DMA->>HW: Setup DMA descriptors
-    PCM->>DMA: sst_dma_start()
-    PCM->>SSP: sst_ssp_start()
+    PCM->>DMA: sst_dma_start
+    PCM->>SSP: sst_ssp_start
 
     loop Audio Streaming
         DMA->>HW: Transfer block
@@ -299,14 +299,14 @@ sequenceDiagram
         CODEC->>CODEC: DAC conversion
         HW-->>DMA: Block complete IRQ
         DMA-->>PCM: DMA callback
-        PCM->>PCM: chn_intr() → wake writer
-        APP->>DSP_DEV: write(next_block)
+        PCM->>PCM: chn_intr wake writer
+        APP->>DSP_DEV: write next_block
     end
 
-    APP->>DSP_DEV: close()
-    PCM->>PCM: channel_trigger(STOP)
-    PCM->>SSP: sst_ssp_stop()
-    PCM->>DMA: sst_dma_stop()
+    APP->>DSP_DEV: close
+    PCM->>PCM: channel_trigger STOP
+    PCM->>SSP: sst_ssp_stop
+    PCM->>DMA: sst_dma_stop
     PCM->>DMA: Free resources
 ```
 
@@ -317,22 +317,21 @@ stateDiagram-v2
     [*] --> Removed: Initial state
 
     Removed --> Detecting: GPIO change detected
-    Detecting --> Removed: Debounce failed<br/>(unstable)
-    Detecting --> Inserted: Debounce OK<br/>(3 stable reads)
+    Detecting --> Removed: Debounce failed
+    Detecting --> Inserted: Debounce OK
 
     Inserted --> Detecting: GPIO change detected
-    Detecting --> Inserted: Debounce failed<br/>(unstable)
 
-    Inserted --> Removed: Debounce OK<br/>(3 stable reads)
+    Inserted --> Removed: Debounce OK
 
     state Inserted {
         [*] --> HeadphoneMode
-        HeadphoneMode: Speakers muted<br/>Headphones active
+        HeadphoneMode: Speakers muted - Headphones active
     }
 
     state Removed {
         [*] --> SpeakerMode
-        SpeakerMode: Speakers active<br/>Headphones muted
+        SpeakerMode: Speakers active - Headphones muted
     }
 ```
 
@@ -340,19 +339,19 @@ stateDiagram-v2
 
 ```mermaid
 graph LR
-    subgraph "BAR0 - DSP Memory (512KB)"
-        IRAM[IRAM<br/>0x00000-0x13FFF<br/>80KB Code]
-        DRAM[DRAM<br/>0x400000-0x427FFF<br/>160KB Data]
-        SHIM[SHIM Registers<br/>0xFE0000-0xFE0FFF<br/>4KB Control]
-        MBOX[Mailbox<br/>0xFE4000-0xFE4FFF<br/>4KB IPC]
-        DMA_REG[DMA Registers<br/>0xFE8000-0xFE8FFF<br/>4KB]
+    subgraph BAR0["BAR0 - DSP Memory 512KB"]
+        IRAM["IRAM 0x00000 80KB"]
+        DRAM["DRAM 0x400000 160KB"]
+        SHIM["SHIM 0xFE0000 4KB"]
+        MBOX["Mailbox 0xFE4000 4KB"]
+        DMA_REG["DMA 0xFE8000 4KB"]
     end
 
-    subgraph "SHIM Register Detail"
-        CSR[CSR 0x00<br/>Control/Status]
-        PISR[PISR 0x08<br/>Platform IRQ Status]
-        IPCX[IPCX 0x38<br/>IPC Command]
-        IPCD[IPCD 0x40<br/>IPC Data]
+    subgraph SHIM_REG["SHIM Register Detail"]
+        CSR["CSR 0x00"]
+        PISR["PISR 0x08"]
+        IPCX["IPCX 0x38"]
+        IPCD["IPCD 0x40"]
     end
 
     SHIM --> CSR
@@ -421,13 +420,43 @@ The driver requires Intel SST firmware to enable audio playback. The firmware mu
 /boot/firmware/intel/IntcSST2.bin
 ```
 
+Alternative (Linux catpt driver firmware):
+```
+/boot/firmware/intel/catpt/bdw/dsp_basefw.bin
+```
+
 ### Obtaining Firmware
 
 > ⚠️ **Important:** Intel has not publicly released Broadwell-U SST firmware. The firmware is proprietary and requires extraction from alternative sources.
 
-#### Option 1: Linux Distribution Package (Recommended)
+> ❌ **WARNING:** Do NOT use `fw_sst_0f28.bin` from linux-firmware - that is for Intel Baytrail (Atom Z3xxx), not Broadwell-U!
 
-Some Linux distributions include the firmware in their `firmware-intel-sound` package:
+#### Option 1: Debian Package (Recommended) - Direct Download on FreeBSD
+
+```bash
+# Create firmware directory
+sudo mkdir -p /boot/firmware/intel
+
+# Download and extract Debian firmware package
+fetch -o /tmp/firmware-intel-sound.deb 'http://ftp.debian.org/debian/pool/non-free-firmware/f/firmware-nonfree/firmware-intel-sound_20260110-1_all.deb'
+cd /tmp
+ar x firmware-intel-sound.deb
+tar xf data.tar.xz
+
+# Copy firmware to FreeBSD location
+sudo cp lib/firmware/intel/IntcSST2.bin /boot/firmware/intel/
+
+# Also copy catpt firmware (Linux driver format for Broadwell)
+sudo mkdir -p /boot/firmware/intel/catpt/bdw
+sudo cp lib/firmware/intel/catpt/bdw/dsp_basefw.bin /boot/firmware/intel/catpt/bdw/
+
+# Cleanup
+rm -rf /tmp/firmware-intel-sound.deb /tmp/data.tar.xz /tmp/control.tar.xz /tmp/debian-binary /tmp/lib
+```
+
+#### Option 2: From Debian/Ubuntu System
+
+If you have access to a Linux system:
 
 ```bash
 # On a Debian/Ubuntu system:
@@ -440,7 +469,7 @@ sudo mkdir -p /boot/firmware/intel
 sudo cp IntcSST2.bin /boot/firmware/intel/
 ```
 
-#### Option 2: Extract from Windows Driver
+#### Option 3: Extract from Windows Driver
 
 The firmware can be extracted from Intel Windows audio drivers:
 
@@ -449,19 +478,22 @@ The firmware can be extracted from Intel Windows audio drivers:
 3. Look for `IntcSST2.bin` in the extracted files
 4. Copy to `/boot/firmware/intel/`
 
-#### Option 3: Community Repository
+#### Option 4: Community Repository
 
 The [arch-broadwell-rt286-audio](https://github.com/nicman23/arch-broadwell-rt286-audio) repository contains firmware files for Broadwell-U platforms with RT286 codec.
 
-### Related Firmware Files
+### Firmware Compatibility Table
 
-The linux-firmware repository contains SST firmware for other Intel platforms:
+> ⚠️ **Use the correct firmware for your platform!**
 
-| File | Platform | Notes |
-|------|----------|-------|
-| `fw_sst_0f28.bin` | Intel Baytrail | Atom Z3xxx |
-| `fw_sst_22a8.bin` | Intel Cherrytrail | Atom x5/x7 |
-| `IntcSST2.bin` | Intel Broadwell-U | **Required for this driver** |
+| File | Platform | ACPI ID | Compatible |
+|------|----------|---------|------------|
+| `IntcSST2.bin` | Intel Broadwell-U | INT3438 | ✅ **Required** |
+| `catpt/bdw/dsp_basefw.bin` | Intel Broadwell-U | INT3438 | ✅ Linux catpt format |
+| `IntcSST2.bin` | Intel Haswell | INT33C8 | ✅ Should work |
+| `catpt/hsw/dsp_basefw.bin` | Intel Haswell | INT33C8 | ✅ Linux catpt format |
+| `fw_sst_0f28.bin` | Intel Baytrail | 80860F28 | ❌ Wrong platform |
+| `fw_sst_22a8.bin` | Intel Cherrytrail | 808622A8 | ❌ Wrong platform |
 
 ### Verifying Firmware
 
@@ -470,6 +502,9 @@ After placing the firmware file, verify it's accessible:
 ```bash
 ls -la /boot/firmware/intel/IntcSST2.bin
 # Expected: -r--r--r--  1 root  wheel  XXXXX  IntcSST2.bin
+
+# Check file size (should be around 460KB for Broadwell firmware)
+stat -f "%z bytes" /boot/firmware/intel/IntcSST2.bin
 ```
 
 When the driver loads successfully with firmware:

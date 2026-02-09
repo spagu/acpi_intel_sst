@@ -10,9 +10,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - **Firmware documentation** - comprehensive guide for obtaining Intel SST firmware
   - Firmware location: `/boot/firmware/intel/IntcSST2.bin`
+  - Direct download from Debian package on FreeBSD
   - Multiple acquisition methods (Linux packages, Windows drivers, community repos)
-  - Related firmware files reference table
-  - Verification instructions
+  - Firmware compatibility table with platform warnings
+  - Clear warning about using wrong firmware (fw_sst_0f28.bin is for Baytrail, not Broadwell!)
+  - Verification instructions with file size check
 - GitHub Actions CI workflow for build validation (FreeBSD 14.1, 14.2)
 - Code style linting (tabs, line length, trailing whitespace)
 - Compatible devices list (Dell XPS 12/13/17, Vostro 7590)
