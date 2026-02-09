@@ -53,6 +53,7 @@ static uint32_t sst_chan_setblocksize(kobj_t obj, void *data, uint32_t blocksize
 static int sst_chan_trigger(kobj_t obj, void *data, int go);
 static uint32_t sst_chan_getptr(kobj_t obj, void *data);
 static struct pcmchan_caps *sst_chan_getcaps(kobj_t obj, void *data);
+static void sst_pcm_dma_callback(void *arg);
 
 /*
  * Channel method definitions
@@ -228,9 +229,7 @@ sst_chan_free(kobj_t obj, void *data)
 	if (ch == NULL)
 		return (0);
 
-	sc = ch->dir == PCMDIR_PLAY ?
-	    container_of(&ch, struct sst_softc, pcm.play) :
-	    container_of(&ch, struct sst_softc, pcm.rec);
+	sc = ch->sc;
 
 	if (ch->state == SST_PCM_STATE_RUNNING)
 		sst_ssp_stop(sc, ch->ssp_port);
@@ -313,9 +312,7 @@ sst_chan_trigger(kobj_t obj, void *data, int go)
 	int error;
 
 	/* Get parent softc */
-	sc = ch->dir == PCMDIR_PLAY ?
-	    container_of(&ch, struct sst_softc, pcm.play) :
-	    container_of(&ch, struct sst_softc, pcm.rec);
+	sc = ch->sc;
 
 	switch (go) {
 	case PCMTRIG_START:
@@ -404,9 +401,7 @@ sst_chan_getptr(kobj_t obj, void *data)
 	struct sst_softc *sc;
 	size_t pos;
 
-	sc = ch->dir == PCMDIR_PLAY ?
-	    container_of(&ch, struct sst_softc, pcm.play) :
-	    container_of(&ch, struct sst_softc, pcm.rec);
+	sc = ch->sc;
 
 	if (ch->state != SST_PCM_STATE_RUNNING)
 		return (0);
@@ -435,9 +430,7 @@ sst_pcm_dma_callback(void *arg)
 	struct sst_pcm_channel *ch = arg;
 	struct sst_softc *sc;
 
-	sc = ch->dir == PCMDIR_PLAY ?
-	    container_of(&ch, struct sst_softc, pcm.play) :
-	    container_of(&ch, struct sst_softc, pcm.rec);
+	sc = ch->sc;
 
 	/* Update position */
 	ch->ptr += ch->blk_size;
@@ -512,11 +505,13 @@ sst_pcm_init(struct sst_softc *sc)
 	sc->pcm.registered = false;
 
 	/* Initialize channel structures */
+	sc->pcm.play.sc = sc;
 	sc->pcm.play.dir = PCMDIR_PLAY;
 	sc->pcm.play.state = SST_PCM_STATE_INIT;
 	sc->pcm.play.dma_ch = -1;
 	sc->pcm.play.dma_tag = NULL;
 
+	sc->pcm.rec.sc = sc;
 	sc->pcm.rec.dir = PCMDIR_REC;
 	sc->pcm.rec.state = SST_PCM_STATE_INIT;
 	sc->pcm.rec.dma_ch = -1;

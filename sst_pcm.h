@@ -46,6 +46,7 @@ enum sst_pcm_state {
  * PCM Channel Info
  */
 struct sst_pcm_channel {
+	struct sst_softc	*sc;		/* Parent softc */
 	int			dir;		/* PCMDIR_PLAY/PCMDIR_REC */
 	enum sst_pcm_state	state;		/* Channel state */
 
