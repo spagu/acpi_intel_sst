@@ -35,52 +35,97 @@
 #include <sys/types.h>
 #include <sys/bus.h>
 #include <sys/rman.h>
+#include <sys/lock.h>
+#include <sys/mutex.h>
+
+#include <contrib/dev/acpica/include/acpi.h>
+
+#include "sst_regs.h"
+#include "sst_firmware.h"
+#include "sst_ipc.h"
 
 /* ACPI IDs for Broadwell-U Audio DSP */
-#define SST_ACPI_ID_BDW "INT3438"
-#define SST_ACPI_ID_HSW "INT33C8"
+#define SST_ACPI_ID_BDW		"INT3438"
+#define SST_ACPI_ID_HSW		"INT33C8"
 
-/* Hardware constants */
-#define SST_MIN_MMIO_SIZE    0x1000    /* Minimum expected MMIO region */
-#define SST_INVALID_REG_VALUE 0xFFFFFFFF /* Indicates hardware issue */
+/* Driver State */
+enum sst_state {
+	SST_STATE_NONE = 0,
+	SST_STATE_ATTACHED,
+	SST_STATE_RUNNING,
+	SST_STATE_SUSPENDED,
+	SST_STATE_ERROR
+};
 
 /* Software Context (Softc) */
 struct sst_softc {
-    device_t        dev;
-    ACPI_HANDLE     handle;
+	device_t		dev;
+	ACPI_HANDLE		handle;
 
-    /* Memory Resource (MMIO) */
-    int             mem_rid;
-    struct resource *mem_res;
+	/* Memory Resource (MMIO) */
+	int			mem_rid;
+	struct resource		*mem_res;
 
-    /* Interrupt Resource */
-    int             irq_rid;
-    struct resource *irq_res;
-    void            *irq_cookie;
+	/* Interrupt Resource */
+	int			irq_rid;
+	struct resource		*irq_res;
+	void			*irq_cookie;
 
-    /* State */
-    bool            attached;
+	/* Lock for register access */
+	struct mtx		sc_mtx;
+
+	/* State */
+	enum sst_state		state;
+	bool			attached;
+
+	/* Firmware subsystem */
+	struct sst_firmware	fw;
+
+	/* IPC subsystem */
+	struct sst_ipc		ipc;
 };
 
-/* Registers (Haswell/Broadwell Shim) */
-#define SST_SHIM_CSR        0x00
-#define SST_SHIM_PISR       0x08
-#define SST_SHIM_PIMR       0x10
-#define SST_SHIM_ISRX       0x18
-#define SST_SHIM_ISRD       0x20
-#define SST_SHIM_IMRX       0x28
-#define SST_SHIM_IMRD       0x30
-#define SST_SHIM_IPCX       0x38
-#define SST_SHIM_IPCD       0x40
+/*
+ * Register Access Helpers
+ */
+static inline uint32_t
+sst_shim_read(struct sst_softc *sc, uint32_t reg)
+{
+	return (bus_read_4(sc->mem_res, SST_SHIM_OFFSET + reg));
+}
 
-/* CSR Bits */
-#define SST_CSR_RST         (1 << 1)
-#define SST_CSR_STALL       (1 << 0)
-#define SST_CSR_DCS_MASK    (0x7 << 4)
-#define SST_CSR_DCS(x)      ((x) << 4)
+static inline void
+sst_shim_write(struct sst_softc *sc, uint32_t reg, uint32_t val)
+{
+	bus_write_4(sc->mem_res, SST_SHIM_OFFSET + reg, val);
+}
 
-/* IPC Bits */
-#define SST_IPC_BUSY        (1 << 31)
-#define SST_IPC_DONE        (1 << 30)
+static inline void
+sst_shim_update_bits(struct sst_softc *sc, uint32_t reg,
+		     uint32_t mask, uint32_t val)
+{
+	uint32_t old, new;
+
+	mtx_lock(&sc->sc_mtx);
+	old = sst_shim_read(sc, reg);
+	new = (old & ~mask) | (val & mask);
+	sst_shim_write(sc, reg, new);
+	mtx_unlock(&sc->sc_mtx);
+}
+
+/*
+ * DSP Memory Access
+ */
+static inline void
+sst_dsp_write(struct sst_softc *sc, uint32_t offset, uint32_t val)
+{
+	bus_write_4(sc->mem_res, offset, val);
+}
+
+static inline uint32_t
+sst_dsp_read(struct sst_softc *sc, uint32_t offset)
+{
+	return (bus_read_4(sc->mem_res, offset));
+}
 
 #endif /* _ACPI_INTEL_SST_H_ */

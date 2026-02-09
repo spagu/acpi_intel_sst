@@ -24,6 +24,7 @@
 - [Debugging](#-debugging)
 - [Project Roadmap](#-project-roadmap)
 - [Technical Details](#-technical-details)
+- [Implementation Plan](#-implementation-plan)
 - [Contributing](#-contributing)
 - [License](#-license)
 
@@ -137,7 +138,7 @@ These Intel Broadwell-U (5th Gen) laptops use the same Intel SST DSP architectur
 │                    (SST / SOF format)                    │
 ├─────────────────────────────────────────────────────────┤
 │  ┌─────────────────────────────────────────────────┐    │
-│  │           acpi_intel_sst.ko (This Driver)       │◄───┤ Phase 1-2 ✓
+│  │           acpi_intel_sst.ko (This Driver)       │◄───┤ Phase 1-3 ✓
 │  │  • ACPI Probe/Attach                            │    │
 │  │  • MMIO Resource Allocation                     │    │
 │  │  • IRQ Handling                                 │    │
@@ -156,24 +157,25 @@ These Intel Broadwell-U (5th Gen) laptops use the same Intel SST DSP architectur
 
 ## 📊 Current Status
 
-### Implemented (Phase 1-2)
+### Implemented (Phase 1-3)
 
 | Feature | Status | Description |
 |---------|--------|-------------|
 | ACPI Driver Shell | ✅ Done | Basic driver framework |
 | Device Probing | ✅ Done | Match on INT3438/INT33C8 |
-| Power Management | ✅ Done | D0/D3 state transitions |
+| Power Management | ✅ Done | D0/D3 + suspend/resume |
 | Memory Resources | ✅ Done | MMIO BAR allocation |
-| IRQ Resources | ✅ Done | Interrupt allocation |
+| IRQ Resources | ✅ Done | Interrupt handler registered |
 | DSP Reset | ✅ Done | Assert reset/stall sequence |
-| Register Access | ✅ Done | SHIM register read/write |
+| Register Access | ✅ Done | Thread-safe SHIM read/write |
+| Firmware Loading | ✅ Done | SST binary format parser |
+| IPC Protocol | ✅ Done | Host-DSP mailbox communication |
+| DSP Boot | ✅ Done | Load FW, release reset, wait ready |
 
-### Planned (Phase 3-5)
+### Planned (Phase 4-5)
 
 | Feature | Status | Description |
 |---------|--------|-------------|
-| Firmware Loading | ⏳ TODO | SST/SOF format loader |
-| IPC Implementation | ⏳ TODO | Host-DSP communication |
 | Topology Loading | ⏳ TODO | Audio pipeline config |
 | I2S Controller | ⏳ TODO | SSP driver for codec |
 | PCM Integration | ⏳ TODO | sound(4) framework |
@@ -317,10 +319,11 @@ Phase 2 ✓ - DSP Init (MVP-2)
 ├── Reset sequence
 └── Register access
 
-Phase 3 ⏳ - IPC & Firmware
-├── Firmware loader
-├── IPC protocol
-└── DSP boot sequence
+Phase 3 ✓ - IPC & Firmware
+├── Firmware loader (SST binary format)
+├── IPC protocol (mailbox communication)
+├── DSP boot sequence
+└── Interrupt handler
 
 Phase 4 ⏳ - I2S/SSP
 ├── I2S controller
@@ -375,15 +378,24 @@ On Broadwell-U with Realtek ALC3263:
 
 ---
 
+## 📋 Implementation Plan
+
+Detailed implementation plan for Phase 2-3 is available in [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md).
+
+**Next Steps:**
+- Phase 4: I2S/SSP controller, clock configuration
+- Phase 5: sound(4) PCM driver integration
+
+---
+
 ## 🤝 Contributing
 
 Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 ### Areas Needing Help
 
-- 🔴 Firmware loading implementation
-- 🔴 IPC protocol implementation
-- 🟡 I2S/SSP controller driver
+- 🔴 I2S/SSP controller driver
+- 🔴 sound(4) PCM integration
 - 🟡 Testing on different Broadwell-U devices
 - 🟢 Documentation improvements
 

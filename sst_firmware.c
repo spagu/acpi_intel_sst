@@ -1,0 +1,348 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Intel SST Firmware Loader Implementation
+ * Target: Intel Haswell/Broadwell-U
+ *
+ * Copyright (c) 2026 FreeBSD Foundation
+ * All rights reserved.
+ */
+
+#include <sys/param.h>
+#include <sys/kernel.h>
+#include <sys/bus.h>
+#include <sys/firmware.h>
+#include <sys/systm.h>
+
+#include <machine/bus.h>
+
+#include "acpi_intel_sst.h"
+#include "sst_regs.h"
+#include "sst_firmware.h"
+#include "sst_ipc.h"
+
+/*
+ * Validate firmware header
+ */
+static int
+sst_fw_validate_header(struct sst_softc *sc, const struct sst_fw_header *hdr,
+		       size_t size)
+{
+	if (size < sizeof(struct sst_fw_header)) {
+		device_printf(sc->dev, "Firmware too small: %zu bytes\n", size);
+		return (EINVAL);
+	}
+
+	if (memcmp(hdr->signature, SST_FW_SIGNATURE, SST_FW_SIGN_SIZE) != 0) {
+		device_printf(sc->dev, "Invalid firmware signature: %.4s\n",
+			      hdr->signature);
+		return (EINVAL);
+	}
+
+	if (hdr->file_size > size) {
+		device_printf(sc->dev, "Firmware size mismatch: %u > %zu\n",
+			      hdr->file_size, size);
+		return (EINVAL);
+	}
+
+	if (hdr->modules == 0) {
+		device_printf(sc->dev, "No modules in firmware\n");
+		return (EINVAL);
+	}
+
+	device_printf(sc->dev, "Firmware: size=%u, modules=%u, format=%u\n",
+		      hdr->file_size, hdr->modules, hdr->file_format);
+
+	return (0);
+}
+
+/*
+ * Load a single block to DSP memory
+ */
+static int
+sst_fw_load_block(struct sst_softc *sc, const struct sst_block_header *blk,
+		  const uint8_t *data)
+{
+	bus_addr_t offset;
+	size_t max_size;
+
+	switch (blk->type) {
+	case SST_BLK_TYPE_IRAM:
+		offset = SST_IRAM_OFFSET + blk->ram_offset;
+		max_size = SST_IRAM_SIZE;
+		break;
+	case SST_BLK_TYPE_DRAM:
+		offset = SST_DRAM_OFFSET + blk->ram_offset;
+		max_size = SST_DRAM_SIZE;
+		break;
+	default:
+		device_printf(sc->dev, "Unknown block type: %u\n", blk->type);
+		return (EINVAL);
+	}
+
+	if (blk->ram_offset + blk->size > max_size) {
+		device_printf(sc->dev, "Block exceeds memory: off=%u, size=%u\n",
+			      blk->ram_offset, blk->size);
+		return (EINVAL);
+	}
+
+	/* Write block data to DSP memory */
+	bus_write_region_1(sc->mem_res, offset, data, blk->size);
+
+	return (0);
+}
+
+/*
+ * Parse and load a module
+ */
+static int
+sst_fw_load_module(struct sst_softc *sc, const uint8_t *data, size_t size,
+		   size_t *consumed)
+{
+	const struct sst_module_header *mod;
+	const struct sst_block_header *blk;
+	const uint8_t *ptr;
+	uint32_t i;
+	int error;
+
+	if (size < sizeof(struct sst_module_header)) {
+		device_printf(sc->dev, "Module data too small\n");
+		return (EINVAL);
+	}
+
+	mod = (const struct sst_module_header *)data;
+
+	if (memcmp(mod->signature, SST_MOD_SIGNATURE, 4) != 0) {
+		device_printf(sc->dev, "Invalid module signature: %.4s\n",
+			      mod->signature);
+		return (EINVAL);
+	}
+
+	if (mod->mod_size > size) {
+		device_printf(sc->dev, "Module size exceeds data: %u > %zu\n",
+			      mod->mod_size, size);
+		return (EINVAL);
+	}
+
+	device_printf(sc->dev, "Module: size=%u, blocks=%u, entry=0x%08x\n",
+		      mod->mod_size, mod->blocks, mod->entry_point);
+
+	/* Store entry point from first module */
+	if (sc->fw.entry_point == 0)
+		sc->fw.entry_point = mod->entry_point;
+
+	/* Load each block */
+	ptr = data + sizeof(struct sst_module_header);
+	for (i = 0; i < mod->blocks; i++) {
+		if ((size_t)(ptr - data) + sizeof(struct sst_block_header) >
+		    mod->mod_size) {
+			device_printf(sc->dev, "Block header exceeds module\n");
+			return (EINVAL);
+		}
+
+		blk = (const struct sst_block_header *)ptr;
+		ptr += sizeof(struct sst_block_header);
+
+		if ((size_t)(ptr - data) + blk->size > mod->mod_size) {
+			device_printf(sc->dev, "Block data exceeds module\n");
+			return (EINVAL);
+		}
+
+		error = sst_fw_load_block(sc, blk, ptr);
+		if (error)
+			return (error);
+
+		ptr += blk->size;
+	}
+
+	*consumed = mod->mod_size;
+	return (0);
+}
+
+/*
+ * Parse firmware and load to DSP
+ */
+static int
+sst_fw_parse(struct sst_softc *sc)
+{
+	const struct sst_fw_header *hdr;
+	const uint8_t *ptr;
+	size_t remaining, consumed;
+	uint32_t i;
+	int error;
+
+	hdr = (const struct sst_fw_header *)sc->fw.data;
+
+	error = sst_fw_validate_header(sc, hdr, sc->fw.size);
+	if (error)
+		return (error);
+
+	sc->fw.modules = hdr->modules;
+
+	/* Load each module */
+	ptr = sc->fw.data + sizeof(struct sst_fw_header);
+	remaining = sc->fw.size - sizeof(struct sst_fw_header);
+
+	for (i = 0; i < hdr->modules; i++) {
+		error = sst_fw_load_module(sc, ptr, remaining, &consumed);
+		if (error)
+			return (error);
+
+		ptr += consumed;
+		remaining -= consumed;
+	}
+
+	return (0);
+}
+
+/*
+ * Initialize firmware subsystem
+ */
+int
+sst_fw_init(struct sst_softc *sc)
+{
+	sc->fw.fw = NULL;
+	sc->fw.data = NULL;
+	sc->fw.size = 0;
+	sc->fw.entry_point = 0;
+	sc->fw.modules = 0;
+	sc->fw.state = SST_FW_STATE_NONE;
+
+	return (0);
+}
+
+/*
+ * Cleanup firmware subsystem
+ */
+void
+sst_fw_fini(struct sst_softc *sc)
+{
+	sst_fw_unload(sc);
+}
+
+/*
+ * Load firmware from filesystem
+ */
+int
+sst_fw_load(struct sst_softc *sc)
+{
+	const char *fw_path;
+	int error;
+
+	if (sc->fw.state == SST_FW_STATE_LOADED ||
+	    sc->fw.state == SST_FW_STATE_RUNNING) {
+		device_printf(sc->dev, "Firmware already loaded\n");
+		return (EBUSY);
+	}
+
+	sc->fw.state = SST_FW_STATE_LOADING;
+
+	/* Select firmware path based on platform */
+	fw_path = SST_FW_PATH_BDW;
+
+	device_printf(sc->dev, "Loading firmware: %s\n", fw_path);
+
+	/* Request firmware */
+	sc->fw.fw = firmware_get(fw_path);
+	if (sc->fw.fw == NULL) {
+		device_printf(sc->dev, "Failed to load firmware: %s\n",
+			      fw_path);
+		device_printf(sc->dev, "Place firmware in /boot/firmware/%s\n",
+			      fw_path);
+		sc->fw.state = SST_FW_STATE_ERROR;
+		return (ENOENT);
+	}
+
+	sc->fw.data = sc->fw.fw->data;
+	sc->fw.size = sc->fw.fw->datasize;
+
+	device_printf(sc->dev, "Firmware loaded: %zu bytes\n", sc->fw.size);
+
+	/* Parse and load to DSP */
+	error = sst_fw_parse(sc);
+	if (error) {
+		sst_fw_unload(sc);
+		sc->fw.state = SST_FW_STATE_ERROR;
+		return (error);
+	}
+
+	sc->fw.state = SST_FW_STATE_LOADED;
+	device_printf(sc->dev, "Firmware parsed: entry=0x%08x\n",
+		      sc->fw.entry_point);
+
+	return (0);
+}
+
+/*
+ * Unload firmware
+ */
+void
+sst_fw_unload(struct sst_softc *sc)
+{
+	if (sc->fw.fw != NULL) {
+		firmware_put(sc->fw.fw, FIRMWARE_UNLOAD);
+		sc->fw.fw = NULL;
+	}
+
+	sc->fw.data = NULL;
+	sc->fw.size = 0;
+	sc->fw.entry_point = 0;
+	sc->fw.modules = 0;
+	sc->fw.state = SST_FW_STATE_NONE;
+}
+
+/*
+ * Boot DSP with loaded firmware
+ */
+int
+sst_fw_boot(struct sst_softc *sc)
+{
+	uint32_t csr;
+	int error;
+
+	if (sc->fw.state != SST_FW_STATE_LOADED) {
+		device_printf(sc->dev, "Firmware not loaded\n");
+		return (EINVAL);
+	}
+
+	device_printf(sc->dev, "Booting DSP...\n");
+
+	/* 1. Ensure DSP is in reset and stalled */
+	csr = sst_shim_read(sc, SST_SHIM_CSR);
+	csr |= (SST_CSR_RST | SST_CSR_STALL);
+	sst_shim_write(sc, SST_SHIM_CSR, csr);
+	DELAY(SST_RESET_DELAY_US);
+
+	/* 2. Clear reset but keep stall (allows memory access) */
+	csr = sst_shim_read(sc, SST_SHIM_CSR);
+	csr &= ~SST_CSR_RST;
+	sst_shim_write(sc, SST_SHIM_CSR, csr);
+	DELAY(SST_RESET_DELAY_US);
+
+	/* 3. Unmask IPC interrupts */
+	sst_shim_write(sc, SST_SHIM_IMRX, 0);
+	sst_shim_write(sc, SST_SHIM_IMRD, 0);
+
+	/* 4. Clear stall - DSP starts running */
+	csr = sst_shim_read(sc, SST_SHIM_CSR);
+	csr &= ~SST_CSR_STALL;
+	sst_shim_write(sc, SST_SHIM_CSR, csr);
+
+	device_printf(sc->dev, "DSP running, waiting for ready...\n");
+
+	/* 5. Wait for firmware to signal ready */
+	error = sst_ipc_wait_ready(sc, SST_BOOT_TIMEOUT_MS);
+	if (error) {
+		device_printf(sc->dev, "DSP boot timeout\n");
+		/* Reset DSP on failure */
+		csr = sst_shim_read(sc, SST_SHIM_CSR);
+		csr |= (SST_CSR_RST | SST_CSR_STALL);
+		sst_shim_write(sc, SST_SHIM_CSR, csr);
+		return (error);
+	}
+
+	sc->fw.state = SST_FW_STATE_RUNNING;
+	device_printf(sc->dev, "DSP firmware running\n");
+
+	return (0);
+}

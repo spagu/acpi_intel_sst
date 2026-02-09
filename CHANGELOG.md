@@ -15,10 +15,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - References section with Intel documentation links
 
 ### Planned
-- Firmware loading support (SST/SOF format)
-- IPC protocol implementation
 - I2S/SSP controller driver
 - sound(4) PCM integration
+
+---
+
+## [0.3.0] - 2026-02-09
+
+### Added
+- **Phase 3: Firmware & IPC Implementation**
+- Firmware loader (`sst_firmware.c`) - parses Intel SST binary format
+- IPC protocol (`sst_ipc.c`) - host-DSP communication
+- Interrupt handler with proper ISR registration
+- Suspend/resume power management handlers
+- Mutex protection for register access
+- Register access helper functions (`sst_shim_read/write/update_bits`)
+- DSP boot sequence with firmware loading
+- Get firmware version IPC command
+- Separate register definitions (`sst_regs.h`)
+
+### Changed
+- Driver version bumped to 0.3.0
+- Modular architecture with separate header/source files
+- Added MODULE_DEPEND for firmware subsystem
+- Improved error handling throughout
+
+### Technical
+- SST firmware header parsing ($SST signature)
+- Module and block header parsing ($MOD signature)
+- IRAM/DRAM block loading to DSP memory
+- IPC mailbox communication (Host->DSP, DSP->Host)
+- Condition variable based IPC wait mechanism
 
 ---
 
@@ -75,6 +102,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `Fixed` for any bug fixes
 - `Security` for vulnerability fixes
 
-[Unreleased]: https://github.com/spagu/acpi_intel_sst/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/spagu/acpi_intel_sst/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/spagu/acpi_intel_sst/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/spagu/acpi_intel_sst/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/spagu/acpi_intel_sst/releases/tag/v0.1.0
