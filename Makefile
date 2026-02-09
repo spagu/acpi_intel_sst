@@ -15,6 +15,7 @@
 KMOD=   acpi_intel_sst
 SRCS=   acpi_intel_sst.c sst_firmware.c sst_ipc.c sst_ssp.c sst_dma.c
 SRCS+=  device_if.h bus_if.h acpi_if.h
+SRCS+=  opt_acpi.h
 
 # Compiler flags
 CFLAGS+= -Werror
@@ -28,18 +29,12 @@ KMODDIR?= /boot/modules
 
 .include <bsd.kmod.mk>
 
-# Custom targets
-.PHONY: load unload test install help
+# Custom targets (load/unload provided by bsd.kmod.mk)
+.PHONY: reload test install help
 
-load:
-	@echo "Loading $(KMOD) module..."
-	kldload ./$(KMOD).ko
-
-unload:
-	@echo "Unloading $(KMOD) module..."
+reload:
 	-kldunload $(KMOD)
-
-reload: unload load
+	kldload ./$(KMOD).ko
 
 test:
 	@echo "Running test suite..."
@@ -57,8 +52,8 @@ help:
 	@echo "Available targets:"
 	@echo "  make          - Build the kernel module"
 	@echo "  make clean    - Clean build artifacts"
-	@echo "  make load     - Load the module (requires root)"
-	@echo "  make unload   - Unload the module (requires root)"
+	@echo "  make load     - Load the module (from bsd.kmod.mk)"
+	@echo "  make unload   - Unload the module (from bsd.kmod.mk)"
 	@echo "  make reload   - Unload and reload the module"
 	@echo "  make test     - Run test suite (requires root)"
 	@echo "  make install  - Install to $(KMODDIR)"
