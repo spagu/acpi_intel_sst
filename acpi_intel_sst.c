@@ -159,21 +159,10 @@ sst_acpi_attach(device_t dev)
 		device_printf(dev, "Warning: Failed to set power state to D0\n");
 	}
 
-	/* 2. Allocate Memory Resources (MMIO) */
-	/* BAR0: DSP Memory (IRAM/DRAM) */
-	sc->mem_rid = 0;
-	sc->mem_res = bus_alloc_resource_any(dev, SYS_RES_MEMORY,
-					     &sc->mem_rid, RF_ACTIVE);
-	if (sc->mem_res == NULL) {
-		device_printf(dev, "Failed to allocate DSP memory resource\n");
-		error = ENXIO;
-		goto fail;
-	}
-
-	device_printf(dev, "DSP Memory: 0x%lx, Size: 0x%lx\n",
-		      rman_get_start(sc->mem_res), rman_get_size(sc->mem_res));
-
-	/* BAR1: PCI Extended Config (for power gating control) */
+	/*
+	 * 2. Allocate BAR1 FIRST for power control
+	 * BAR0 must be allocated AFTER power-up to get valid mapping
+	 */
 	sc->shim_rid = 1;
 	sc->shim_res = bus_alloc_resource_any(dev, SYS_RES_MEMORY,
 					      &sc->shim_rid, RF_ACTIVE);
@@ -183,7 +172,7 @@ sst_acpi_attach(device_t dev)
 		goto fail;
 	}
 
-	device_printf(dev, "PCI Config: 0x%lx, Size: 0x%lx\n",
+	device_printf(dev, "PCI Config (BAR1): 0x%lx, Size: 0x%lx\n",
 		      rman_get_start(sc->shim_res), rman_get_size(sc->shim_res));
 
 	/*
@@ -314,7 +303,23 @@ sst_acpi_attach(device_t dev)
 		    bus_read_4(sc->shim_res, 0x14));
 	}
 
-	/* 2.2 Probe DSP memory layout */
+	/*
+	 * 2.2 NOW allocate BAR0 after power-up is complete
+	 * This ensures the memory mapping is valid
+	 */
+	sc->mem_rid = 0;
+	sc->mem_res = bus_alloc_resource_any(dev, SYS_RES_MEMORY,
+					     &sc->mem_rid, RF_ACTIVE);
+	if (sc->mem_res == NULL) {
+		device_printf(dev, "Failed to allocate DSP memory resource\n");
+		error = ENXIO;
+		goto fail;
+	}
+
+	device_printf(dev, "DSP Memory (BAR0): 0x%lx, Size: 0x%lx\n",
+		      rman_get_start(sc->mem_res), rman_get_size(sc->mem_res));
+
+	/* 2.3 Probe DSP memory layout */
 	device_printf(dev, "Probing DSP memory layout:\n");
 	device_printf(dev, "  BAR0+0x00000 (IRAM): 0x%08x\n",
 	    bus_read_4(sc->mem_res, 0x00000));
