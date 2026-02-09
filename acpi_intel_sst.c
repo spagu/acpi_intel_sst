@@ -441,5 +441,5 @@ static driver_t sst_driver = {
 DRIVER_MODULE(acpi_intel_sst, acpi, sst_driver, 0, 0);
 MODULE_DEPEND(acpi_intel_sst, acpi, 1, 1, 1);
 MODULE_DEPEND(acpi_intel_sst, firmware, 1, 1, 1);
-MODULE_DEPEND(acpi_intel_sst, sound, SOUND_MINVER, SOUND_PREFVER, SOUND_MAXVER);
+MODULE_DEPEND(acpi_intel_sst, sound, 1, 1, 1);
 MODULE_VERSION(acpi_intel_sst, 5);
