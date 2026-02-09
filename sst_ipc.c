@@ -31,7 +31,7 @@ sst_ipc_init(struct sst_softc *sc)
 	mtx_init(&sc->ipc.lock, "sst_ipc", NULL, MTX_DEF);
 	cv_init(&sc->ipc.wait_cv, "sst_ipc_cv");
 
-	sc->ipc.state = SST_IPC_IDLE;
+	sc->ipc.state = SST_IPC_STATE_IDLE;
 	sc->ipc.ready = false;
 
 	/* Initialize mailbox addresses */
@@ -100,7 +100,7 @@ sst_ipc_send(struct sst_softc *sc, uint32_t header, void *data, size_t size)
 	sc->ipc.msg.size = size;
 	sc->ipc.msg.reply = 0;
 	sc->ipc.msg.status = 0;
-	sc->ipc.state = SST_IPC_PENDING;
+	sc->ipc.state = SST_IPC_STATE_PENDING;
 
 	/* Send header with BUSY bit set */
 	sst_shim_write(sc, SST_SHIM_IPCX, header | SST_IPC_BUSY);
@@ -108,11 +108,11 @@ sst_ipc_send(struct sst_softc *sc, uint32_t header, void *data, size_t size)
 
 	/* Wait for reply (with timeout) */
 	timeout = SST_IPC_TIMEOUT_MS * hz / 1000;
-	while (sc->ipc.state == SST_IPC_PENDING && timeout > 0) {
+	while (sc->ipc.state == SST_IPC_STATE_PENDING && timeout > 0) {
 		error = cv_timedwait(&sc->ipc.wait_cv, &sc->ipc.lock, timeout);
 		if (error == EWOULDBLOCK) {
 			device_printf(sc->dev, "IPC timeout\n");
-			sc->ipc.state = SST_IPC_ERROR;
+			sc->ipc.state = SST_IPC_STATE_ERROR;
 			sc->ipc.error_count++;
 			error = ETIMEDOUT;
 			goto done;
@@ -120,7 +120,7 @@ sst_ipc_send(struct sst_softc *sc, uint32_t header, void *data, size_t size)
 		timeout -= hz / 10; /* Approximate remaining time */
 	}
 
-	if (sc->ipc.state == SST_IPC_ERROR) {
+	if (sc->ipc.state == SST_IPC_STATE_ERROR) {
 		error = EIO;
 		goto done;
 	}
@@ -128,7 +128,7 @@ sst_ipc_send(struct sst_softc *sc, uint32_t header, void *data, size_t size)
 	error = sc->ipc.msg.status;
 
 done:
-	sc->ipc.state = SST_IPC_IDLE;
+	sc->ipc.state = SST_IPC_STATE_IDLE;
 	mtx_unlock(&sc->ipc.lock);
 
 	return (error);
@@ -230,7 +230,7 @@ sst_ipc_intr(struct sst_softc *sc)
 
 		/* Store reply and wake up sender */
 		sc->ipc.msg.reply = ipcd;
-		sc->ipc.state = SST_IPC_DONE;
+		sc->ipc.state = SST_IPC_STATE_DONE;
 		cv_signal(&sc->ipc.wait_cv);
 
 		mtx_unlock(&sc->ipc.lock);

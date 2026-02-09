@@ -79,10 +79,10 @@ struct sst_fw_version_reply {
  * IPC State
  */
 enum sst_ipc_state {
-	SST_IPC_IDLE = 0,
-	SST_IPC_PENDING,
-	SST_IPC_DONE,
-	SST_IPC_ERROR
+	SST_IPC_STATE_IDLE = 0,
+	SST_IPC_STATE_PENDING,
+	SST_IPC_STATE_DONE,
+	SST_IPC_STATE_ERROR
 };
 
 /*

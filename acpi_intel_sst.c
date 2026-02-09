@@ -379,7 +379,7 @@ sst_acpi_resume(device_t dev)
 
 	/* Re-initialize IPC */
 	sc->ipc.ready = false;
-	sc->ipc.state = SST_IPC_IDLE;
+	sc->ipc.state = SST_IPC_STATE_IDLE;
 
 	/* Reload and boot firmware */
 	if (sc->fw.state == SST_FW_STATE_RUNNING) {
