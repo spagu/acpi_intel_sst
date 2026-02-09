@@ -7,7 +7,7 @@
  * Intel Smart Sound Technology (SST) ACPI Driver for FreeBSD
  * Target: Intel Broadwell-U (INT3438)
  *
- * Phase 1-3: ACPI Attachment, DSP Init, Firmware & IPC
+ * Phase 1-4: ACPI Attachment, DSP Init, Firmware & IPC, I2S/SSP & DMA
  */
 
 #include <sys/param.h>
@@ -29,7 +29,7 @@
 #include "acpi_intel_sst.h"
 
 /* Driver version for debugging */
-#define SST_DRV_VERSION "0.3.0"
+#define SST_DRV_VERSION "0.4.0"
 
 /* Forward declarations */
 static int sst_acpi_probe(device_t dev);
@@ -67,6 +67,9 @@ sst_intr(void *arg)
 
 	/* Handle IPC interrupts */
 	sst_ipc_intr(sc);
+
+	/* Handle DMA interrupts */
+	sst_dma_intr(sc);
 
 	/* Clear platform interrupt status */
 	sst_shim_write(sc, SST_SHIM_PISR, pisr);
@@ -232,7 +235,21 @@ sst_acpi_attach(device_t dev)
 	/* 6. Initialize Hardware */
 	sst_init(sc);
 
-	/* 7. Load and boot firmware */
+	/* 7. Initialize DMA controller */
+	error = sst_dma_init(sc);
+	if (error) {
+		device_printf(dev, "Failed to initialize DMA\n");
+		goto fail;
+	}
+
+	/* 8. Initialize SSP (I2S) controller */
+	error = sst_ssp_init(sc);
+	if (error) {
+		device_printf(dev, "Failed to initialize SSP\n");
+		goto fail;
+	}
+
+	/* 9. Load and boot firmware */
 	error = sst_fw_load(sc);
 	if (error) {
 		device_printf(dev, "Firmware load failed: %d\n", error);
@@ -251,11 +268,11 @@ sst_acpi_attach(device_t dev)
 		}
 	}
 
-	/* 8. Mark attached */
+	/* 10. Mark attached */
 	sc->attached = true;
 	sc->state = SST_STATE_ATTACHED;
 
-	device_printf(dev, "Intel SST DSP attached successfully (Phase 1-3)\n");
+	device_printf(dev, "Intel SST DSP attached successfully (Phase 1-4)\n");
 
 	return (0);
 
@@ -273,6 +290,12 @@ sst_acpi_detach(device_t dev)
 	struct sst_softc *sc;
 
 	sc = device_get_softc(dev);
+
+	/* Cleanup SSP */
+	sst_ssp_fini(sc);
+
+	/* Cleanup DMA */
+	sst_dma_fini(sc);
 
 	/* Unload firmware */
 	sst_fw_fini(sc);
@@ -397,4 +420,4 @@ static driver_t sst_driver = {
 DRIVER_MODULE(acpi_intel_sst, acpi, sst_driver, 0, 0);
 MODULE_DEPEND(acpi_intel_sst, acpi, 1, 1, 1);
 MODULE_DEPEND(acpi_intel_sst, firmware, 1, 1, 1);
-MODULE_VERSION(acpi_intel_sst, 3);
+MODULE_VERSION(acpi_intel_sst, 4);

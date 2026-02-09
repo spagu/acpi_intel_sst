@@ -15,8 +15,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - References section with Intel documentation links
 
 ### Planned
-- I2S/SSP controller driver
 - sound(4) PCM integration
+- Mixer support
+
+---
+
+## [0.4.0] - 2026-02-09
+
+### Added
+- **Phase 4: I2S/SSP & DMA Controller Implementation**
+- SSP (I2S) controller driver (`sst_ssp.c`) - Serial Synchronous Port
+- DMA controller driver (`sst_dma.c`) - 8-channel DMA engine
+- I2S audio format configuration (sample rate, bits, channels)
+- Master/Slave mode support for SSP
+- DMA channel allocation and management
+- Circular buffer support for audio streaming
+- DMA completion callbacks
+- SSP register dump for debugging
+
+### Technical
+- SSP supports I2S, Left-Justified, DSP-A/B formats
+- Configurable BCLK/MCLK dividers
+- 8 DMA channels with hardware handshaking
+- Memory-to-Peripheral and Peripheral-to-Memory transfers
+- FIFO threshold configuration
+
+### Changed
+- Driver version bumped to 0.4.0
+- MODULE_VERSION updated to 4
+- Interrupt handler extended for DMA
 
 ---
 
@@ -102,7 +129,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `Fixed` for any bug fixes
 - `Security` for vulnerability fixes
 
-[Unreleased]: https://github.com/spagu/acpi_intel_sst/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/spagu/acpi_intel_sst/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/spagu/acpi_intel_sst/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/spagu/acpi_intel_sst/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/spagu/acpi_intel_sst/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/spagu/acpi_intel_sst/releases/tag/v0.1.0

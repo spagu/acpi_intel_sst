@@ -138,7 +138,7 @@ These Intel Broadwell-U (5th Gen) laptops use the same Intel SST DSP architectur
 │                    (SST / SOF format)                    │
 ├─────────────────────────────────────────────────────────┤
 │  ┌─────────────────────────────────────────────────┐    │
-│  │           acpi_intel_sst.ko (This Driver)       │◄───┤ Phase 1-3 ✓
+│  │           acpi_intel_sst.ko (This Driver)       │◄───┤ Phase 1-4 ✓
 │  │  • ACPI Probe/Attach                            │    │
 │  │  • MMIO Resource Allocation                     │    │
 │  │  • IRQ Handling                                 │    │
@@ -157,7 +157,7 @@ These Intel Broadwell-U (5th Gen) laptops use the same Intel SST DSP architectur
 
 ## 📊 Current Status
 
-### Implemented (Phase 1-3)
+### Implemented (Phase 1-4)
 
 | Feature | Status | Description |
 |---------|--------|-------------|
@@ -171,15 +171,17 @@ These Intel Broadwell-U (5th Gen) laptops use the same Intel SST DSP architectur
 | Firmware Loading | ✅ Done | SST binary format parser |
 | IPC Protocol | ✅ Done | Host-DSP mailbox communication |
 | DSP Boot | ✅ Done | Load FW, release reset, wait ready |
+| I2S/SSP Controller | ✅ Done | 2-port SSP with I2S support |
+| DMA Controller | ✅ Done | 8-channel DMA engine |
 
-### Planned (Phase 4-5)
+### Planned (Phase 5)
 
 | Feature | Status | Description |
 |---------|--------|-------------|
 | Topology Loading | ⏳ TODO | Audio pipeline config |
-| I2S Controller | ⏳ TODO | SSP driver for codec |
 | PCM Integration | ⏳ TODO | sound(4) framework |
 | Mixer Support | ⏳ TODO | Volume control |
+| Jack Detection | ⏳ TODO | Headphone/mic detect |
 
 ---
 
@@ -262,7 +264,9 @@ acpi_intel_sst0: Register Dump:
 acpi_intel_sst0:   CSR : 0x00000003
 acpi_intel_sst0:   IPCX: 0x00000000
 acpi_intel_sst0: DSP in Reset/Stall state. CSR: 0x00000003
-acpi_intel_sst0: Intel SST DSP attached successfully (Phase 1+2)
+acpi_intel_sst0: SSP initialized: 2 ports
+acpi_intel_sst0: DMA initialized: 8 channels
+acpi_intel_sst0: Intel SST DSP attached successfully (Phase 1-4)
 ```
 
 ---
@@ -325,10 +329,11 @@ Phase 3 ✓ - IPC & Firmware
 ├── DSP boot sequence
 └── Interrupt handler
 
-Phase 4 ⏳ - I2S/SSP
-├── I2S controller
+Phase 4 ✓ - I2S/SSP & DMA
+├── SSP (I2S) controller (2 ports)
+├── DMA controller (8 channels)
 ├── Clock configuration
-└── Data streaming
+└── Data streaming infrastructure
 
 Phase 5 ⏳ - Audio Integration
 ├── sound(4) PCM driver
@@ -354,12 +359,14 @@ On Broadwell-U with Realtek ALC3263:
 ```
 1. Set D0 Power State (_PS0)
 2. Map MMIO Resources
-3. Assert Reset + Stall (CSR)
-4. Load Firmware (TODO)
-5. Release Reset (keep Stall)
-6. Start Firmware (TODO)
-7. Clear Stall → DSP Running
-8. Initialize IPC (TODO)
+3. Initialize DMA controller
+4. Initialize SSP (I2S) controller
+5. Assert Reset + Stall (CSR)
+6. Load Firmware to IRAM/DRAM
+7. Clear Reset (keep Stall)
+8. Unmask IPC interrupts
+9. Clear Stall → DSP Running
+10. Wait for firmware ready (IPC)
 ```
 
 ### SHIM Registers
@@ -383,8 +390,7 @@ On Broadwell-U with Realtek ALC3263:
 Detailed implementation plan for Phase 2-3 is available in [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md).
 
 **Next Steps:**
-- Phase 4: I2S/SSP controller, clock configuration
-- Phase 5: sound(4) PCM driver integration
+- Phase 5: sound(4) PCM driver integration, mixer support
 
 ---
 
@@ -394,8 +400,8 @@ Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for gui
 
 ### Areas Needing Help
 
-- 🔴 I2S/SSP controller driver
 - 🔴 sound(4) PCM integration
+- 🔴 Mixer/volume control
 - 🟡 Testing on different Broadwell-U devices
 - 🟢 Documentation improvements
 

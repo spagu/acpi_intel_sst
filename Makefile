@@ -13,7 +13,7 @@
 #   make help     - Show this help
 
 KMOD=   acpi_intel_sst
-SRCS=   acpi_intel_sst.c sst_firmware.c sst_ipc.c
+SRCS=   acpi_intel_sst.c sst_firmware.c sst_ipc.c sst_ssp.c sst_dma.c
 SRCS+=  device_if.h bus_if.h acpi_if.h
 
 # Compiler flags
