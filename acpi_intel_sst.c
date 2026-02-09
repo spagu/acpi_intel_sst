@@ -267,13 +267,27 @@ sst_acpi_attach(device_t dev)
 		/*
 		 * After D3->D0 transition, re-enable memory space
 		 * and bus mastering (may have been disabled in D3)
+		 * Use 16-bit write to Command register (offset 0x04)
 		 */
 		cmd = bus_read_4(sc->shim_res, 0x04);
 		device_printf(dev, "  Cmd after D0: 0x%08x\n", cmd);
-		if ((cmd & 0x06) != 0x06) {
-			cmd |= 0x06;  /* Memory Space + Bus Master */
-			bus_write_4(sc->shim_res, 0x04, cmd);
-			DELAY(1000);
+
+		/* Force enable Memory Space (bit 1) and Bus Master (bit 2) */
+		{
+			uint16_t cmd16 = bus_read_2(sc->shim_res, 0x04);
+			device_printf(dev, "  Cmd16 before: 0x%04x\n", cmd16);
+
+			if ((cmd16 & 0x06) != 0x06) {
+				cmd16 |= 0x06;  /* Memory Space + Bus Master */
+				bus_write_2(sc->shim_res, 0x04, cmd16);
+				DELAY(10000);  /* 10ms */
+
+				cmd16 = bus_read_2(sc->shim_res, 0x04);
+				device_printf(dev, "  Cmd16 after:  0x%04x\n",
+				    cmd16);
+			}
+
+			/* Verify full 32-bit read */
 			cmd = bus_read_4(sc->shim_res, 0x04);
 			device_printf(dev, "  Cmd enabled: 0x%08x\n", cmd);
 		}
