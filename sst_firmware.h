@@ -16,8 +16,8 @@
 /*
  * Firmware file paths
  */
-#define SST_FW_PATH_BDW		"intel/fw_sst_0f28.bin"
-#define SST_FW_PATH_HSW		"intel/fw_sst_0f28.bin"
+#define SST_FW_PATH_BDW		"intel/IntcSST2.bin"
+#define SST_FW_PATH_HSW		"intel/IntcSST2.bin"
 
 /*
  * SST Firmware Header

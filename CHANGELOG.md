@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Firmware documentation** - comprehensive guide for obtaining Intel SST firmware
+  - Firmware location: `/boot/firmware/intel/IntcSST2.bin`
+  - Multiple acquisition methods (Linux packages, Windows drivers, community repos)
+  - Related firmware files reference table
+  - Verification instructions
 - GitHub Actions CI workflow for build validation (FreeBSD 14.1, 14.2)
 - Code style linting (tabs, line length, trailing whitespace)
 - Compatible devices list (Dell XPS 12/13/17, Vostro 7590)

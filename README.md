@@ -19,6 +19,7 @@
 - [Architecture](#-architecture)
 - [Current Status](#-current-status)
 - [Requirements](#-requirements)
+- [Firmware](#-firmware)
 - [Installation](#-installation)
 - [Usage](#-usage)
 - [Debugging](#-debugging)
@@ -199,7 +200,85 @@ These Intel Broadwell-U (5th Gen) laptops use the same Intel SST DSP architectur
 
 - Intel Broadwell-U or Haswell platform
 - ACPI tables with INT3438/INT33C8 device
-- (Future) SST firmware files in `/boot/firmware/`
+- SST firmware file (see Firmware section below)
+
+---
+
+## 📦 Firmware
+
+The driver requires Intel SST firmware to enable audio playback. The firmware must be placed in `/boot/firmware/intel/`.
+
+### Firmware Location
+
+```
+/boot/firmware/intel/IntcSST2.bin
+```
+
+### Obtaining Firmware
+
+> ⚠️ **Important:** Intel has not publicly released Broadwell-U SST firmware. The firmware is proprietary and requires extraction from alternative sources.
+
+#### Option 1: Linux Distribution Package (Recommended)
+
+Some Linux distributions include the firmware in their `firmware-intel-sound` package:
+
+```bash
+# On a Debian/Ubuntu system:
+apt download firmware-intel-sound
+dpkg -x firmware-intel-sound*.deb /tmp/fw
+# Look for IntcSST2.bin in /tmp/fw/lib/firmware/intel/
+
+# Copy to FreeBSD:
+sudo mkdir -p /boot/firmware/intel
+sudo cp IntcSST2.bin /boot/firmware/intel/
+```
+
+#### Option 2: Extract from Windows Driver
+
+The firmware can be extracted from Intel Windows audio drivers:
+
+1. Download Intel Smart Sound Technology driver for Windows
+2. Extract the installer (using 7-Zip or similar)
+3. Look for `IntcSST2.bin` in the extracted files
+4. Copy to `/boot/firmware/intel/`
+
+#### Option 3: Community Repository
+
+The [arch-broadwell-rt286-audio](https://github.com/nicman23/arch-broadwell-rt286-audio) repository contains firmware files for Broadwell-U platforms with RT286 codec.
+
+### Related Firmware Files
+
+The linux-firmware repository contains SST firmware for other Intel platforms:
+
+| File | Platform | Notes |
+|------|----------|-------|
+| `fw_sst_0f28.bin` | Intel Baytrail | Atom Z3xxx |
+| `fw_sst_22a8.bin` | Intel Cherrytrail | Atom x5/x7 |
+| `IntcSST2.bin` | Intel Broadwell-U | **Required for this driver** |
+
+### Verifying Firmware
+
+After placing the firmware file, verify it's accessible:
+
+```bash
+ls -la /boot/firmware/intel/IntcSST2.bin
+# Expected: -r--r--r--  1 root  wheel  XXXXX  IntcSST2.bin
+```
+
+When the driver loads successfully with firmware:
+
+```
+acpi_intel_sst0: Firmware loaded: IntcSST2.bin (XXXXX bytes)
+acpi_intel_sst0: DSP boot successful
+acpi_intel_sst0: Firmware version: X.X.X
+```
+
+Without firmware, the driver will still attach but audio won't work:
+
+```
+acpi_intel_sst0: Firmware load failed: 2 (ENOENT)
+acpi_intel_sst0: Driver attached without firmware
+```
 
 ---
 
