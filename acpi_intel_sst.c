@@ -28,6 +28,7 @@
 
 #include <dev/pci/pcivar.h>
 #include <dev/pci/pcireg.h>
+#include <x86/pci_cfgreg.h>
 
 #include "acpi_intel_sst.h"
 
