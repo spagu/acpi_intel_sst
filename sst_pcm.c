@@ -17,7 +17,6 @@
 #include <machine/bus.h>
 
 #include <dev/sound/pcm/sound.h>
-#include <dev/sound/pcm/ac97.h>
 
 #include "acpi_intel_sst.h"
 #include "sst_pcm.h"
