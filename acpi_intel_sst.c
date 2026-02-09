@@ -357,87 +357,105 @@ sst_acpi_attach(device_t dev)
 	}
 
 	/*
-	 * Try to find the actual PCI device and access config space directly
-	 * The ACPI device might not have proper PCI config access
+	 * Try direct PCI config access using pci_cfgregread/write
+	 * The SST device on Broadwell-U is typically at Bus 0, Device 0x13, Func 0
+	 * But let's scan for it to be sure
 	 */
 	{
-		device_t pci_dev;
-		device_t *pci_children;
-		int pci_count, i;
-		device_t pci0;
+		int bus, slot, func;
+		uint32_t vid_did;
+		int found = 0;
 
-		/* Find PCI bus */
-		pci0 = device_find_child(root_bus, "pci", 0);
-		if (pci0 == NULL)
-			pci0 = device_find_child(root_bus, "pcib", 0);
+		device_printf(dev, "Scanning PCI config space for SST device...\n");
 
-		if (pci0 != NULL) {
-			device_printf(dev, "Found PCI bus: %s\n",
-			    device_get_nameunit(pci0));
+		/* Scan bus 0 for the SST device */
+		bus = 0;
+		for (slot = 0; slot < 32 && !found; slot++) {
+			for (func = 0; func < 8 && !found; func++) {
+				vid_did = pci_cfgregread(bus, slot, func, 0, 4);
 
-			/* Look for SST device on PCI bus */
-			if (device_get_children(pci0, &pci_children,
-			    &pci_count) == 0) {
-				for (i = 0; i < pci_count; i++) {
-					uint16_t vid, did;
+				if (vid_did == 0xFFFFFFFF ||
+				    vid_did == 0x00000000)
+					continue;
 
-					vid = pci_get_vendor(pci_children[i]);
-					did = pci_get_device(pci_children[i]);
+				if (vid_did == 0x9CB68086) {
+					found = 1;
+					device_printf(dev,
+					    "Found SST at PCI %d:%d:%d\n",
+					    bus, slot, func);
 
-					if (vid == PCI_VENDOR_INTEL &&
-					    did == PCI_DEVICE_SST_BDW) {
-						pci_dev = pci_children[i];
+					/* Read current config */
+					device_printf(dev,
+					    "  VID/DID:  0x%08x\n", vid_did);
+					device_printf(dev,
+					    "  CMD/STS:  0x%08x\n",
+					    pci_cfgregread(bus, slot, func,
+					    0x04, 4));
+					device_printf(dev,
+					    "  BAR0:     0x%08x\n",
+					    pci_cfgregread(bus, slot, func,
+					    0x10, 4));
+					device_printf(dev,
+					    "  VDRTCTL0: 0x%08x\n",
+					    pci_cfgregread(bus, slot, func,
+					    0xA0, 4));
+					device_printf(dev,
+					    "  VDRTCTL2: 0x%08x\n",
+					    pci_cfgregread(bus, slot, func,
+					    0xA8, 4));
+
+					/*
+					 * Try writing VDRTCTL0 directly
+					 * via PCI config mechanism
+					 */
+					{
+						uint32_t vdrtctl0, cmd;
+
+						/* Enable Memory + Bus Master */
+						cmd = pci_cfgregread(bus, slot,
+						    func, 0x04, 2);
 						device_printf(dev,
-						    "Found SST PCI device: %s\n",
-						    device_get_nameunit(pci_dev));
+						    "  CMD before: 0x%04x\n", cmd);
 
-						/* Try direct PCI config access */
+						cmd |= 0x0006;  /* Mem + BusMaster */
+						pci_cfgregwrite(bus, slot, func,
+						    0x04, cmd, 2);
+						DELAY(10000);
+
+						cmd = pci_cfgregread(bus, slot,
+						    func, 0x04, 2);
 						device_printf(dev,
-						    "  PCI CMD:  0x%04x\n",
-						    pci_read_config(pci_dev,
-						    PCIR_COMMAND, 2));
+						    "  CMD after:  0x%04x\n", cmd);
+
+						/* Configure power gating */
+						vdrtctl0 = pci_cfgregread(bus,
+						    slot, func, 0xA0, 4);
 						device_printf(dev,
-						    "  PCI BAR0: 0x%08x\n",
-						    pci_read_config(pci_dev,
-						    PCIR_BAR(0), 4));
+						    "  VDRTCTL0 before: 0x%08x\n",
+						    vdrtctl0);
 
-						/* Try enabling bus master */
-						pci_enable_busmaster(pci_dev);
+						/* Disable D3 power gating */
+						vdrtctl0 |= (1 << 8);   /* D3SRAMPGD */
+						vdrtctl0 |= (1 << 16);  /* D3PGD */
+						/* Clear SRAM power gate bits */
+						vdrtctl0 &= ~0xFF;
+
+						pci_cfgregwrite(bus, slot, func,
+						    0xA0, vdrtctl0, 4);
+						DELAY(100000);  /* 100ms */
+
+						vdrtctl0 = pci_cfgregread(bus,
+						    slot, func, 0xA0, 4);
 						device_printf(dev,
-						    "  PCI CMD after busmaster: 0x%04x\n",
-						    pci_read_config(pci_dev,
-						    PCIR_COMMAND, 2));
-
-						/* Write VDRTCTL0 via PCI config */
-						{
-							uint32_t vdrtctl0;
-							vdrtctl0 = pci_read_config(
-							    pci_dev, 0xA0, 4);
-							device_printf(dev,
-							    "  VDRTCTL0 (PCI): 0x%08x\n",
-							    vdrtctl0);
-
-							/* Clear SRAM power gate */
-							vdrtctl0 |= (1 << 8);   /* D3SRAMPGD */
-							vdrtctl0 |= (1 << 16);  /* D3PGD */
-							vdrtctl0 &= ~0xFF;      /* Clear DSRAMPGE */
-							pci_write_config(pci_dev,
-							    0xA0, vdrtctl0, 4);
-							DELAY(100000);
-
-							vdrtctl0 = pci_read_config(
-							    pci_dev, 0xA0, 4);
-							device_printf(dev,
-							    "  VDRTCTL0 after: 0x%08x\n",
-							    vdrtctl0);
-						}
-						break;
+						    "  VDRTCTL0 after:  0x%08x\n",
+						    vdrtctl0);
 					}
 				}
-				free(pci_children, M_TEMP);
 			}
-		} else {
-			device_printf(dev, "Could not find PCI bus\n");
+		}
+
+		if (!found) {
+			device_printf(dev, "SST device not found on PCI bus!\n");
 		}
 	}
 
