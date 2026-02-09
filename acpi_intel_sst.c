@@ -210,11 +210,21 @@ sst_acpi_attach(device_t dev)
 		device_printf(dev, "VDRTCTL0 after: 0x%08x\n", vdrtctl0);
 	}
 
-	/* 2.2 Verify Hardware - Dump SHIM Registers (now in BAR0 + 0xC0000) */
+	/* 2.2 Probe memory to find SHIM location */
+	device_printf(dev, "Probing memory layout:\n");
+	device_printf(dev, "  BAR0+0x00000: 0x%08x\n", bus_read_4(sc->mem_res, 0x00000));
+	device_printf(dev, "  BAR0+0x80000: 0x%08x\n", bus_read_4(sc->mem_res, 0x80000));
+	device_printf(dev, "  BAR0+0xC0000: 0x%08x\n", bus_read_4(sc->mem_res, 0xC0000));
+	device_printf(dev, "  BAR0+0xE0000: 0x%08x\n", bus_read_4(sc->mem_res, 0xE0000));
+	device_printf(dev, "  BAR1+0x00: 0x%08x\n", bus_read_4(sc->shim_res, 0x00));
+	device_printf(dev, "  BAR1+0x04: 0x%08x\n", bus_read_4(sc->shim_res, 0x04));
+	device_printf(dev, "  BAR1+0x08: 0x%08x\n", bus_read_4(sc->shim_res, 0x08));
+
+	/* Try SHIM at BAR0 + 0xC0000 first */
 	csr = sst_shim_read(sc, SST_SHIM_CSR);
 	ipcx = sst_shim_read(sc, SST_SHIM_IPCX);
 
-	device_printf(dev, "Register Dump:\n");
+	device_printf(dev, "SHIM Register Dump (BAR0+0x%x):\n", SST_SHIM_OFFSET);
 	device_printf(dev, "  CSR : 0x%08x\n", csr);
 	device_printf(dev, "  IPCX: 0x%08x\n", ipcx);
 	device_printf(dev, "  PISR: 0x%08x\n", sst_shim_read(sc, SST_SHIM_PISR));

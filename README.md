@@ -158,48 +158,48 @@ These Intel Broadwell-U (5th Gen) laptops use the same Intel SST DSP architectur
 
 ```mermaid
 graph TB
-    subgraph "User Space"
-        APP[Applications<br/>cat /dev/dsp, mpv, firefox]
+    subgraph UserSpace["User Space"]
+        APP["Applications: mpv, firefox"]
     end
 
-    subgraph "FreeBSD Kernel"
-        subgraph "sound(4) Framework"
-            DSP[/dev/dsp<br/>/dev/mixer]
-            PCM[PCM Channel Layer]
-            MIX[Mixer Layer]
+    subgraph Kernel["FreeBSD Kernel"]
+        subgraph Sound["sound#40;4#41; Framework"]
+            DSP_DEV["dev-dsp, dev-mixer"]
+            PCM["PCM Channel Layer"]
+            MIX["Mixer Layer"]
         end
 
-        subgraph "acpi_intel_sst.ko"
-            MAIN[acpi_intel_sst.c<br/>Main Driver]
-            PCMD[sst_pcm.c<br/>PCM Driver]
-            JACK[sst_jack.c<br/>Jack Detection]
-            SSP[sst_ssp.c<br/>I2S Controller]
-            DMA[sst_dma.c<br/>DMA Engine]
-            IPC[sst_ipc.c<br/>IPC Protocol]
-            FW[sst_firmware.c<br/>FW Loader]
+        subgraph Driver["acpi_intel_sst.ko"]
+            MAIN["acpi_intel_sst.c"]
+            PCMD["sst_pcm.c"]
+            JACK["sst_jack.c"]
+            SSP["sst_ssp.c"]
+            DMA_DRV["sst_dma.c"]
+            IPC["sst_ipc.c"]
+            FW["sst_firmware.c"]
         end
 
-        ACPI[ACPI Subsystem<br/>INT3438]
+        ACPI["ACPI: INT3438"]
     end
 
-    subgraph "Hardware"
-        DSP_HW[Intel SST DSP<br/>Broadwell-U]
-        CODEC[Realtek ALC3263<br/>I2S Codec]
-        SPK[Speakers]
-        HP[Headphones]
-        MIC[Microphone]
+    subgraph HW["Hardware"]
+        DSP_HW["Intel SST DSP"]
+        CODEC["Realtek ALC3263"]
+        SPK["Speakers"]
+        HP["Headphones"]
+        MIC["Microphone"]
     end
 
-    APP --> DSP
-    DSP --> PCM
-    DSP --> MIX
+    APP --> DSP_DEV
+    DSP_DEV --> PCM
+    DSP_DEV --> MIX
     PCM --> PCMD
     MIX --> PCMD
     PCMD --> SSP
-    PCMD --> DMA
+    PCMD --> DMA_DRV
     JACK --> PCMD
-    SSP --> DMA
-    DMA --> IPC
+    SSP --> DMA_DRV
+    DMA_DRV --> IPC
     IPC --> FW
     MAIN --> ACPI
     FW --> DSP_HW
@@ -219,28 +219,28 @@ sequenceDiagram
     participant IPC as IPC Layer
     participant FW as Firmware Loader
     participant DSP as Intel SST DSP
-    participant PCM as PCM/sound(4)
+    participant PCM as PCM sound4
     participant JACK as Jack Detection
 
-    ACPI->>DRV: probe(INT3438)
+    ACPI->>DRV: probe INT3438
     activate DRV
     DRV->>DRV: Allocate MMIO resources
     DRV->>DRV: Setup IRQ handler
     DRV->>DSP: Assert Reset + Stall
-    DRV->>IPC: sst_ipc_init()
-    DRV->>DRV: sst_dma_init()
-    DRV->>DRV: sst_ssp_init()
-    DRV->>PCM: sst_pcm_init()
+    DRV->>IPC: sst_ipc_init
+    DRV->>DRV: sst_dma_init
+    DRV->>DRV: sst_ssp_init
+    DRV->>PCM: sst_pcm_init
 
-    DRV->>FW: sst_fw_load()
-    FW->>FW: Read /boot/firmware/intel/IntcSST2.bin
+    DRV->>FW: sst_fw_load
+    FW->>FW: Read IntcSST2.bin
     FW->>DSP: Write IRAM blocks
     FW->>DSP: Write DRAM blocks
 
-    DRV->>FW: sst_fw_boot()
-    FW->>DSP: Clear Reset (keep Stall)
+    DRV->>FW: sst_fw_boot
+    FW->>DSP: Clear Reset keep Stall
     FW->>DSP: Unmask IPC interrupts
-    FW->>DSP: Clear Stall → Running
+    FW->>DSP: Clear Stall - Running
 
     DSP-->>IPC: IPC Ready signal
     IPC-->>DRV: DSP ready
@@ -249,13 +249,13 @@ sequenceDiagram
     IPC->>DSP: IPC_GET_FW_VERSION
     DSP-->>IPC: Version reply
 
-    DRV->>PCM: sst_pcm_register()
-    PCM->>PCM: Create /dev/dsp
+    DRV->>PCM: sst_pcm_register
+    PCM->>PCM: Create dev-dsp
 
-    DRV->>JACK: sst_jack_init()
+    DRV->>JACK: sst_jack_init
     JACK->>JACK: Start polling timer
 
-    DRV-->>ACPI: attach() success
+    DRV-->>ACPI: attach success
     deactivate DRV
 ```
 
