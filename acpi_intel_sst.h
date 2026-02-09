@@ -105,18 +105,18 @@ struct sst_softc {
 
 /*
  * Register Access Helpers
- * SHIM registers are in a separate BAR on Broadwell-U
+ * SHIM registers are at offset 0xC0000 within BAR0 (mem_res)
  */
 static inline uint32_t
 sst_shim_read(struct sst_softc *sc, uint32_t reg)
 {
-	return (bus_read_4(sc->shim_res, reg));
+	return (bus_read_4(sc->mem_res, SST_SHIM_OFFSET + reg));
 }
 
 static inline void
 sst_shim_write(struct sst_softc *sc, uint32_t reg, uint32_t val)
 {
-	bus_write_4(sc->shim_res, reg, val);
+	bus_write_4(sc->mem_res, SST_SHIM_OFFSET + reg, val);
 }
 
 static inline void

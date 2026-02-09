@@ -34,9 +34,9 @@ sst_ipc_init(struct sst_softc *sc)
 	sc->ipc.state = SST_IPC_STATE_IDLE;
 	sc->ipc.ready = false;
 
-	/* Initialize mailbox addresses */
-	sc->ipc.mbox_in = SST_MBOX_OFFSET;
-	sc->ipc.mbox_out = SST_MBOX_OFFSET + SST_MBOX_SIZE_IN;
+	/* Initialize mailbox addresses (from host perspective) */
+	sc->ipc.mbox_in = SST_MBOX_INBOX_OFFSET;	/* Host -> DSP */
+	sc->ipc.mbox_out = SST_MBOX_OUTBOX_OFFSET;	/* DSP -> Host */
 
 	/* Clear message context */
 	memset(&sc->ipc.msg, 0, sizeof(sc->ipc.msg));

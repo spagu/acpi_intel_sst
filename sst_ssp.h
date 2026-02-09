@@ -15,10 +15,11 @@
 
 /*
  * SSP Port Configuration
+ * SSP offsets within BAR0 (based on Linux catpt driver)
  */
 #define SST_SSP_PORTS		2		/* Number of SSP ports */
-#define SST_SSP0_OFFSET		0x00A00000	/* SSP0 base offset */
-#define SST_SSP1_OFFSET		0x00A01000	/* SSP1 base offset */
+#define SST_SSP0_OFFSET		0xA0000		/* SSP0 base offset */
+#define SST_SSP1_OFFSET		0xA1000		/* SSP1 base offset */
 #define SST_SSP_SIZE		0x1000		/* SSP register space */
 
 /*

@@ -16,15 +16,25 @@
  */
 #define SST_DSP_BAR		0	/* PCI BAR for DSP */
 
-/* ADSP Memory Map */
-#define SST_IRAM_OFFSET		0x00000
+/*
+ * ADSP Memory Map (Haswell/Broadwell-U)
+ * All offsets within BAR0 (LPE memory region)
+ * Based on Linux catpt driver
+ */
+#define SST_IRAM_OFFSET		0x00000		/* Instruction RAM */
 #define SST_IRAM_SIZE		0x14000		/* 80KB */
-#define SST_DRAM_OFFSET		0x00400000
+#define SST_DRAM_OFFSET		0x80000		/* Data RAM */
 #define SST_DRAM_SIZE		0x28000		/* 160KB */
-#define SST_SHIM_OFFSET		0x00FE0000
+#define SST_SHIM_OFFSET		0xC0000		/* SHIM registers */
 #define SST_SHIM_SIZE		0x1000		/* 4KB */
-#define SST_MBOX_OFFSET		0x00FE4000
-#define SST_MBOX_SIZE		0x1000		/* 4KB */
+/*
+ * Mailbox offsets (from DSP perspective)
+ * OUTBOX: DSP writes, Host reads (0xE0000)
+ * INBOX:  DSP reads, Host writes (0xE0400)
+ */
+#define SST_MBOX_OUTBOX_OFFSET	0xE0000		/* DSP -> Host */
+#define SST_MBOX_INBOX_OFFSET	0xE0400		/* Host -> DSP */
+#define SST_MBOX_SIZE		0x400		/* 1KB each */
 
 /*
  * SHIM Registers (Control/Status)
@@ -104,9 +114,10 @@
 #define SST_SSP_SSACD		0x3C	/* SSP Audio Clock Divider */
 
 /*
- * DMA Registers (not used in Phase 3, placeholder)
+ * DMA Registers
+ * DW-DMA controller at offset 0x98000 within BAR0
  */
-#define SST_DMA_OFFSET		0x00FE8000
+#define SST_DMA_OFFSET		0x98000
 #define SST_DMA_SIZE		0x1000
 
 /*
