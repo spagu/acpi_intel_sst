@@ -26,7 +26,14 @@
 #include <contrib/dev/acpica/include/acpi.h>
 #include <dev/acpica/acpivar.h>
 
+#include <dev/pci/pcivar.h>
+#include <dev/pci/pcireg.h>
+
 #include "acpi_intel_sst.h"
+
+/* Intel SST PCI IDs */
+#define PCI_VENDOR_INTEL	0x8086
+#define PCI_DEVICE_SST_BDW	0x9CB6	/* Wildcat Point-LP Smart Sound */
 
 /* Driver version for debugging */
 #define SST_DRV_VERSION "0.5.0"
@@ -346,6 +353,91 @@ sst_acpi_attach(device_t dev)
 			    adr,
 			    (adr >> 16) & 0xFFFF,
 			    adr & 0xFFFF);
+		}
+	}
+
+	/*
+	 * Try to find the actual PCI device and access config space directly
+	 * The ACPI device might not have proper PCI config access
+	 */
+	{
+		device_t pci_dev;
+		device_t *pci_children;
+		int pci_count, i;
+		device_t pci0;
+
+		/* Find PCI bus */
+		pci0 = device_find_child(root_bus, "pci", 0);
+		if (pci0 == NULL)
+			pci0 = device_find_child(root_bus, "pcib", 0);
+
+		if (pci0 != NULL) {
+			device_printf(dev, "Found PCI bus: %s\n",
+			    device_get_nameunit(pci0));
+
+			/* Look for SST device on PCI bus */
+			if (device_get_children(pci0, &pci_children,
+			    &pci_count) == 0) {
+				for (i = 0; i < pci_count; i++) {
+					uint16_t vid, did;
+
+					vid = pci_get_vendor(pci_children[i]);
+					did = pci_get_device(pci_children[i]);
+
+					if (vid == PCI_VENDOR_INTEL &&
+					    did == PCI_DEVICE_SST_BDW) {
+						pci_dev = pci_children[i];
+						device_printf(dev,
+						    "Found SST PCI device: %s\n",
+						    device_get_nameunit(pci_dev));
+
+						/* Try direct PCI config access */
+						device_printf(dev,
+						    "  PCI CMD:  0x%04x\n",
+						    pci_read_config(pci_dev,
+						    PCIR_COMMAND, 2));
+						device_printf(dev,
+						    "  PCI BAR0: 0x%08x\n",
+						    pci_read_config(pci_dev,
+						    PCIR_BAR(0), 4));
+
+						/* Try enabling bus master */
+						pci_enable_busmaster(pci_dev);
+						device_printf(dev,
+						    "  PCI CMD after busmaster: 0x%04x\n",
+						    pci_read_config(pci_dev,
+						    PCIR_COMMAND, 2));
+
+						/* Write VDRTCTL0 via PCI config */
+						{
+							uint32_t vdrtctl0;
+							vdrtctl0 = pci_read_config(
+							    pci_dev, 0xA0, 4);
+							device_printf(dev,
+							    "  VDRTCTL0 (PCI): 0x%08x\n",
+							    vdrtctl0);
+
+							/* Clear SRAM power gate */
+							vdrtctl0 |= (1 << 8);   /* D3SRAMPGD */
+							vdrtctl0 |= (1 << 16);  /* D3PGD */
+							vdrtctl0 &= ~0xFF;      /* Clear DSRAMPGE */
+							pci_write_config(pci_dev,
+							    0xA0, vdrtctl0, 4);
+							DELAY(100000);
+
+							vdrtctl0 = pci_read_config(
+							    pci_dev, 0xA0, 4);
+							device_printf(dev,
+							    "  VDRTCTL0 after: 0x%08x\n",
+							    vdrtctl0);
+						}
+						break;
+					}
+				}
+				free(pci_children, M_TEMP);
+			}
+		} else {
+			device_printf(dev, "Could not find PCI bus\n");
 		}
 	}
 
