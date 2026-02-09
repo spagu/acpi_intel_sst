@@ -363,17 +363,19 @@ sst_acpi_attach(device_t dev)
 	 * But let's scan for it to be sure
 	 */
 	{
-		int bus, slot, func;
+		int domain, bus, slot, func;
 		uint32_t vid_did;
 		int found = 0;
 
 		device_printf(dev, "Scanning PCI config space for SST device...\n");
 
-		/* Scan bus 0 for the SST device */
+		/* Scan domain 0, bus 0 for the SST device */
+		domain = 0;
 		bus = 0;
 		for (slot = 0; slot < 32 && !found; slot++) {
 			for (func = 0; func < 8 && !found; func++) {
-				vid_did = pci_cfgregread(bus, slot, func, 0, 4);
+				vid_did = pci_cfgregread(domain, bus, slot,
+				    func, 0, 4);
 
 				if (vid_did == 0xFFFFFFFF ||
 				    vid_did == 0x00000000)
@@ -382,28 +384,28 @@ sst_acpi_attach(device_t dev)
 				if (vid_did == 0x9CB68086) {
 					found = 1;
 					device_printf(dev,
-					    "Found SST at PCI %d:%d:%d\n",
-					    bus, slot, func);
+					    "Found SST at PCI %d:%d:%d:%d\n",
+					    domain, bus, slot, func);
 
 					/* Read current config */
 					device_printf(dev,
 					    "  VID/DID:  0x%08x\n", vid_did);
 					device_printf(dev,
 					    "  CMD/STS:  0x%08x\n",
-					    pci_cfgregread(bus, slot, func,
-					    0x04, 4));
+					    pci_cfgregread(domain, bus, slot,
+					    func, 0x04, 4));
 					device_printf(dev,
 					    "  BAR0:     0x%08x\n",
-					    pci_cfgregread(bus, slot, func,
-					    0x10, 4));
+					    pci_cfgregread(domain, bus, slot,
+					    func, 0x10, 4));
 					device_printf(dev,
 					    "  VDRTCTL0: 0x%08x\n",
-					    pci_cfgregread(bus, slot, func,
-					    0xA0, 4));
+					    pci_cfgregread(domain, bus, slot,
+					    func, 0xA0, 4));
 					device_printf(dev,
 					    "  VDRTCTL2: 0x%08x\n",
-					    pci_cfgregread(bus, slot, func,
-					    0xA8, 4));
+					    pci_cfgregread(domain, bus, slot,
+					    func, 0xA8, 4));
 
 					/*
 					 * Try writing VDRTCTL0 directly
@@ -413,24 +415,24 @@ sst_acpi_attach(device_t dev)
 						uint32_t vdrtctl0, cmd;
 
 						/* Enable Memory + Bus Master */
-						cmd = pci_cfgregread(bus, slot,
-						    func, 0x04, 2);
+						cmd = pci_cfgregread(domain, bus,
+						    slot, func, 0x04, 2);
 						device_printf(dev,
 						    "  CMD before: 0x%04x\n", cmd);
 
 						cmd |= 0x0006;  /* Mem + BusMaster */
-						pci_cfgregwrite(bus, slot, func,
-						    0x04, cmd, 2);
+						pci_cfgregwrite(domain, bus, slot,
+						    func, 0x04, cmd, 2);
 						DELAY(10000);
 
-						cmd = pci_cfgregread(bus, slot,
-						    func, 0x04, 2);
+						cmd = pci_cfgregread(domain, bus,
+						    slot, func, 0x04, 2);
 						device_printf(dev,
 						    "  CMD after:  0x%04x\n", cmd);
 
 						/* Configure power gating */
-						vdrtctl0 = pci_cfgregread(bus,
-						    slot, func, 0xA0, 4);
+						vdrtctl0 = pci_cfgregread(domain,
+						    bus, slot, func, 0xA0, 4);
 						device_printf(dev,
 						    "  VDRTCTL0 before: 0x%08x\n",
 						    vdrtctl0);
@@ -441,12 +443,12 @@ sst_acpi_attach(device_t dev)
 						/* Clear SRAM power gate bits */
 						vdrtctl0 &= ~0xFF;
 
-						pci_cfgregwrite(bus, slot, func,
-						    0xA0, vdrtctl0, 4);
+						pci_cfgregwrite(domain, bus, slot,
+						    func, 0xA0, vdrtctl0, 4);
 						DELAY(100000);  /* 100ms */
 
-						vdrtctl0 = pci_cfgregread(bus,
-						    slot, func, 0xA0, 4);
+						vdrtctl0 = pci_cfgregread(domain,
+						    bus, slot, func, 0xA0, 4);
 						device_printf(dev,
 						    "  VDRTCTL0 after:  0x%08x\n",
 						    vdrtctl0);
