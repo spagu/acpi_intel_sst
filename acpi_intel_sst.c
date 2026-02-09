@@ -188,7 +188,7 @@ sst_acpi_attach(device_t dev)
 
 	/* 2.1 Read PCI config from BAR1 */
 	{
-		uint32_t cmd, bar0, bar1, vdrtctl0;
+		uint32_t cmd, bar0, bar1, vdrtctl0, pmcs, cap_ptr;
 
 		/* Dump PCI config space */
 		device_printf(dev, "PCI Config Space:\n");
@@ -205,7 +205,43 @@ sst_acpi_attach(device_t dev)
 		device_printf(dev, "  PCI BAR2:    0x%08x\n",
 		    bus_read_4(sc->shim_res, 0x18));
 
+		/* Check PCI PM capability and power state */
+		cap_ptr = bus_read_4(sc->shim_res, 0x34) & 0xFF;
+		device_printf(dev, "  Cap Ptr:     0x%02x\n", cap_ptr);
+
+		/* Scan capability list for PM (ID=0x01) */
+		while (cap_ptr >= 0x40 && cap_ptr != 0xFF) {
+			uint32_t cap = bus_read_4(sc->shim_res, cap_ptr);
+			uint8_t cap_id = cap & 0xFF;
+			device_printf(dev, "  Cap@0x%02x: ID=0x%02x\n",
+			    cap_ptr, cap_id);
+			if (cap_id == 0x01) {
+				/* Found PM capability */
+				pmcs = bus_read_4(sc->shim_res, cap_ptr + 4);
+				device_printf(dev, "  PMCSR:       0x%08x (D%d)\n",
+				    pmcs, pmcs & 0x03);
+
+				/* Set power state to D0 if not already */
+				if ((pmcs & 0x03) != 0) {
+					device_printf(dev,
+					    "Setting power state to D0...\n");
+					pmcs &= ~0x03;  /* Clear D-state bits */
+					bus_write_4(sc->shim_res, cap_ptr + 4,
+					    pmcs);
+					DELAY(10000);  /* 10ms for D3->D0 */
+					pmcs = bus_read_4(sc->shim_res,
+					    cap_ptr + 4);
+					device_printf(dev,
+					    "  PMCSR after: 0x%08x (D%d)\n",
+					    pmcs, pmcs & 0x03);
+				}
+				break;
+			}
+			cap_ptr = (cap >> 8) & 0xFF;
+		}
+
 		/* Ensure Memory Space Enable and Bus Master Enable */
+		cmd = bus_read_4(sc->shim_res, 0x04);
 		if ((cmd & 0x06) != 0x06) {
 			device_printf(dev, "Enabling Memory/BusMaster...\n");
 			cmd |= 0x06;
