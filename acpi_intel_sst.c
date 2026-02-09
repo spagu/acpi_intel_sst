@@ -273,14 +273,24 @@ sst_acpi_attach(device_t dev)
 
 		/*
 		 * Disable D3 power gating (catpt driver sequence):
-		 * - Set DSRAMPGE bits 0-7 = 0xFF (enable all SRAM)
-		 * - Set D3SRAMPGD bit 8 (disable D3 SRAM power gate)
-		 * - Set D3PGD bit 16 (disable D3 power gate)
+		 * Step 1: Set D3SRAMPGD bit 8 (disable D3 SRAM power gate)
+		 *         Set D3PGD bit 16 (disable D3 power gate)
 		 */
-		vdrtctl0 |= SST_VDRTCTL0_DSRAMPGE_MASK;  /* Bits 0-7 */
 		vdrtctl0 |= SST_VDRTCTL0_D3SRAMPGD;      /* Bit 8 */
 		vdrtctl0 |= SST_VDRTCTL0_D3PGD;          /* Bit 16 */
 		bus_write_4(sc->shim_res, SST_PCI_VDRTCTL0, vdrtctl0);
+		DELAY(10000);  /* 10ms */
+
+		/*
+		 * Step 2: CLEAR DSRAMPGE bits 0-7 to power up SRAM
+		 * DSRAMPGE = SRAM Power Gate Enable
+		 * Setting these bits ENABLES gating (powers OFF SRAM)
+		 * Clearing these bits DISABLES gating (powers ON SRAM)
+		 */
+		vdrtctl0 = bus_read_4(sc->shim_res, SST_PCI_VDRTCTL0);
+		vdrtctl0 &= ~SST_VDRTCTL0_DSRAMPGE_MASK;  /* Clear bits 0-7 */
+		bus_write_4(sc->shim_res, SST_PCI_VDRTCTL0, vdrtctl0);
+		device_printf(dev, "  VDRTCTL0 step2: 0x%08x\n", vdrtctl0);
 
 		/* Wait for DSP power up */
 		DELAY(100000);  /* 100ms */

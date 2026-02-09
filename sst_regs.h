@@ -39,7 +39,13 @@
 #define SST_PCI_VDRTCTL0	0xA0	/* Power gating control */
 #define SST_PCI_VDRTCTL2	0xA8	/* Clock gating control */
 
-/* VDRTCTL0 bits - from Linux catpt driver */
+/*
+ * VDRTCTL0 bits - from Linux catpt driver
+ * IMPORTANT: DSRAMPGE bits control power gating:
+ *   - Set bits = ENABLE power gating = power OFF SRAM
+ *   - Clear bits = DISABLE power gating = power ON SRAM
+ * To enable SRAM, you must CLEAR the DSRAMPGE bits!
+ */
 #define SST_VDRTCTL0_DSRAMPGE_MASK	0xFF		/* Bits 0-7: SRAM Power Gate Enable */
 #define SST_VDRTCTL0_D3SRAMPGD		(1 << 8)	/* Bit 8: D3 SRAM Power Gate Disable */
 #define SST_VDRTCTL0_D3PGD		(1 << 16)	/* Bit 16: D3 Power Gate Disable */
