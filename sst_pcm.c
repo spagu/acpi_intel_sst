@@ -431,9 +431,6 @@ static void
 sst_pcm_dma_callback(void *arg)
 {
 	struct sst_pcm_channel *ch = arg;
-	struct sst_softc *sc;
-
-	sc = ch->sc;
 
 	/* Update position */
 	ch->ptr += ch->blk_size;
