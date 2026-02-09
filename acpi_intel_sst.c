@@ -352,6 +352,53 @@ sst_acpi_attach(device_t dev)
 			}
 		}
 
+		/*
+		 * Enable Audio PLL and clocks
+		 * CLKCTL is at offset 0x78 in PCI config space (via BAR1)
+		 * The DSP requires clocks to be running before memory access
+		 */
+		{
+			uint32_t clkctl = bus_read_4(sc->shim_res, 0x78);
+			device_printf(dev, "  CLKCTL before: 0x%08x\n", clkctl);
+
+			/*
+			 * Set clock control:
+			 * Bit 18 (DCPLCG): Disable Clock Power Gating
+			 * Bits 24-25 (SMOS): Set to 0x3 for max frequency
+			 */
+			clkctl |= SST_CLKCTL_DCPLCG;  /* Bit 18 */
+			clkctl &= ~SST_CLKCTL_SMOS_MASK;
+			clkctl |= (0x3 << SST_CLKCTL_SMOS_SHIFT);
+
+			bus_write_4(sc->shim_res, 0x78, clkctl);
+			DELAY(10000);  /* 10ms */
+
+			clkctl = bus_read_4(sc->shim_res, 0x78);
+			device_printf(dev, "  CLKCTL after:  0x%08x\n", clkctl);
+		}
+
+		/*
+		 * Also check/set VDRTCTL2 bit 31 (APLLSE - Audio PLL Shutdown)
+		 * Clearing this bit enables the Audio PLL
+		 */
+		{
+			uint32_t vdrtctl2 = bus_read_4(sc->shim_res,
+			    SST_PCI_VDRTCTL2);
+			if (vdrtctl2 & SST_VDRTCTL2_APLLSE_MASK) {
+				device_printf(dev,
+				    "Enabling Audio PLL (clearing APLLSE)...\n");
+				vdrtctl2 &= ~SST_VDRTCTL2_APLLSE_MASK;
+				bus_write_4(sc->shim_res, SST_PCI_VDRTCTL2,
+				    vdrtctl2);
+				DELAY(50000);  /* 50ms for PLL lock */
+				device_printf(dev, "  VDRTCTL2 now: 0x%08x\n",
+				    bus_read_4(sc->shim_res, SST_PCI_VDRTCTL2));
+			}
+		}
+
+		/* Wait for everything to stabilize */
+		DELAY(100000);  /* 100ms */
+
 		/* Final command register check */
 		cmd = bus_read_4(sc->shim_res, 0x04);
 		device_printf(dev, "  Final Cmd:   0x%08x\n", cmd);
@@ -364,7 +411,52 @@ sst_acpi_attach(device_t dev)
 	}
 
 	/*
-	 * 2.2 NOW allocate BAR0 after power-up is complete
+	 * 2.2 Test direct BAR0 access via manual mapping
+	 * This helps diagnose if the issue is FreeBSD resource allocation
+	 * or actual hardware inaccessibility
+	 */
+	{
+		uint32_t bar0_addr = bus_read_4(sc->shim_res, 0x10);
+		device_printf(dev, "Testing BAR0 @ 0x%08x directly...\n",
+		    bar0_addr);
+
+		/* BAR0 should be 0xFE000000 based on PCI config */
+		if (bar0_addr != 0 && bar0_addr != 0xFFFFFFFF) {
+			/*
+			 * Try mapping a small region directly using
+			 * bus_space operations to test if memory responds
+			 */
+			bus_space_tag_t bst = rman_get_bustag(sc->shim_res);
+			bus_space_handle_t bsh;
+			int map_err;
+
+			map_err = bus_space_map(bst, bar0_addr & ~0xF,
+			    0x1000, 0, &bsh);
+			if (map_err == 0) {
+				uint32_t test_val;
+
+				/* Try reading SHIM CSR at 0xC0000 */
+				device_printf(dev,
+				    "Direct mapping successful!\n");
+				/*
+				 * Note: This maps only first 4KB,
+				 * can't reach 0xC0000
+				 * Just test first word
+				 */
+				test_val = bus_space_read_4(bst, bsh, 0);
+				device_printf(dev,
+				    "  Direct BAR0[0]: 0x%08x\n", test_val);
+
+				bus_space_unmap(bst, bsh, 0x1000);
+			} else {
+				device_printf(dev,
+				    "Direct mapping failed: %d\n", map_err);
+			}
+		}
+	}
+
+	/*
+	 * 2.3 NOW allocate BAR0 after power-up is complete
 	 * This ensures the memory mapping is valid
 	 */
 	sc->mem_rid = 0;
