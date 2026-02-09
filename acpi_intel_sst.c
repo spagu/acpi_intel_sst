@@ -25,6 +25,7 @@
 
 #include <contrib/dev/acpica/include/acpi.h>
 #include <dev/acpica/acpivar.h>
+#include <dev/pci/pcivar.h>
 
 #include "acpi_intel_sst.h"
 
@@ -186,71 +187,89 @@ sst_acpi_attach(device_t dev)
 	device_printf(dev, "PCI Config: 0x%lx, Size: 0x%lx\n",
 		      rman_get_start(sc->shim_res), rman_get_size(sc->shim_res));
 
-	/* 2.1 Read PCI config from BAR1 */
+	/*
+	 * 2.1 Access PCI config space via parent PCI device
+	 * VDRTCTL0/VDRTCTL2 are in PCI extended config space, NOT BAR1!
+	 * The Linux catpt driver uses pci_read_config_dword() for these.
+	 */
 	{
-		uint32_t cmd, bar0, bar1, vdrtctl0, pmcs, cap_ptr;
+		uint32_t cmd, vdrtctl0, pmcsr;
+		uint8_t cap_ptr;
+		int pm_offset = 0;
 
-		/* Dump PCI config space */
-		device_printf(dev, "PCI Config Space:\n");
+		/* Dump PCI config space via proper config accessors */
+		device_printf(dev, "PCI Config Space (via pci_read_config):\n");
 		device_printf(dev, "  DevID/VenID: 0x%08x\n",
-		    bus_read_4(sc->shim_res, 0x00));
-		cmd = bus_read_4(sc->shim_res, 0x04);
+		    pci_read_config(dev, 0x00, 4));
+		cmd = pci_read_config(dev, 0x04, 4);
 		device_printf(dev, "  Status/Cmd:  0x%08x\n", cmd);
 		device_printf(dev, "  Class/Rev:   0x%08x\n",
-		    bus_read_4(sc->shim_res, 0x08));
-		bar0 = bus_read_4(sc->shim_res, 0x10);
-		bar1 = bus_read_4(sc->shim_res, 0x14);
-		device_printf(dev, "  PCI BAR0:    0x%08x\n", bar0);
-		device_printf(dev, "  PCI BAR1:    0x%08x\n", bar1);
-		device_printf(dev, "  PCI BAR2:    0x%08x\n",
-		    bus_read_4(sc->shim_res, 0x18));
+		    pci_read_config(dev, 0x08, 4));
+		device_printf(dev, "  PCI BAR0:    0x%08x\n",
+		    pci_read_config(dev, 0x10, 4));
+		device_printf(dev, "  PCI BAR1:    0x%08x\n",
+		    pci_read_config(dev, 0x14, 4));
 
-		/* Check PCI PM capability and power state */
-		cap_ptr = bus_read_4(sc->shim_res, 0x34) & 0xFF;
+		/* Find PM capability */
+		cap_ptr = pci_read_config(dev, 0x34, 1);
 		device_printf(dev, "  Cap Ptr:     0x%02x\n", cap_ptr);
 
-		/* Scan capability list for PM (ID=0x01) */
 		while (cap_ptr >= 0x40 && cap_ptr != 0xFF) {
-			uint32_t cap = bus_read_4(sc->shim_res, cap_ptr);
-			uint8_t cap_id = cap & 0xFF;
+			uint8_t cap_id = pci_read_config(dev, cap_ptr, 1);
 			device_printf(dev, "  Cap@0x%02x: ID=0x%02x\n",
 			    cap_ptr, cap_id);
 			if (cap_id == 0x01) {
-				/* Found PM capability */
-				pmcs = bus_read_4(sc->shim_res, cap_ptr + 4);
-				device_printf(dev, "  PMCSR:       0x%08x (D%d)\n",
-				    pmcs, pmcs & 0x03);
-
-				/* Set power state to D0 if not already */
-				if ((pmcs & 0x03) != 0) {
-					device_printf(dev,
-					    "Setting power state to D0...\n");
-					pmcs &= ~0x03;  /* Clear D-state bits */
-					bus_write_4(sc->shim_res, cap_ptr + 4,
-					    pmcs);
-					DELAY(10000);  /* 10ms for D3->D0 */
-					pmcs = bus_read_4(sc->shim_res,
-					    cap_ptr + 4);
-					device_printf(dev,
-					    "  PMCSR after: 0x%08x (D%d)\n",
-					    pmcs, pmcs & 0x03);
-				}
+				pm_offset = cap_ptr;
 				break;
 			}
-			cap_ptr = (cap >> 8) & 0xFF;
+			cap_ptr = pci_read_config(dev, cap_ptr + 1, 1);
 		}
 
-		/* Ensure Memory Space Enable and Bus Master Enable */
-		cmd = bus_read_4(sc->shim_res, 0x04);
+		if (pm_offset > 0) {
+			/* Read PMCSR (PM Control/Status) */
+			pmcsr = pci_read_config(dev, pm_offset + 4, 4);
+			device_printf(dev, "  PMCSR:       0x%08x (D%d)\n",
+			    pmcsr, pmcsr & 0x03);
+
+			/* Set power state to D0 if not already */
+			if ((pmcsr & 0x03) != 0) {
+				device_printf(dev,
+				    "Setting power state to D0...\n");
+				pmcsr &= ~0x03;  /* Clear D-state bits */
+				pci_write_config(dev, pm_offset + 4, pmcsr, 4);
+
+				/*
+				 * Wait 100ms for D3cold->D0 transition
+				 * PCI spec requires at least 10ms
+				 */
+				DELAY(100000);
+
+				pmcsr = pci_read_config(dev, pm_offset + 4, 4);
+				device_printf(dev,
+				    "  PMCSR after: 0x%08x (D%d)\n",
+				    pmcsr, pmcsr & 0x03);
+			}
+		}
+
+		/*
+		 * After D3->D0 transition, re-enable memory space
+		 * and bus mastering (may have been disabled in D3)
+		 */
+		cmd = pci_read_config(dev, 0x04, 4);
+		device_printf(dev, "  Cmd after D0: 0x%08x\n", cmd);
 		if ((cmd & 0x06) != 0x06) {
-			device_printf(dev, "Enabling Memory/BusMaster...\n");
-			cmd |= 0x06;
-			bus_write_4(sc->shim_res, 0x04, cmd);
+			cmd |= 0x06;  /* Memory Space + Bus Master */
+			pci_write_config(dev, 0x04, cmd, 4);
 			DELAY(1000);
+			cmd = pci_read_config(dev, 0x04, 4);
+			device_printf(dev, "  Cmd enabled: 0x%08x\n", cmd);
 		}
 
-		/* Read power control register */
-		vdrtctl0 = bus_read_4(sc->shim_res, SST_PCI_VDRTCTL0);
+		/*
+		 * Now disable Intel-specific power gating via VDRTCTL0
+		 * This is at offset 0xA0 in PCI extended config space
+		 */
+		vdrtctl0 = pci_read_config(dev, SST_PCI_VDRTCTL0, 4);
 		device_printf(dev, "  VDRTCTL0:    0x%08x\n", vdrtctl0);
 
 		/*
@@ -262,29 +281,44 @@ sst_acpi_attach(device_t dev)
 		vdrtctl0 |= SST_VDRTCTL0_DSRAMPGE_MASK;  /* Bits 0-7 */
 		vdrtctl0 |= SST_VDRTCTL0_D3SRAMPGD;      /* Bit 8 */
 		vdrtctl0 |= SST_VDRTCTL0_D3PGD;          /* Bit 16 */
-		bus_write_4(sc->shim_res, SST_PCI_VDRTCTL0, vdrtctl0);
+		pci_write_config(dev, SST_PCI_VDRTCTL0, vdrtctl0, 4);
 
-		/* Wait for power up */
-		DELAY(50000);  /* 50ms */
+		/* Wait for DSP power up */
+		DELAY(100000);  /* 100ms */
 
 		/* Read power control after */
-		vdrtctl0 = bus_read_4(sc->shim_res, SST_PCI_VDRTCTL0);
+		vdrtctl0 = pci_read_config(dev, SST_PCI_VDRTCTL0, 4);
 		device_printf(dev, "  VDRTCTL0 after: 0x%08x\n", vdrtctl0);
 
-		/* Read VDRTCTL2 for LTR status */
+		/* Read VDRTCTL2 for clock gating status */
 		device_printf(dev, "  VDRTCTL2:    0x%08x\n",
-		    bus_read_4(sc->shim_res, SST_PCI_VDRTCTL2));
+		    pci_read_config(dev, SST_PCI_VDRTCTL2, 4));
+
+		/* Final command register check */
+		cmd = pci_read_config(dev, 0x04, 4);
+		device_printf(dev, "  Final Cmd:   0x%08x\n", cmd);
+
+		/* Verify BARs are valid */
+		device_printf(dev, "  Final BAR0:  0x%08x\n",
+		    pci_read_config(dev, 0x10, 4));
+		device_printf(dev, "  Final BAR1:  0x%08x\n",
+		    pci_read_config(dev, 0x14, 4));
 	}
 
-	/* 2.2 Probe memory to find SHIM location */
-	device_printf(dev, "Probing memory layout:\n");
-	device_printf(dev, "  BAR0+0x00000: 0x%08x\n", bus_read_4(sc->mem_res, 0x00000));
-	device_printf(dev, "  BAR0+0x80000: 0x%08x\n", bus_read_4(sc->mem_res, 0x80000));
-	device_printf(dev, "  BAR0+0xC0000: 0x%08x\n", bus_read_4(sc->mem_res, 0xC0000));
-	device_printf(dev, "  BAR0+0xE0000: 0x%08x\n", bus_read_4(sc->mem_res, 0xE0000));
-	device_printf(dev, "  BAR1+0x00: 0x%08x\n", bus_read_4(sc->shim_res, 0x00));
-	device_printf(dev, "  BAR1+0x04: 0x%08x\n", bus_read_4(sc->shim_res, 0x04));
-	device_printf(dev, "  BAR1+0x08: 0x%08x\n", bus_read_4(sc->shim_res, 0x08));
+	/* 2.2 Probe DSP memory layout */
+	device_printf(dev, "Probing DSP memory layout:\n");
+	device_printf(dev, "  BAR0+0x00000 (IRAM): 0x%08x\n",
+	    bus_read_4(sc->mem_res, 0x00000));
+	device_printf(dev, "  BAR0+0x80000 (DRAM): 0x%08x\n",
+	    bus_read_4(sc->mem_res, 0x80000));
+	device_printf(dev, "  BAR0+0xC0000 (SHIM): 0x%08x\n",
+	    bus_read_4(sc->mem_res, 0xC0000));
+	device_printf(dev, "  BAR0+0xE0000 (MBOX): 0x%08x\n",
+	    bus_read_4(sc->mem_res, 0xE0000));
+	if (sc->shim_res != NULL) {
+		device_printf(dev, "  BAR1+0x00 (SHIM mirror?): 0x%08x\n",
+		    bus_read_4(sc->shim_res, 0x00));
+	}
 
 	/* Try SHIM at BAR0 + 0xC0000 first */
 	csr = sst_shim_read(sc, SST_SHIM_CSR);
@@ -568,5 +602,6 @@ static driver_t sst_driver = {
 /* Driver Module Request */
 DRIVER_MODULE(acpi_intel_sst, acpi, sst_driver, 0, 0);
 MODULE_DEPEND(acpi_intel_sst, acpi, 1, 1, 1);
+MODULE_DEPEND(acpi_intel_sst, pci, 1, 1, 1);
 MODULE_DEPEND(acpi_intel_sst, firmware, 1, 1, 1);
 MODULE_VERSION(acpi_intel_sst, 5);
