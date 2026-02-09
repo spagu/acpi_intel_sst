@@ -160,6 +160,46 @@ sst_fw_load_module(struct sst_softc *sc, const uint8_t *data, size_t size,
 }
 
 /*
+ * Load raw binary firmware (format >= 256)
+ * These firmwares have no $MOD headers - data is directly IRAM/DRAM blocks
+ */
+static int
+sst_fw_load_raw(struct sst_softc *sc, const uint8_t *data, size_t size)
+{
+	size_t iram_size, dram_size;
+
+	/*
+	 * For Haswell/Broadwell SST firmware (format 256):
+	 * The binary is split: first half to IRAM, second half to DRAM
+	 * Default entry point is IRAM base (0x0)
+	 */
+
+	/* Calculate split - use half for each, capped at memory size */
+	iram_size = MIN(size / 2, SST_IRAM_SIZE);
+	dram_size = MIN(size - iram_size, SST_DRAM_SIZE);
+
+	device_printf(sc->dev, "Loading raw firmware: IRAM=%zu, DRAM=%zu\n",
+		      iram_size, dram_size);
+
+	/* Write to IRAM */
+	if (iram_size > 0) {
+		bus_write_region_1(sc->mem_res, SST_IRAM_OFFSET,
+				   data, iram_size);
+	}
+
+	/* Write to DRAM */
+	if (dram_size > 0) {
+		bus_write_region_1(sc->mem_res, SST_DRAM_OFFSET,
+				   data + iram_size, dram_size);
+	}
+
+	/* Entry point at IRAM base */
+	sc->fw.entry_point = 0;
+
+	return (0);
+}
+
+/*
  * Parse firmware and load to DSP
  */
 static int
@@ -179,10 +219,21 @@ sst_fw_parse(struct sst_softc *sc)
 
 	sc->fw.modules = hdr->modules;
 
-	/* Load each module */
 	ptr = sc->fw.data + sizeof(struct sst_fw_header);
 	remaining = sc->fw.size - sizeof(struct sst_fw_header);
 
+	/*
+	 * Check firmware format:
+	 * - Format < 256: Uses $MOD module headers
+	 * - Format >= 256: Raw binary (Haswell/Broadwell Windows driver FW)
+	 */
+	if (hdr->file_format >= 256) {
+		device_printf(sc->dev, "Using raw binary format (v%u)\n",
+			      hdr->file_format);
+		return sst_fw_load_raw(sc, ptr, remaining);
+	}
+
+	/* Standard format with $MOD modules */
 	for (i = 0; i < hdr->modules; i++) {
 		error = sst_fw_load_module(sc, ptr, remaining, &consumed);
 		if (error)
