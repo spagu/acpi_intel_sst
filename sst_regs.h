@@ -34,12 +34,20 @@
 /*
  * PCI Extended Config registers (accessed via BAR1 / shim_res)
  * Used for power gating control
+ * Based on Linux catpt driver register definitions
  */
 #define SST_PCI_VDRTCTL0	0xA0	/* Power gating control */
 #define SST_PCI_VDRTCTL2	0xA8	/* Clock gating control */
-#define SST_VDRTCTL0_D3PGD	(1 << 0)	/* D3 Power Gate Disable */
-#define SST_VDRTCTL0_D3SRAMPGD	(1 << 1)	/* D3 SRAM Power Gate Disable */
-#define SST_VDRTCTL2_CGEALL	0x1F		/* Clock Gate Enable All */
+
+/* VDRTCTL0 bits - from Linux catpt driver */
+#define SST_VDRTCTL0_DSRAMPGE_MASK	0xFF		/* Bits 0-7: SRAM Power Gate Enable */
+#define SST_VDRTCTL0_D3SRAMPGD		(1 << 8)	/* Bit 8: D3 SRAM Power Gate Disable */
+#define SST_VDRTCTL0_D3PGD		(1 << 16)	/* Bit 16: D3 Power Gate Disable */
+
+/* VDRTCTL2 bits */
+#define SST_VDRTCTL2_DCLCGE		(1 << 1)	/* Dynamic Clock Gating Enable */
+#define SST_VDRTCTL2_DTCGE		(1 << 10)	/* Trunk Clock Gating Enable */
+#define SST_VDRTCTL2_APLLSE_MASK	(1 << 31)	/* Audio PLL Shutdown Enable */
 #define SST_SHIM_SIZE		0x1000		/* 4KB */
 /*
  * Mailbox offsets (from DSP perspective)

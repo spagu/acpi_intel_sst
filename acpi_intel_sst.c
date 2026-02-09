@@ -217,14 +217,27 @@ sst_acpi_attach(device_t dev)
 		vdrtctl0 = bus_read_4(sc->shim_res, SST_PCI_VDRTCTL0);
 		device_printf(dev, "  VDRTCTL0:    0x%08x\n", vdrtctl0);
 
-		/* Disable D3 power gating */
-		vdrtctl0 |= (SST_VDRTCTL0_D3PGD | SST_VDRTCTL0_D3SRAMPGD);
+		/*
+		 * Disable D3 power gating (catpt driver sequence):
+		 * - Set DSRAMPGE bits 0-7 = 0xFF (enable all SRAM)
+		 * - Set D3SRAMPGD bit 8 (disable D3 SRAM power gate)
+		 * - Set D3PGD bit 16 (disable D3 power gate)
+		 */
+		vdrtctl0 |= SST_VDRTCTL0_DSRAMPGE_MASK;  /* Bits 0-7 */
+		vdrtctl0 |= SST_VDRTCTL0_D3SRAMPGD;      /* Bit 8 */
+		vdrtctl0 |= SST_VDRTCTL0_D3PGD;          /* Bit 16 */
 		bus_write_4(sc->shim_res, SST_PCI_VDRTCTL0, vdrtctl0);
-		DELAY(1000);
+
+		/* Wait for power up */
+		DELAY(50000);  /* 50ms */
 
 		/* Read power control after */
 		vdrtctl0 = bus_read_4(sc->shim_res, SST_PCI_VDRTCTL0);
 		device_printf(dev, "  VDRTCTL0 after: 0x%08x\n", vdrtctl0);
+
+		/* Read VDRTCTL2 for LTR status */
+		device_printf(dev, "  VDRTCTL2:    0x%08x\n",
+		    bus_read_4(sc->shim_res, SST_PCI_VDRTCTL2));
 	}
 
 	/* 2.2 Probe memory to find SHIM location */
