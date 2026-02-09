@@ -197,6 +197,31 @@ sst_acpi_attach(device_t dev)
 		    bus_read_4(sc->shim_res, 0x10));
 		device_printf(dev, "  PCI BAR1:    0x%08x\n",
 		    bus_read_4(sc->shim_res, 0x14));
+		device_printf(dev, "  PCI BAR2:    0x%08x\n",
+		    bus_read_4(sc->shim_res, 0x18));
+		device_printf(dev, "  PCI BAR3:    0x%08x\n",
+		    bus_read_4(sc->shim_res, 0x1C));
+		device_printf(dev, "  PCI BAR4:    0x%08x\n",
+		    bus_read_4(sc->shim_res, 0x20));
+		device_printf(dev, "  PCI BAR5:    0x%08x\n",
+		    bus_read_4(sc->shim_res, 0x24));
+
+		/* Check LPE SHIM registers (if BAR1 is really SHIM) */
+		device_printf(dev, "Checking if BAR1 is LPE SHIM:\n");
+		device_printf(dev, "  CS1 (0x00):     0x%08x\n",
+		    bus_read_4(sc->shim_res, 0x00));
+		device_printf(dev, "  ISRX (0x18):    0x%08x\n",
+		    bus_read_4(sc->shim_res, 0x18));
+		device_printf(dev, "  ISRD (0x20):    0x%08x\n",
+		    bus_read_4(sc->shim_res, 0x20));
+		device_printf(dev, "  IMRX (0x28):    0x%08x\n",
+		    bus_read_4(sc->shim_res, 0x28));
+		device_printf(dev, "  IPCX (0x38):    0x%08x\n",
+		    bus_read_4(sc->shim_res, 0x38));
+		device_printf(dev, "  CLKCTL (0x78):  0x%08x\n",
+		    bus_read_4(sc->shim_res, 0x78));
+		device_printf(dev, "  CS2 (0x80):     0x%08x\n",
+		    bus_read_4(sc->shim_res, 0x80));
 
 		/* Find PM capability */
 		cap_ptr = bus_read_1(sc->shim_res, 0x34);
@@ -289,8 +314,29 @@ sst_acpi_attach(device_t dev)
 		device_printf(dev, "  VDRTCTL0 after: 0x%08x\n", vdrtctl0);
 
 		/* Read VDRTCTL2 for clock gating status */
-		device_printf(dev, "  VDRTCTL2:    0x%08x\n",
-		    bus_read_4(sc->shim_res, SST_PCI_VDRTCTL2));
+		{
+			uint32_t vdrtctl2 = bus_read_4(sc->shim_res,
+			    SST_PCI_VDRTCTL2);
+			device_printf(dev, "  VDRTCTL2:    0x%08x\n", vdrtctl2);
+
+			/*
+			 * Try disabling clock gating:
+			 * - Clear bit 1 (DCLCGE - Dynamic Clock Gating)
+			 * - Clear bit 10 (DTCGE - Trunk Clock Gating)
+			 */
+			if (vdrtctl2 & (SST_VDRTCTL2_DCLCGE |
+			    SST_VDRTCTL2_DTCGE)) {
+				device_printf(dev,
+				    "Disabling clock gating...\n");
+				vdrtctl2 &= ~SST_VDRTCTL2_DCLCGE;
+				vdrtctl2 &= ~SST_VDRTCTL2_DTCGE;
+				bus_write_4(sc->shim_res, SST_PCI_VDRTCTL2,
+				    vdrtctl2);
+				DELAY(10000);
+				device_printf(dev, "  VDRTCTL2 after: 0x%08x\n",
+				    bus_read_4(sc->shim_res, SST_PCI_VDRTCTL2));
+			}
+		}
 
 		/* Final command register check */
 		cmd = bus_read_4(sc->shim_res, 0x04);
