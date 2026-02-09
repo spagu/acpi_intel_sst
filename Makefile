@@ -14,7 +14,7 @@
 
 KMOD=   acpi_intel_sst
 SRCS=   acpi_intel_sst.c sst_firmware.c sst_ipc.c sst_ssp.c sst_dma.c sst_pcm.c sst_jack.c
-SRCS+=  device_if.h bus_if.h acpi_if.h channel_if.h mixer_if.h
+SRCS+=  device_if.h bus_if.h acpi_if.h pci_if.h channel_if.h mixer_if.h
 SRCS+=  opt_acpi.h opt_snd.h
 
 # Compiler flags
