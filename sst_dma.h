@@ -15,10 +15,9 @@
 
 /*
  * DMA Controller Configuration
+ * Note: SST_DMA_OFFSET and SST_DMA_SIZE are defined in sst_regs.h
  */
 #define SST_DMA_CHANNELS	8		/* Number of DMA channels */
-#define SST_DMA_OFFSET		0x00FE8000	/* DMA base offset */
-#define SST_DMA_SIZE		0x1000		/* DMA register space */
 
 /*
  * DMA Channel Registers (offset from channel base)
