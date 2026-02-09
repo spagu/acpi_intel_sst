@@ -25,7 +25,21 @@
 #define SST_IRAM_SIZE		0x14000		/* 80KB */
 #define SST_DRAM_OFFSET		0x80000		/* Data RAM */
 #define SST_DRAM_SIZE		0x28000		/* 160KB */
+/*
+ * SHIM registers at offset 0xC0000 within LPE memory (BAR0)
+ * Note: Power gating must be disabled first via PCI config (VDRTCTL0)
+ */
 #define SST_SHIM_OFFSET		0xC0000		/* SHIM registers */
+
+/*
+ * PCI Extended Config registers (accessed via BAR1 / shim_res)
+ * Used for power gating control
+ */
+#define SST_PCI_VDRTCTL0	0xA0	/* Power gating control */
+#define SST_PCI_VDRTCTL2	0xA8	/* Clock gating control */
+#define SST_VDRTCTL0_D3PGD	(1 << 0)	/* D3 Power Gate Disable */
+#define SST_VDRTCTL0_D3SRAMPGD	(1 << 1)	/* D3 SRAM Power Gate Disable */
+#define SST_VDRTCTL2_CGEALL	0x1F		/* Clock Gate Enable All */
 #define SST_SHIM_SIZE		0x1000		/* 4KB */
 /*
  * Mailbox offsets (from DSP perspective)

@@ -154,6 +154,213 @@ These Intel Broadwell-U (5th Gen) laptops use the same Intel SST DSP architectur
 └─────────────────────────────────────────────────────────┘
 ```
 
+### Driver Component Diagram
+
+```mermaid
+graph TB
+    subgraph "User Space"
+        APP[Applications<br/>cat /dev/dsp, mpv, firefox]
+    end
+
+    subgraph "FreeBSD Kernel"
+        subgraph "sound(4) Framework"
+            DSP[/dev/dsp<br/>/dev/mixer]
+            PCM[PCM Channel Layer]
+            MIX[Mixer Layer]
+        end
+
+        subgraph "acpi_intel_sst.ko"
+            MAIN[acpi_intel_sst.c<br/>Main Driver]
+            PCMD[sst_pcm.c<br/>PCM Driver]
+            JACK[sst_jack.c<br/>Jack Detection]
+            SSP[sst_ssp.c<br/>I2S Controller]
+            DMA[sst_dma.c<br/>DMA Engine]
+            IPC[sst_ipc.c<br/>IPC Protocol]
+            FW[sst_firmware.c<br/>FW Loader]
+        end
+
+        ACPI[ACPI Subsystem<br/>INT3438]
+    end
+
+    subgraph "Hardware"
+        DSP_HW[Intel SST DSP<br/>Broadwell-U]
+        CODEC[Realtek ALC3263<br/>I2S Codec]
+        SPK[Speakers]
+        HP[Headphones]
+        MIC[Microphone]
+    end
+
+    APP --> DSP
+    DSP --> PCM
+    DSP --> MIX
+    PCM --> PCMD
+    MIX --> PCMD
+    PCMD --> SSP
+    PCMD --> DMA
+    JACK --> PCMD
+    SSP --> DMA
+    DMA --> IPC
+    IPC --> FW
+    MAIN --> ACPI
+    FW --> DSP_HW
+    DSP_HW --> CODEC
+    CODEC --> SPK
+    CODEC --> HP
+    CODEC --> MIC
+    JACK -.->|GPIO| CODEC
+```
+
+### Driver Initialization Sequence
+
+```mermaid
+sequenceDiagram
+    participant ACPI as ACPI Subsystem
+    participant DRV as acpi_intel_sst
+    participant IPC as IPC Layer
+    participant FW as Firmware Loader
+    participant DSP as Intel SST DSP
+    participant PCM as PCM/sound(4)
+    participant JACK as Jack Detection
+
+    ACPI->>DRV: probe(INT3438)
+    activate DRV
+    DRV->>DRV: Allocate MMIO resources
+    DRV->>DRV: Setup IRQ handler
+    DRV->>DSP: Assert Reset + Stall
+    DRV->>IPC: sst_ipc_init()
+    DRV->>DRV: sst_dma_init()
+    DRV->>DRV: sst_ssp_init()
+    DRV->>PCM: sst_pcm_init()
+
+    DRV->>FW: sst_fw_load()
+    FW->>FW: Read /boot/firmware/intel/IntcSST2.bin
+    FW->>DSP: Write IRAM blocks
+    FW->>DSP: Write DRAM blocks
+
+    DRV->>FW: sst_fw_boot()
+    FW->>DSP: Clear Reset (keep Stall)
+    FW->>DSP: Unmask IPC interrupts
+    FW->>DSP: Clear Stall → Running
+
+    DSP-->>IPC: IPC Ready signal
+    IPC-->>DRV: DSP ready
+
+    DRV->>IPC: Get FW Version
+    IPC->>DSP: IPC_GET_FW_VERSION
+    DSP-->>IPC: Version reply
+
+    DRV->>PCM: sst_pcm_register()
+    PCM->>PCM: Create /dev/dsp
+
+    DRV->>JACK: sst_jack_init()
+    JACK->>JACK: Start polling timer
+
+    DRV-->>ACPI: attach() success
+    deactivate DRV
+```
+
+### Audio Playback Flow
+
+```mermaid
+sequenceDiagram
+    participant APP as Application
+    participant DSP_DEV as /dev/dsp
+    participant PCM as sst_pcm
+    participant SSP as sst_ssp
+    participant DMA as sst_dma
+    participant HW as DSP Hardware
+    participant CODEC as ALC3263
+
+    APP->>DSP_DEV: open()
+    DSP_DEV->>PCM: channel_init()
+    PCM->>DMA: Allocate DMA buffer
+    PCM->>DMA: Allocate DMA channel
+
+    APP->>DSP_DEV: ioctl(SNDCTL_DSP_SPEED, 48000)
+    DSP_DEV->>PCM: channel_setspeed()
+
+    APP->>DSP_DEV: ioctl(SNDCTL_DSP_SETFMT, S16_LE)
+    DSP_DEV->>PCM: channel_setformat()
+
+    APP->>DSP_DEV: write(audio_data)
+    DSP_DEV->>PCM: Copy to DMA buffer
+
+    PCM->>PCM: channel_trigger(START)
+    PCM->>SSP: sst_ssp_configure()
+    SSP->>HW: Setup I2S clocks
+    PCM->>DMA: sst_dma_configure()
+    DMA->>HW: Setup DMA descriptors
+    PCM->>DMA: sst_dma_start()
+    PCM->>SSP: sst_ssp_start()
+
+    loop Audio Streaming
+        DMA->>HW: Transfer block
+        HW->>CODEC: I2S data stream
+        CODEC->>CODEC: DAC conversion
+        HW-->>DMA: Block complete IRQ
+        DMA-->>PCM: DMA callback
+        PCM->>PCM: chn_intr() → wake writer
+        APP->>DSP_DEV: write(next_block)
+    end
+
+    APP->>DSP_DEV: close()
+    PCM->>PCM: channel_trigger(STOP)
+    PCM->>SSP: sst_ssp_stop()
+    PCM->>DMA: sst_dma_stop()
+    PCM->>DMA: Free resources
+```
+
+### Jack Detection State Machine
+
+```mermaid
+stateDiagram-v2
+    [*] --> Removed: Initial state
+
+    Removed --> Detecting: GPIO change detected
+    Detecting --> Removed: Debounce failed<br/>(unstable)
+    Detecting --> Inserted: Debounce OK<br/>(3 stable reads)
+
+    Inserted --> Detecting: GPIO change detected
+    Detecting --> Inserted: Debounce failed<br/>(unstable)
+
+    Inserted --> Removed: Debounce OK<br/>(3 stable reads)
+
+    state Inserted {
+        [*] --> HeadphoneMode
+        HeadphoneMode: Speakers muted<br/>Headphones active
+    }
+
+    state Removed {
+        [*] --> SpeakerMode
+        SpeakerMode: Speakers active<br/>Headphones muted
+    }
+```
+
+### Memory Map
+
+```mermaid
+graph LR
+    subgraph "BAR0 - DSP Memory (512KB)"
+        IRAM[IRAM<br/>0x00000-0x13FFF<br/>80KB Code]
+        DRAM[DRAM<br/>0x400000-0x427FFF<br/>160KB Data]
+        SHIM[SHIM Registers<br/>0xFE0000-0xFE0FFF<br/>4KB Control]
+        MBOX[Mailbox<br/>0xFE4000-0xFE4FFF<br/>4KB IPC]
+        DMA_REG[DMA Registers<br/>0xFE8000-0xFE8FFF<br/>4KB]
+    end
+
+    subgraph "SHIM Register Detail"
+        CSR[CSR 0x00<br/>Control/Status]
+        PISR[PISR 0x08<br/>Platform IRQ Status]
+        IPCX[IPCX 0x38<br/>IPC Command]
+        IPCD[IPCD 0x40<br/>IPC Data]
+    end
+
+    SHIM --> CSR
+    SHIM --> PISR
+    SHIM --> IPCX
+    SHIM --> IPCD
+```
+
 ---
 
 ## 📊 Current Status

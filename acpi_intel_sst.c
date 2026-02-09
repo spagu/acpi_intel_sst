@@ -173,20 +173,44 @@ sst_acpi_attach(device_t dev)
 	device_printf(dev, "DSP Memory: 0x%lx, Size: 0x%lx\n",
 		      rman_get_start(sc->mem_res), rman_get_size(sc->mem_res));
 
-	/* BAR1: SHIM Registers */
+	/* BAR1: PCI Extended Config (for power gating control) */
 	sc->shim_rid = 1;
 	sc->shim_res = bus_alloc_resource_any(dev, SYS_RES_MEMORY,
 					      &sc->shim_rid, RF_ACTIVE);
 	if (sc->shim_res == NULL) {
-		device_printf(dev, "Failed to allocate SHIM resource\n");
+		device_printf(dev, "Failed to allocate PCI config resource\n");
 		error = ENXIO;
 		goto fail;
 	}
 
-	device_printf(dev, "SHIM Base: 0x%lx, Size: 0x%lx\n",
+	device_printf(dev, "PCI Config: 0x%lx, Size: 0x%lx\n",
 		      rman_get_start(sc->shim_res), rman_get_size(sc->shim_res));
 
-	/* 2.1 Verify Hardware - Dump Registers */
+	/* 2.1 Disable power gating via PCI extended config (BAR1) */
+	{
+		uint32_t vdrtctl0, vdrtctl2;
+
+		/* Read current power gating state */
+		vdrtctl0 = bus_read_4(sc->shim_res, SST_PCI_VDRTCTL0);
+		device_printf(dev, "VDRTCTL0 before: 0x%08x\n", vdrtctl0);
+
+		/* Disable D3 power gating */
+		vdrtctl0 |= (SST_VDRTCTL0_D3PGD | SST_VDRTCTL0_D3SRAMPGD);
+		bus_write_4(sc->shim_res, SST_PCI_VDRTCTL0, vdrtctl0);
+		DELAY(100);
+
+		/* Disable clock gating */
+		vdrtctl2 = bus_read_4(sc->shim_res, SST_PCI_VDRTCTL2);
+		vdrtctl2 &= ~SST_VDRTCTL2_CGEALL;
+		bus_write_4(sc->shim_res, SST_PCI_VDRTCTL2, vdrtctl2);
+		DELAY(500);
+
+		/* Verify */
+		vdrtctl0 = bus_read_4(sc->shim_res, SST_PCI_VDRTCTL0);
+		device_printf(dev, "VDRTCTL0 after: 0x%08x\n", vdrtctl0);
+	}
+
+	/* 2.2 Verify Hardware - Dump SHIM Registers (now in BAR0 + 0xC0000) */
 	csr = sst_shim_read(sc, SST_SHIM_CSR);
 	ipcx = sst_shim_read(sc, SST_SHIM_IPCX);
 

@@ -67,10 +67,10 @@ struct sst_softc {
 	ACPI_HANDLE		handle;
 
 	/* Memory Resources (MMIO) */
-	int			mem_rid;	/* BAR0 - DSP memory */
+	int			mem_rid;	/* BAR0 - LPE memory (IRAM/DRAM/SHIM) */
 	struct resource		*mem_res;
-	int			shim_rid;	/* BAR1 - SHIM registers */
-	struct resource		*shim_res;
+	int			shim_rid;	/* BAR1 - PCI extended config */
+	struct resource		*shim_res;	/* Used for power gating control */
 
 	/* Interrupt Resource */
 	int			irq_rid;
