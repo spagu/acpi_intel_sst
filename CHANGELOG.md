@@ -15,8 +15,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - References section with Intel documentation links
 
 ### Planned
-- sound(4) PCM integration
-- Mixer support
+- Jack detection (headphone/microphone)
+- ALSA compatibility layer
+
+---
+
+## [0.5.0] - 2026-02-09
+
+### Added
+- **Phase 5: sound(4) PCM Integration**
+- PCM driver (`sst_pcm.c`) - FreeBSD sound(4) framework integration
+- Playback and capture channel support
+- DMA buffer allocation with bus_dma(9)
+- Mixer controls (volume, mute)
+- Device registration at `/dev/dsp`
+
+### Technical
+- Channel methods: init, free, setformat, setspeed, trigger, getptr
+- Supported formats: S16_LE, S24_LE, S32_LE (stereo)
+- Sample rates: 8kHz - 192kHz
+- Block-based DMA with circular buffers
+- Mixer: PCM and master volume controls
+
+### Changed
+- Driver version bumped to 0.5.0
+- MODULE_VERSION updated to 5
+- Added MODULE_DEPEND for sound subsystem
 
 ---
 
@@ -129,7 +153,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `Fixed` for any bug fixes
 - `Security` for vulnerability fixes
 
-[Unreleased]: https://github.com/spagu/acpi_intel_sst/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/spagu/acpi_intel_sst/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/spagu/acpi_intel_sst/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/spagu/acpi_intel_sst/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/spagu/acpi_intel_sst/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/spagu/acpi_intel_sst/compare/v0.1.0...v0.2.0

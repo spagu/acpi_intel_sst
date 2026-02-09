@@ -138,7 +138,7 @@ These Intel Broadwell-U (5th Gen) laptops use the same Intel SST DSP architectur
 │                    (SST / SOF format)                    │
 ├─────────────────────────────────────────────────────────┤
 │  ┌─────────────────────────────────────────────────┐    │
-│  │           acpi_intel_sst.ko (This Driver)       │◄───┤ Phase 1-4 ✓
+│  │           acpi_intel_sst.ko (This Driver)       │◄───┤ Phase 1-5 ✓
 │  │  • ACPI Probe/Attach                            │    │
 │  │  • MMIO Resource Allocation                     │    │
 │  │  • IRQ Handling                                 │    │
@@ -157,7 +157,7 @@ These Intel Broadwell-U (5th Gen) laptops use the same Intel SST DSP architectur
 
 ## 📊 Current Status
 
-### Implemented (Phase 1-4)
+### Implemented (Phase 1-5) - COMPLETE
 
 | Feature | Status | Description |
 |---------|--------|-------------|
@@ -173,15 +173,16 @@ These Intel Broadwell-U (5th Gen) laptops use the same Intel SST DSP architectur
 | DSP Boot | ✅ Done | Load FW, release reset, wait ready |
 | I2S/SSP Controller | ✅ Done | 2-port SSP with I2S support |
 | DMA Controller | ✅ Done | 8-channel DMA engine |
+| PCM Integration | ✅ Done | sound(4) /dev/dsp device |
+| Mixer Support | ✅ Done | Volume control |
 
-### Planned (Phase 5)
+### Future Enhancements
 
 | Feature | Status | Description |
 |---------|--------|-------------|
-| Topology Loading | ⏳ TODO | Audio pipeline config |
-| PCM Integration | ⏳ TODO | sound(4) framework |
-| Mixer Support | ⏳ TODO | Volume control |
-| Jack Detection | ⏳ TODO | Headphone/mic detect |
+| Jack Detection | ⏳ TODO | Headphone/mic auto-detect |
+| Topology Loading | ⏳ TODO | Dynamic audio pipeline |
+| Multi-stream | ⏳ TODO | Multiple simultaneous streams |
 
 ---
 
@@ -269,6 +270,60 @@ acpi_intel_sst0: DMA initialized: 8 channels
 acpi_intel_sst0: Intel SST DSP attached successfully (Phase 1-4)
 ```
 
+### Testing Sound
+
+Once the driver is fully functional (Phase 5), use these commands to test audio:
+
+```bash
+# List available sound devices
+cat /dev/sndstat
+
+# Check mixer controls
+mixer -f /dev/mixer0
+
+# Set master volume (0-100)
+mixer vol 80
+
+# Play a test tone (requires audio/sox package)
+pkg install sox
+play -n synth 3 sine 440
+
+# Play a WAV file
+cat /path/to/test.wav > /dev/dsp
+
+# Record audio (if microphone supported)
+cat /dev/dsp > recording.raw
+
+# Alternative: Use audio/beep for simple test
+pkg install beep
+beep -f 1000 -l 500
+```
+
+#### Verify Audio Pipeline
+
+```bash
+# Check PCM device
+ls -la /dev/dsp*
+
+# View audio device info
+sysctl dev.pcm
+
+# Check for errors in kernel log
+dmesg | grep -E "(sst|pcm|sound)"
+
+# Monitor audio interrupts
+vmstat -i | grep sst
+```
+
+#### Troubleshooting Audio
+
+| Symptom | Possible Cause | Solution |
+|---------|----------------|----------|
+| No /dev/dsp | PCM registration failed | Check firmware loaded |
+| No sound output | Mixer muted | Run `mixer vol 100` |
+| Distorted audio | Sample rate mismatch | Check SSP clock config |
+| Crackling sound | DMA underrun | Increase buffer size |
+
 ---
 
 ## 🔍 Debugging
@@ -335,10 +390,16 @@ Phase 4 ✓ - I2S/SSP & DMA
 ├── Clock configuration
 └── Data streaming infrastructure
 
-Phase 5 ⏳ - Audio Integration
-├── sound(4) PCM driver
-├── Mixer support
-└── Jack detection
+Phase 5 ✓ - Audio Integration
+├── sound(4) PCM driver (/dev/dsp)
+├── Mixer support (volume control)
+├── DMA buffer management
+└── Playback & capture channels
+
+Future - Enhancements
+├── Jack detection
+├── Multi-stream support
+└── Power optimization
 ```
 
 ---
@@ -389,8 +450,7 @@ On Broadwell-U with Realtek ALC3263:
 
 Detailed implementation plan for Phase 2-3 is available in [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md).
 
-**Next Steps:**
-- Phase 5: sound(4) PCM driver integration, mixer support
+**Status:** All phases complete. Driver ready for testing.
 
 ---
 
@@ -400,8 +460,8 @@ Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for gui
 
 ### Areas Needing Help
 
-- 🔴 sound(4) PCM integration
-- 🔴 Mixer/volume control
+- 🟡 Jack detection (headphone/mic)
+- 🟡 Multi-stream support
 - 🟡 Testing on different Broadwell-U devices
 - 🟢 Documentation improvements
 

@@ -7,7 +7,7 @@
  * Intel Smart Sound Technology (SST) ACPI Driver for FreeBSD
  * Target: Intel Broadwell-U (INT3438)
  *
- * Phase 1-4: ACPI Attachment, DSP Init, Firmware & IPC, I2S/SSP & DMA
+ * Phase 1-5: ACPI, DSP, Firmware, IPC, I2S/SSP, DMA, PCM/sound(4)
  */
 
 #include <sys/param.h>
@@ -29,7 +29,7 @@
 #include "acpi_intel_sst.h"
 
 /* Driver version for debugging */
-#define SST_DRV_VERSION "0.4.0"
+#define SST_DRV_VERSION "0.5.0"
 
 /* Forward declarations */
 static int sst_acpi_probe(device_t dev);
@@ -249,7 +249,14 @@ sst_acpi_attach(device_t dev)
 		goto fail;
 	}
 
-	/* 9. Load and boot firmware */
+	/* 9. Initialize PCM subsystem */
+	error = sst_pcm_init(sc);
+	if (error) {
+		device_printf(dev, "Failed to initialize PCM\n");
+		goto fail;
+	}
+
+	/* 10. Load and boot firmware */
 	error = sst_fw_load(sc);
 	if (error) {
 		device_printf(dev, "Firmware load failed: %d\n", error);
@@ -268,11 +275,22 @@ sst_acpi_attach(device_t dev)
 		}
 	}
 
-	/* 10. Mark attached */
+	/* 11. Register PCM device with sound(4) */
+	if (sc->fw.state == SST_FW_STATE_RUNNING) {
+		error = sst_pcm_register(sc);
+		if (error) {
+			device_printf(dev, "PCM registration failed: %d\n",
+			    error);
+			/* Non-fatal */
+			error = 0;
+		}
+	}
+
+	/* 12. Mark attached */
 	sc->attached = true;
 	sc->state = SST_STATE_ATTACHED;
 
-	device_printf(dev, "Intel SST DSP attached successfully (Phase 1-4)\n");
+	device_printf(dev, "Intel SST DSP attached successfully (Phase 1-5)\n");
 
 	return (0);
 
@@ -290,6 +308,9 @@ sst_acpi_detach(device_t dev)
 	struct sst_softc *sc;
 
 	sc = device_get_softc(dev);
+
+	/* Cleanup PCM */
+	sst_pcm_fini(sc);
 
 	/* Cleanup SSP */
 	sst_ssp_fini(sc);
@@ -420,4 +441,5 @@ static driver_t sst_driver = {
 DRIVER_MODULE(acpi_intel_sst, acpi, sst_driver, 0, 0);
 MODULE_DEPEND(acpi_intel_sst, acpi, 1, 1, 1);
 MODULE_DEPEND(acpi_intel_sst, firmware, 1, 1, 1);
-MODULE_VERSION(acpi_intel_sst, 4);
+MODULE_DEPEND(acpi_intel_sst, sound, SOUND_MINVER, SOUND_PREFVER, SOUND_MAXVER);
+MODULE_VERSION(acpi_intel_sst, 5);

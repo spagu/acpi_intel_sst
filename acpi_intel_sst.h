@@ -45,6 +45,7 @@
 #include "sst_ipc.h"
 #include "sst_ssp.h"
 #include "sst_dma.h"
+#include "sst_pcm.h"
 
 /* ACPI IDs for Broadwell-U Audio DSP */
 #define SST_ACPI_ID_BDW		"INT3438"
@@ -91,6 +92,9 @@ struct sst_softc {
 
 	/* DMA controller */
 	struct sst_dma		dma;
+
+	/* PCM / sound(4) */
+	struct sst_pcm		pcm;
 };
 
 /*
