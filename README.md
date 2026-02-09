@@ -175,12 +175,12 @@ These Intel Broadwell-U (5th Gen) laptops use the same Intel SST DSP architectur
 | DMA Controller | ✅ Done | 8-channel DMA engine |
 | PCM Integration | ✅ Done | sound(4) /dev/dsp device |
 | Mixer Support | ✅ Done | Volume control |
+| Jack Detection | ✅ Done | Headphone/mic auto-detect |
 
 ### Future Enhancements
 
 | Feature | Status | Description |
 |---------|--------|-------------|
-| Jack Detection | ⏳ TODO | Headphone/mic auto-detect |
 | Topology Loading | ⏳ TODO | Dynamic audio pipeline |
 | Multi-stream | ⏳ TODO | Multiple simultaneous streams |
 
@@ -267,12 +267,15 @@ acpi_intel_sst0:   IPCX: 0x00000000
 acpi_intel_sst0: DSP in Reset/Stall state. CSR: 0x00000003
 acpi_intel_sst0: SSP initialized: 2 ports
 acpi_intel_sst0: DMA initialized: 8 channels
-acpi_intel_sst0: Intel SST DSP attached successfully (Phase 1-4)
+acpi_intel_sst0: PCM subsystem initialized
+acpi_intel_sst0: Jack detection initialized (polling mode)
+acpi_intel_sst0: Jack detection enabled
+acpi_intel_sst0: Intel SST DSP attached successfully
 ```
 
 ### Testing Sound
 
-Once the driver is fully functional (Phase 5), use these commands to test audio:
+Use these commands to test audio:
 
 ```bash
 # List available sound devices
@@ -313,6 +316,22 @@ dmesg | grep -E "(sst|pcm|sound)"
 
 # Monitor audio interrupts
 vmstat -i | grep sst
+```
+
+#### Jack Detection
+
+```bash
+# Check headphone jack state
+sysctl dev.acpi_intel_sst.0.jack.headphone
+
+# Check microphone jack state
+sysctl dev.acpi_intel_sst.0.jack.microphone
+
+# Enable/disable jack detection
+sysctl dev.acpi_intel_sst.0.jack.enabled=1
+
+# View jack statistics
+sysctl dev.acpi_intel_sst.0.jack
 ```
 
 #### Troubleshooting Audio
@@ -394,11 +413,12 @@ Phase 5 ✓ - Audio Integration
 ├── sound(4) PCM driver (/dev/dsp)
 ├── Mixer support (volume control)
 ├── DMA buffer management
-└── Playback & capture channels
+├── Playback & capture channels
+└── Jack detection (headphone/mic)
 
 Future - Enhancements
-├── Jack detection
 ├── Multi-stream support
+├── Topology loading
 └── Power optimization
 ```
 
@@ -460,7 +480,7 @@ Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for gui
 
 ### Areas Needing Help
 
-- 🟡 Jack detection (headphone/mic)
+- 🟡 Topology loading (dynamic audio pipeline)
 - 🟡 Multi-stream support
 - 🟡 Testing on different Broadwell-U devices
 - 🟢 Documentation improvements

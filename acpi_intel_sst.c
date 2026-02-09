@@ -143,6 +143,7 @@ sst_acpi_attach(device_t dev)
 	sc->dev = dev;
 	sc->handle = acpi_get_handle(dev);
 	sc->mem_res = NULL;
+	sc->shim_res = NULL;
 	sc->irq_res = NULL;
 	sc->irq_cookie = NULL;
 	sc->attached = false;
@@ -158,26 +159,32 @@ sst_acpi_attach(device_t dev)
 		device_printf(dev, "Warning: Failed to set power state to D0\n");
 	}
 
-	/* 2. Allocate Memory Resource (MMIO) */
+	/* 2. Allocate Memory Resources (MMIO) */
+	/* BAR0: DSP Memory (IRAM/DRAM) */
 	sc->mem_rid = 0;
 	sc->mem_res = bus_alloc_resource_any(dev, SYS_RES_MEMORY,
 					     &sc->mem_rid, RF_ACTIVE);
 	if (sc->mem_res == NULL) {
-		device_printf(dev, "Failed to allocate memory resource\n");
+		device_printf(dev, "Failed to allocate DSP memory resource\n");
 		error = ENXIO;
 		goto fail;
 	}
 
-	/* Validate MMIO region size */
-	if (rman_get_size(sc->mem_res) < SST_MIN_MMIO_SIZE) {
-		device_printf(dev, "MMIO region too small: 0x%lx (need 0x%x)\n",
-			      rman_get_size(sc->mem_res), SST_MIN_MMIO_SIZE);
-		error = ENXIO;
-		goto fail;
-	}
-
-	device_printf(dev, "MMIO Base: 0x%lx, Size: 0x%lx\n",
+	device_printf(dev, "DSP Memory: 0x%lx, Size: 0x%lx\n",
 		      rman_get_start(sc->mem_res), rman_get_size(sc->mem_res));
+
+	/* BAR1: SHIM Registers */
+	sc->shim_rid = 1;
+	sc->shim_res = bus_alloc_resource_any(dev, SYS_RES_MEMORY,
+					      &sc->shim_rid, RF_ACTIVE);
+	if (sc->shim_res == NULL) {
+		device_printf(dev, "Failed to allocate SHIM resource\n");
+		error = ENXIO;
+		goto fail;
+	}
+
+	device_printf(dev, "SHIM Base: 0x%lx, Size: 0x%lx\n",
+		      rman_get_start(sc->shim_res), rman_get_size(sc->shim_res));
 
 	/* 2.1 Verify Hardware - Dump Registers */
 	csr = sst_shim_read(sc, SST_SHIM_CSR);
@@ -286,11 +293,22 @@ sst_acpi_attach(device_t dev)
 		}
 	}
 
-	/* 12. Mark attached */
+	/* 12. Initialize jack detection */
+	error = sst_jack_init(sc);
+	if (error) {
+		device_printf(dev, "Jack detection init failed: %d\n", error);
+		/* Non-fatal */
+		error = 0;
+	} else {
+		sst_jack_sysctl_init(sc);
+		sst_jack_enable(sc);
+	}
+
+	/* 13. Mark attached */
 	sc->attached = true;
 	sc->state = SST_STATE_ATTACHED;
 
-	device_printf(dev, "Intel SST DSP attached successfully (Phase 1-5)\n");
+	device_printf(dev, "Intel SST DSP attached successfully\n");
 
 	return (0);
 
@@ -308,6 +326,9 @@ sst_acpi_detach(device_t dev)
 	struct sst_softc *sc;
 
 	sc = device_get_softc(dev);
+
+	/* Cleanup jack detection */
+	sst_jack_fini(sc);
 
 	/* Cleanup PCM */
 	sst_pcm_fini(sc);
@@ -336,7 +357,14 @@ sst_acpi_detach(device_t dev)
 		sc->irq_res = NULL;
 	}
 
-	/* Release Memory */
+	/* Release SHIM Memory */
+	if (sc->shim_res != NULL) {
+		bus_release_resource(dev, SYS_RES_MEMORY, sc->shim_rid,
+				     sc->shim_res);
+		sc->shim_res = NULL;
+	}
+
+	/* Release DSP Memory */
 	if (sc->mem_res != NULL) {
 		bus_release_resource(dev, SYS_RES_MEMORY, sc->mem_rid,
 				     sc->mem_res);

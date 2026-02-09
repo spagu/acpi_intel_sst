@@ -46,6 +46,7 @@
 #include "sst_ssp.h"
 #include "sst_dma.h"
 #include "sst_pcm.h"
+#include "sst_jack.h"
 
 /* ACPI IDs for Broadwell-U Audio DSP */
 #define SST_ACPI_ID_BDW		"INT3438"
@@ -65,9 +66,11 @@ struct sst_softc {
 	device_t		dev;
 	ACPI_HANDLE		handle;
 
-	/* Memory Resource (MMIO) */
-	int			mem_rid;
+	/* Memory Resources (MMIO) */
+	int			mem_rid;	/* BAR0 - DSP memory */
 	struct resource		*mem_res;
+	int			shim_rid;	/* BAR1 - SHIM registers */
+	struct resource		*shim_res;
 
 	/* Interrupt Resource */
 	int			irq_rid;
@@ -95,21 +98,25 @@ struct sst_softc {
 
 	/* PCM / sound(4) */
 	struct sst_pcm		pcm;
+
+	/* Jack detection */
+	struct sst_jack		jack;
 };
 
 /*
  * Register Access Helpers
+ * SHIM registers are in a separate BAR on Broadwell-U
  */
 static inline uint32_t
 sst_shim_read(struct sst_softc *sc, uint32_t reg)
 {
-	return (bus_read_4(sc->mem_res, SST_SHIM_OFFSET + reg));
+	return (bus_read_4(sc->shim_res, reg));
 }
 
 static inline void
 sst_shim_write(struct sst_softc *sc, uint32_t reg, uint32_t val)
 {
-	bus_write_4(sc->mem_res, SST_SHIM_OFFSET + reg, val);
+	bus_write_4(sc->shim_res, reg, val);
 }
 
 static inline void

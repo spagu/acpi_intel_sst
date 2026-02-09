@@ -13,9 +13,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Compatible devices list (Dell XPS 12/13/17, Vostro 7590)
 - Broadwell-U devices compatibility table (HP, Lenovo, Asus, Acer, LG, Fujitsu)
 - References section with Intel documentation links
+- **Jack Detection** (`sst_jack.c`) - headphone/microphone auto-detection
+  - Polling-based GPIO monitoring
+  - Debounce logic for stable detection
+  - Automatic speaker/headphone switching
+  - Sysctl interface for status and control
+  - Statistics tracking (insertion counts)
 
 ### Planned
-- Jack detection (headphone/microphone)
+- Topology loading (dynamic audio pipeline)
 - ALSA compatibility layer
 
 ---
