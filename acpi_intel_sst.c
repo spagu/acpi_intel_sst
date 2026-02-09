@@ -338,14 +338,14 @@ sst_acpi_attach(device_t dev)
 	 */
 	{
 		ACPI_STATUS status;
-		UINT64 adr;
+		UINT32 adr;
 
-		status = acpi_GetInteger(sc->handle, "_ADR", (ACPI_INTEGER *)&adr);
+		status = acpi_GetInteger(sc->handle, "_ADR", &adr);
 		if (ACPI_SUCCESS(status)) {
-			device_printf(dev, "ACPI _ADR: 0x%llx (dev=%llu, func=%llu)\n",
-			    (unsigned long long)adr,
-			    (unsigned long long)(adr >> 16) & 0xFFFF,
-			    (unsigned long long)adr & 0xFFFF);
+			device_printf(dev, "ACPI _ADR: 0x%x (dev=%u, func=%u)\n",
+			    adr,
+			    (adr >> 16) & 0xFFFF,
+			    adr & 0xFFFF);
 		}
 	}
 
