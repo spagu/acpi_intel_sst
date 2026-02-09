@@ -1,0 +1,80 @@
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+### Added
+- GitHub Actions CI workflow for build validation (FreeBSD 14.1, 14.2)
+- Code style linting (tabs, line length, trailing whitespace)
+- Compatible devices list (Dell XPS 12/13/17, Vostro 7590)
+- Broadwell-U devices compatibility table (HP, Lenovo, Asus, Acer, LG, Fujitsu)
+- References section with Intel documentation links
+
+### Planned
+- Firmware loading support (SST/SOF format)
+- IPC protocol implementation
+- I2S/SSP controller driver
+- sound(4) PCM integration
+
+---
+
+## [0.2.0] - 2026-02-09
+
+### Added
+- DSP initialization with reset/stall sequence
+- SHIM register access (CSR, PISR, IMRX, IPCX)
+- Interrupt masking during initialization
+- Hardware validation checks (0xFFFFFFFF detection)
+- MMIO region size validation
+- Comprehensive test script (`tests/test_module.sh`)
+- Professional documentation with badges and UTF-8 icons
+- CONTRIBUTING.md guidelines
+- LICENSE file (BSD-2-Clause)
+
+### Changed
+- Improved error handling with goto-based cleanup pattern
+- Added SPDX license identifier to source files
+- Enhanced logging with driver version information
+- Better resource initialization order
+
+### Security
+- Added bounds checking for MMIO region size
+- Proper NULL initialization of resource pointers
+- Validated register reads before proceeding
+
+---
+
+## [0.1.0] - 2026-02-08
+
+### Added
+- Initial ACPI driver framework
+- Device probing for INT3438 and INT33C8 ACPI IDs
+- Memory resource (MMIO) allocation
+- IRQ resource allocation
+- Power management support (_PS0/_PS3)
+- Basic Makefile for FreeBSD kernel module
+- Initial README documentation
+
+### Technical Details
+- Driver attaches to `acpi0` bus
+- Supports Intel Broadwell-U and Haswell platforms
+- Uses standard FreeBSD ACPI driver model
+
+---
+
+## Types of Changes
+
+- `Added` for new features
+- `Changed` for changes in existing functionality
+- `Deprecated` for soon-to-be removed features
+- `Removed` for now removed features
+- `Fixed` for any bug fixes
+- `Security` for vulnerability fixes
+
+[Unreleased]: https://github.com/spagu/acpi_intel_sst/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/spagu/acpi_intel_sst/compare/v0.1.0...v0.2.0
+[0.1.0]: https://github.com/spagu/acpi_intel_sst/releases/tag/v0.1.0

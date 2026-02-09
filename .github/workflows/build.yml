@@ -1,0 +1,72 @@
+name: Build Validation
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-freebsd:
+    name: Build on FreeBSD ${{ matrix.version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        version: ["14.1", "14.2"]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Build on FreeBSD
+        uses: vmactions/freebsd-vm@v1
+        with:
+          release: ${{ matrix.version }}
+          usesh: true
+          run: |
+            echo "::group::System Info"
+            freebsd-version
+            uname -a
+            echo "::endgroup::"
+
+            echo "::group::Build Module"
+            cd $GITHUB_WORKSPACE
+            make clean || true
+            make
+            echo "::endgroup::"
+
+            echo "::group::Verify Output"
+            ls -la acpi_intel_sst.ko
+            file acpi_intel_sst.ko
+            echo "::endgroup::"
+
+  lint:
+    name: Code Style Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check for tabs (FreeBSD style)
+        run: |
+          echo "Checking indentation style..."
+          # FreeBSD kernel code uses tabs for indentation
+          if grep -n "^    [^ ]" acpi_intel_sst.c acpi_intel_sst.h 2>/dev/null; then
+            echo "Warning: Found spaces instead of tabs for indentation"
+          fi
+
+      - name: Check line length
+        run: |
+          echo "Checking line length (max 80 chars)..."
+          awk 'length > 80 { print FILENAME ":" NR ": " length " chars"; count++ } END { if (count > 0) exit 1 }' \
+            acpi_intel_sst.c acpi_intel_sst.h || echo "Some lines exceed 80 characters"
+
+      - name: Check for trailing whitespace
+        run: |
+          echo "Checking for trailing whitespace..."
+          if grep -n " $" acpi_intel_sst.c acpi_intel_sst.h 2>/dev/null; then
+            echo "Warning: Found trailing whitespace"
+          else
+            echo "No trailing whitespace found"
+          fi

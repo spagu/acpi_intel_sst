@@ -1,0 +1,60 @@
+# FreeBSD Kernel Module Build Artifacts
+*.ko
+*.kld
+*.o
+*.meta
+export_syms
+.depend*
+_autorelease
+.dirstamp
+
+# Architecture symlinks created by FreeBSD build system
+machine
+x86
+
+# Editors
+*.swp
+*.swo
+*~
+.*.swp
+\#*\#
+.#*
+
+# IDE
+.idea/
+.vscode/
+*.sublime-project
+*.sublime-workspace
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Logs
+*.log
+dmesg.txt
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*.orig
+
+# Core dumps
+*.core
+core
+
+# Firmware files (may be added locally for testing)
+*.fw
+*.bin
+firmware/
+
+# Test output
+tests/*.log
+tests/*.out
+
+# Distribution archives
+*.tar.gz
+*.tar.xz
+*.zip
