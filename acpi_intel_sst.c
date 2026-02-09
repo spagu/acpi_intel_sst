@@ -154,9 +154,166 @@ sst_acpi_attach(device_t dev)
 
 	device_printf(dev, "Intel SST Driver v%s loading\n", SST_DRV_VERSION);
 
-	/* 1. Enable Power Resource (_PS0) if available */
+	/*
+	 * 1. Power on sequence - try multiple ACPI methods
+	 */
+
+	/* Check device status via _STA */
+	{
+		ACPI_STATUS status;
+		UINT32 sta;
+
+		status = acpi_GetInteger(sc->handle, "_STA", &sta);
+		if (ACPI_SUCCESS(status)) {
+			device_printf(dev, "ACPI _STA: 0x%x (%s%s%s%s)\n",
+			    sta,
+			    (sta & 0x01) ? "Present " : "",
+			    (sta & 0x02) ? "Enabled " : "",
+			    (sta & 0x04) ? "Shown " : "",
+			    (sta & 0x08) ? "Functional" : "");
+		}
+	}
+
+	/* Try _ON method first (some devices use this) */
+	{
+		ACPI_STATUS status;
+		status = AcpiEvaluateObject(sc->handle, "_ON", NULL, NULL);
+		if (ACPI_SUCCESS(status)) {
+			device_printf(dev, "Called _ON method successfully\n");
+			DELAY(100000);  /* 100ms */
+		}
+	}
+
+	/* Try _PS0 (D0 power state) */
+	{
+		ACPI_STATUS status;
+		status = AcpiEvaluateObject(sc->handle, "_PS0", NULL, NULL);
+		if (ACPI_SUCCESS(status)) {
+			device_printf(dev, "Called _PS0 method successfully\n");
+			DELAY(100000);
+		} else {
+			device_printf(dev, "No _PS0 method (status=0x%x)\n",
+			    status);
+		}
+	}
+
+	/* Also try acpi_pwr_switch_consumer */
 	if (ACPI_FAILURE(acpi_pwr_switch_consumer(sc->handle, ACPI_STATE_D0))) {
-		device_printf(dev, "Warning: Failed to set power state to D0\n");
+		device_printf(dev, "Warning: acpi_pwr_switch_consumer failed\n");
+	}
+
+	/*
+	 * Try to find and power on the parent LPE device
+	 * The SST DSP might be gated by the LPE (Low Power Engine)
+	 */
+	{
+		ACPI_HANDLE parent;
+		ACPI_STATUS status;
+
+		status = AcpiGetParent(sc->handle, &parent);
+		if (ACPI_SUCCESS(status) && parent != NULL) {
+			char path[128];
+			ACPI_BUFFER buf = { sizeof(path), path };
+
+			AcpiGetName(parent, ACPI_FULL_PATHNAME, &buf);
+			device_printf(dev, "Parent device: %s\n", path);
+
+			/* Try to power on parent */
+			AcpiEvaluateObject(parent, "_PS0", NULL, NULL);
+		}
+	}
+
+	DELAY(200000);  /* 200ms total settle time */
+
+	/*
+	 * Try _DSM (Device Specific Method) if available
+	 * Intel audio devices sometimes require _DSM calls
+	 */
+	{
+		ACPI_OBJECT_LIST args;
+		ACPI_OBJECT arg[4];
+		ACPI_BUFFER result = { ACPI_ALLOCATE_BUFFER, NULL };
+		ACPI_STATUS status;
+
+		/* Intel Audio DSM UUID: a69f886e-6ceb-4594-a41f-7b5dce24c553 */
+		static uint8_t intel_dsm_uuid[] = {
+			0x6e, 0x88, 0x9f, 0xa6, 0xeb, 0x6c, 0x94, 0x45,
+			0xa4, 0x1f, 0x7b, 0x5d, 0xce, 0x24, 0xc5, 0x53
+		};
+
+		arg[0].Type = ACPI_TYPE_BUFFER;
+		arg[0].Buffer.Length = 16;
+		arg[0].Buffer.Pointer = intel_dsm_uuid;
+
+		arg[1].Type = ACPI_TYPE_INTEGER;
+		arg[1].Integer.Value = 1;  /* Revision */
+
+		arg[2].Type = ACPI_TYPE_INTEGER;
+		arg[2].Integer.Value = 0;  /* Function 0: query */
+
+		arg[3].Type = ACPI_TYPE_PACKAGE;
+		arg[3].Package.Count = 0;
+		arg[3].Package.Elements = NULL;
+
+		args.Count = 4;
+		args.Pointer = arg;
+
+		status = AcpiEvaluateObject(sc->handle, "_DSM", &args, &result);
+		if (ACPI_SUCCESS(status)) {
+			device_printf(dev, "_DSM query successful\n");
+			if (result.Pointer)
+				AcpiOsFree(result.Pointer);
+
+			/* Try function 1: enable */
+			arg[2].Integer.Value = 1;
+			result.Length = ACPI_ALLOCATE_BUFFER;
+			result.Pointer = NULL;
+
+			status = AcpiEvaluateObject(sc->handle, "_DSM",
+			    &args, &result);
+			if (ACPI_SUCCESS(status)) {
+				device_printf(dev,
+				    "_DSM enable function called\n");
+				if (result.Pointer)
+					AcpiOsFree(result.Pointer);
+			}
+		} else {
+			device_printf(dev, "No _DSM method\n");
+		}
+	}
+
+	/*
+	 * Check for power resource dependencies (_PR0)
+	 */
+	{
+		ACPI_STATUS status;
+		ACPI_BUFFER result = { ACPI_ALLOCATE_BUFFER, NULL };
+
+		status = AcpiEvaluateObject(sc->handle, "_PR0", NULL, &result);
+		if (ACPI_SUCCESS(status)) {
+			ACPI_OBJECT *obj = result.Pointer;
+			if (obj && obj->Type == ACPI_TYPE_PACKAGE) {
+				device_printf(dev,
+				    "_PR0 has %d power resources\n",
+				    obj->Package.Count);
+
+				/* Try to turn on each power resource */
+				for (UINT32 i = 0; i < obj->Package.Count; i++) {
+					ACPI_OBJECT *ref =
+					    &obj->Package.Elements[i];
+					if (ref->Type == ACPI_TYPE_LOCAL_REFERENCE) {
+						AcpiEvaluateObject(
+						    ref->Reference.Handle,
+						    "_ON", NULL, NULL);
+						device_printf(dev,
+						    "  Turned on power resource %d\n", i);
+					}
+				}
+				DELAY(100000);
+			}
+			if (result.Pointer)
+				AcpiOsFree(result.Pointer);
+		}
 	}
 
 	/*
@@ -174,6 +331,23 @@ sst_acpi_attach(device_t dev)
 
 	device_printf(dev, "PCI Config (BAR1): 0x%lx, Size: 0x%lx\n",
 		      rman_get_start(sc->shim_res), rman_get_size(sc->shim_res));
+
+	/*
+	 * Try to get PCI address via _ADR method
+	 * Format: 0xDDDDFFFF where DDDD=device, FFFF=function
+	 */
+	{
+		ACPI_STATUS status;
+		UINT64 adr;
+
+		status = acpi_GetInteger(sc->handle, "_ADR", (ACPI_INTEGER *)&adr);
+		if (ACPI_SUCCESS(status)) {
+			device_printf(dev, "ACPI _ADR: 0x%llx (dev=%llu, func=%llu)\n",
+			    (unsigned long long)adr,
+			    (unsigned long long)(adr >> 16) & 0xFFFF,
+			    (unsigned long long)adr & 0xFFFF);
+		}
+	}
 
 	/*
 	 * 2.1 Access PCI config space via BAR1 (memory-mapped PCI config)
