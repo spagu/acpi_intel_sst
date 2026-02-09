@@ -66,6 +66,9 @@ struct sst_pcm_channel {
 	int			ssp_port;	/* SSP port (0 or 1) */
 	int			dma_ch;		/* DMA channel */
 
+	/* PCM channel reference for chn_intr */
+	struct pcm_channel	*pcm_ch;	/* sound(4) channel */
+
 	/* Format */
 	uint32_t		format;		/* AFMT_* */
 	uint32_t		speed;		/* Sample rate */

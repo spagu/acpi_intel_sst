@@ -18,6 +18,8 @@
 
 #include <dev/sound/pcm/sound.h>
 
+#include "mixer_if.h"
+
 #include "acpi_intel_sst.h"
 #include "sst_pcm.h"
 
@@ -187,6 +189,7 @@ sst_chan_init(kobj_t obj, void *devinfo, struct snd_dbuf *b,
 	ch->dir = dir;
 	ch->state = SST_PCM_STATE_INIT;
 	ch->ptr = 0;
+	ch->pcm_ch = c;
 
 	/* Allocate DMA buffer */
 	error = sst_pcm_alloc_buffer(sc, ch);
@@ -438,7 +441,7 @@ sst_pcm_dma_callback(void *arg)
 		ch->ptr = 0;
 
 	/* Notify sound subsystem */
-	chn_intr(sc->pcm.dev);
+	chn_intr(ch->pcm_ch);
 }
 
 /*
@@ -555,8 +558,14 @@ sst_pcm_register(struct sst_softc *sc)
 		return (ENXIO);
 	}
 
+	/* Build status string */
+	snprintf(status, sizeof(status),
+	    "at mmio 0x%lx irq %lu",
+	    rman_get_start(sc->mem_res),
+	    rman_get_start(sc->irq_res));
+
 	/* Register with sound subsystem */
-	error = pcm_register(sc->pcm.dev, sc, 1, 1);
+	error = pcm_register(sc->pcm.dev, status);
 	if (error) {
 		device_printf(sc->dev, "Failed to register PCM: %d\n", error);
 		device_delete_child(sc->dev, sc->pcm.dev);
@@ -573,15 +582,6 @@ sst_pcm_register(struct sst_softc *sc)
 	if (error) {
 		device_printf(sc->dev, "Failed to register mixer: %d\n", error);
 	}
-
-	/* Build status string */
-	snprintf(status, sizeof(status),
-	    "at mmio 0x%lx irq %lu on %s",
-	    rman_get_start(sc->mem_res),
-	    rman_get_start(sc->irq_res),
-	    device_get_nameunit(device_get_parent(sc->dev)));
-
-	pcm_setstatus(sc->pcm.dev, status);
 
 	sc->pcm.registered = true;
 
