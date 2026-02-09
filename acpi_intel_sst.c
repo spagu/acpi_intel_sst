@@ -360,106 +360,135 @@ sst_acpi_attach(device_t dev)
 	/*
 	 * Try direct PCI config access using pci_cfgregread/write
 	 * The SST device on Broadwell-U is typically at Bus 0, Device 0x13, Func 0
-	 * But let's scan for it to be sure
+	 * Since the device is ACPI-claimed, it won't show up in normal PCI scan
+	 * but we can still access it via direct config mechanism
 	 */
 	{
-		int domain, bus, slot, func;
-		uint32_t vid_did;
-		int found = 0;
+		int domain = 0;
+		int bus = 0;
+		int slot = 0x13;	/* Known BDF for Broadwell SST */
+		int func = 0;
+		uint32_t vid_did, cmd, vdrtctl0, vdrtctl2;
 
-		device_printf(dev, "Scanning PCI config space for SST device...\n");
+		device_printf(dev, "Trying direct PCI config at 0:%d:%d...\n",
+		    slot, func);
 
-		/* Scan domain 0, bus 0 for the SST device */
-		domain = 0;
-		bus = 0;
-		for (slot = 0; slot < 32 && !found; slot++) {
-			for (func = 0; func < 8 && !found; func++) {
-				vid_did = pci_cfgregread(domain, bus, slot,
-				    func, 0, 4);
+		vid_did = pci_cfgregread(domain, bus, slot, func, 0, 4);
+		device_printf(dev, "  VID/DID @ 0:0x13:0: 0x%08x\n", vid_did);
 
-				if (vid_did == 0xFFFFFFFF ||
-				    vid_did == 0x00000000)
-					continue;
-
-				if (vid_did == 0x9CB68086) {
-					found = 1;
-					device_printf(dev,
-					    "Found SST at PCI %d:%d:%d:%d\n",
-					    domain, bus, slot, func);
-
-					/* Read current config */
-					device_printf(dev,
-					    "  VID/DID:  0x%08x\n", vid_did);
-					device_printf(dev,
-					    "  CMD/STS:  0x%08x\n",
-					    pci_cfgregread(domain, bus, slot,
-					    func, 0x04, 4));
-					device_printf(dev,
-					    "  BAR0:     0x%08x\n",
-					    pci_cfgregread(domain, bus, slot,
-					    func, 0x10, 4));
-					device_printf(dev,
-					    "  VDRTCTL0: 0x%08x\n",
-					    pci_cfgregread(domain, bus, slot,
-					    func, 0xA0, 4));
-					device_printf(dev,
-					    "  VDRTCTL2: 0x%08x\n",
-					    pci_cfgregread(domain, bus, slot,
-					    func, 0xA8, 4));
-
-					/*
-					 * Try writing VDRTCTL0 directly
-					 * via PCI config mechanism
-					 */
-					{
-						uint32_t vdrtctl0, cmd;
-
-						/* Enable Memory + Bus Master */
-						cmd = pci_cfgregread(domain, bus,
-						    slot, func, 0x04, 2);
+		/*
+		 * Also try scanning all devices on bus 0 to find it
+		 */
+		if (vid_did != 0x9CB68086) {
+			int s, f;
+			device_printf(dev, "Scanning all bus 0 devices...\n");
+			for (s = 0; s < 32; s++) {
+				for (f = 0; f < 8; f++) {
+					vid_did = pci_cfgregread(domain, bus,
+					    s, f, 0, 4);
+					if (vid_did != 0xFFFFFFFF &&
+					    vid_did != 0x00000000) {
 						device_printf(dev,
-						    "  CMD before: 0x%04x\n", cmd);
-
-						cmd |= 0x0006;  /* Mem + BusMaster */
-						pci_cfgregwrite(domain, bus, slot,
-						    func, 0x04, cmd, 2);
-						DELAY(10000);
-
-						cmd = pci_cfgregread(domain, bus,
-						    slot, func, 0x04, 2);
-						device_printf(dev,
-						    "  CMD after:  0x%04x\n", cmd);
-
-						/* Configure power gating */
-						vdrtctl0 = pci_cfgregread(domain,
-						    bus, slot, func, 0xA0, 4);
-						device_printf(dev,
-						    "  VDRTCTL0 before: 0x%08x\n",
-						    vdrtctl0);
-
-						/* Disable D3 power gating */
-						vdrtctl0 |= (1 << 8);   /* D3SRAMPGD */
-						vdrtctl0 |= (1 << 16);  /* D3PGD */
-						/* Clear SRAM power gate bits */
-						vdrtctl0 &= ~0xFF;
-
-						pci_cfgregwrite(domain, bus, slot,
-						    func, 0xA0, vdrtctl0, 4);
-						DELAY(100000);  /* 100ms */
-
-						vdrtctl0 = pci_cfgregread(domain,
-						    bus, slot, func, 0xA0, 4);
-						device_printf(dev,
-						    "  VDRTCTL0 after:  0x%08x\n",
-						    vdrtctl0);
+						    "  0:0x%02x:%d = 0x%08x\n",
+						    s, f, vid_did);
+						if (vid_did == 0x9CB68086) {
+							slot = s;
+							func = f;
+							device_printf(dev,
+							    "  Found SST!\n");
+						}
 					}
 				}
 			}
 		}
 
-		if (!found) {
-			device_printf(dev, "SST device not found on PCI bus!\n");
+		/*
+		 * Even if not found in scan, try the known address
+		 * The device might be hidden but still respond
+		 */
+		if (vid_did != 0x9CB68086) {
+			device_printf(dev, "Device not responding at known "
+			    "BDF, trying anyway...\n");
+			slot = 0x13;
+			func = 0;
 		}
+
+		/* Read current config state */
+		cmd = pci_cfgregread(domain, bus, slot, func, 0x04, 4);
+		vdrtctl0 = pci_cfgregread(domain, bus, slot, func, 0xA0, 4);
+		vdrtctl2 = pci_cfgregread(domain, bus, slot, func, 0xA8, 4);
+
+		device_printf(dev, "Direct PCI Config at 0:%d:%d:\n", slot, func);
+		device_printf(dev, "  CMD/STS:  0x%08x\n", cmd);
+		device_printf(dev, "  VDRTCTL0: 0x%08x\n", vdrtctl0);
+		device_printf(dev, "  VDRTCTL2: 0x%08x\n", vdrtctl2);
+
+		/*
+		 * Try to write PCI config to enable device
+		 * This uses CF8/CFC I/O port mechanism which
+		 * might work even for ACPI-hidden devices
+		 */
+		device_printf(dev, "Writing PCI config via CF8/CFC...\n");
+
+		/* Enable Memory + Bus Master */
+		cmd = 0x0006;
+		pci_cfgregwrite(domain, bus, slot, func, 0x04, cmd, 2);
+		DELAY(10000);
+
+		cmd = pci_cfgregread(domain, bus, slot, func, 0x04, 2);
+		device_printf(dev, "  CMD after write: 0x%04x\n", cmd);
+
+		/*
+		 * Full power-up sequence for Intel SST:
+		 * 1. Disable D3 power gating (VDRTCTL0 bits 8, 16)
+		 * 2. Clear SRAM power gate (VDRTCTL0 bits 0-7)
+		 * 3. Disable clock gating (VDRTCTL2)
+		 * 4. Wait for power-up
+		 */
+
+		/* Step 1: Read current VDRTCTL0 */
+		vdrtctl0 = pci_cfgregread(domain, bus, slot, func, 0xA0, 4);
+		device_printf(dev, "  VDRTCTL0 before: 0x%08x\n", vdrtctl0);
+
+		/* Step 2: Set D3SRAMPGD (bit 8) and D3PGD (bit 16) */
+		vdrtctl0 |= (1 << 8);   /* D3SRAMPGD */
+		vdrtctl0 |= (1 << 16);  /* D3PGD */
+		pci_cfgregwrite(domain, bus, slot, func, 0xA0, vdrtctl0, 4);
+		DELAY(50000);  /* 50ms */
+
+		/* Step 3: Clear DSRAMPGE bits 0-7 (power ON SRAM) */
+		vdrtctl0 = pci_cfgregread(domain, bus, slot, func, 0xA0, 4);
+		vdrtctl0 &= ~0xFF;
+		pci_cfgregwrite(domain, bus, slot, func, 0xA0, vdrtctl0, 4);
+		DELAY(50000);
+
+		vdrtctl0 = pci_cfgregread(domain, bus, slot, func, 0xA0, 4);
+		device_printf(dev, "  VDRTCTL0 after:  0x%08x\n", vdrtctl0);
+
+		/* Step 4: Disable clock gating via VDRTCTL2 */
+		vdrtctl2 = pci_cfgregread(domain, bus, slot, func, 0xA8, 4);
+		device_printf(dev, "  VDRTCTL2 before: 0x%08x\n", vdrtctl2);
+
+		/* Clear DCLCGE (bit 1) and DTCGE (bit 10) */
+		vdrtctl2 &= ~(1 << 1);   /* DCLCGE */
+		vdrtctl2 &= ~(1 << 10);  /* DTCGE */
+		/* Clear APLLSE (bit 31) to enable Audio PLL */
+		vdrtctl2 &= ~(1U << 31);
+
+		pci_cfgregwrite(domain, bus, slot, func, 0xA8, vdrtctl2, 4);
+		DELAY(100000);  /* 100ms for PLL lock */
+
+		vdrtctl2 = pci_cfgregread(domain, bus, slot, func, 0xA8, 4);
+		device_printf(dev, "  VDRTCTL2 after:  0x%08x\n", vdrtctl2);
+
+		/* Final state */
+		device_printf(dev, "Final PCI config state:\n");
+		device_printf(dev, "  CMD:      0x%08x\n",
+		    pci_cfgregread(domain, bus, slot, func, 0x04, 4));
+		device_printf(dev, "  VDRTCTL0: 0x%08x\n",
+		    pci_cfgregread(domain, bus, slot, func, 0xA0, 4));
+		device_printf(dev, "  VDRTCTL2: 0x%08x\n",
+		    pci_cfgregread(domain, bus, slot, func, 0xA8, 4));
 	}
 
 	/*
