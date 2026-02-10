@@ -10866,14 +10866,23 @@ DefinitionBlock ("", "DSDT", 2, "DELL  ", "CBX3   ", 0x01072009)
             }
 
             /*
-             * PATCHED: Force ADSP (SST) disabled to enable HDA mode
-             * Original _STA checked OSYS >= 0x07DC (Windows 2012+) for I2S mode
-             * By returning Zero, we force the system to use HDA audio instead
-             * Patch applied: 2026-02-10 for Dell XPS 13 9343 FreeBSD audio
+             * PATCHED: Force ADSP (SST) ENABLED for Intel SST audio driver
+             * Original _STA checked S0ID or ANCS variables which are not set by FreeBSD
+             * By returning 0x0F, we force ADSP enabled (Present, Enabled, Functioning)
+             * Patch applied: 2026-02-10 for Dell XPS 13 9343 FreeBSD SST audio
+             *
+             * _STA return values:
+             *   0x0F = Device is present, enabled, shown in UI, and functioning
+             *   0x0D = Device is present and functioning but disabled
+             *   0x00 = Device is not present
              */
             Method (_STA, 0, NotSerialized)  // _STA: Status
             {
-                Return (Zero)  // Force disabled - HDA mode
+                If ((ADB0 == Zero))
+                {
+                    Return (Zero)  // No BAR0 configured
+                }
+                Return (0x0F)  // Force ADSP enabled for SST driver
             }
 
             Method (_DIS, 0, NotSerialized)  // _DIS: Disable Device

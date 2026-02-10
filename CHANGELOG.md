@@ -39,6 +39,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Automatic stream cleanup on channel close
   - Mixer updates propagate to DSP via IPC
 
+### Changed
+- **DSDT Patch: SST Mode Enabled** - changed patch to ENABLE ADSP instead of disabling
+  - Root cause: FreeBSD doesn't set ACPI S0ID or ANCS variables
+  - Original _STA method required S0ID=1 or ANCS=1 to return 0x0F (enabled)
+  - New patch unconditionally returns 0x0F if ADB0 (BAR0 address) is configured
+  - HDA mode instructions remain available in `acpi/README.md`
+  - This change is required for SST audio to work on Dell XPS 13 9343
+
 ### Fixed
 - **Critical: WPT (Broadwell-U) power-up sequence** - VDRTCTL0 register bits were using LPT (Haswell) positions
   - WPT uses bits 0-1 for D3PGD/D3SRAMPGD (not bits 8/16 like LPT)

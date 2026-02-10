@@ -20,6 +20,8 @@ x86
 \#*\#
 .#*
 
+/drivers/*
+
 # IDE
 .idea/
 .vscode/
