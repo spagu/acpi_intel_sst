@@ -455,6 +455,74 @@ acpi_intel_sst0:   PISR: 0xffffffff
 acpi_intel_sst0:   IMRX: 0xffffffff
 acpi_intel_sst0: Error: Registers read 0xFFFFFFFF
 device_attach: acpi_intel_sst0 attach returned 6
+acpi_intel_sst0: <Intel Broadwell-U Audio DSP (SST)> iomem 0xfe000000-0xfe0fffff,0xfe100000-0xfe100fff irq 3 on acpi0
+acpi_intel_sst0: Intel SST Driver v0.5.0 loading
+acpi_intel_sst0: ACPI _STA: 0xf (Present Enabled Shown Functional)
+acpi_intel_sst0: Called _PS0 method successfully
+acpi_intel_sst0: Parent device: \134_SB_.PCI0
+acpi_intel_sst0: _DSM query successful
+acpi_intel_sst0: _DSM enable function called
+acpi_intel_sst0: _PR0 has 1 power resources
+acpi_intel_sst0:   Turned on power resource 0
+acpi_intel_sst0: PCH RCBA Check:
+acpi_intel_sst0:   RCBA reg (0xF0): 0xfed1c001
+acpi_intel_sst0:   RCBA base: 0xfed1c000
+acpi_intel_sst0:   RCBA enabled: yes
+acpi_intel_sst0:   FD1 (0x3418): 0x00368011
+acpi_intel_sst0:   FD2 (0x3428): 0x0000001d
+acpi_intel_sst0:   ADSP is enabled in FD2
+acpi_intel_sst0: GPIO Control:
+acpi_intel_sst0:   LPC GPIO reg (0x48): 0x00001c01
+acpi_intel_sst0:   GPIO Base: 0x00001c00
+acpi_intel_sst0:   GPIO 0x4C addr: 0x00001f60
+acpi_intel_sst0:   GPIO 0x4C value: 0x80000001 (bit31=1)
+acpi_intel_sst0: PCI Config (BAR1): 0xfe100000, Size: 0x1000
+acpi_intel_sst0: === WPT (Broadwell) Power-Up Sequence ===
+acpi_intel_sst0: Step 1: VDRTCTL2 before: 0x00000bff
+acpi_intel_sst0: Step 2: PMCS before: 0x00000008 (D0)
+acpi_intel_sst0: Step 3: VDRTCTL0 before: 0x00000003
+acpi_intel_sst0: Step 4: VDRTCTL0 after SRAM on: 0x00000003
+acpi_intel_sst0: Step 5: VDRTCTL2 before PLL: 0x00000bfd
+acpi_intel_sst0: Step 6: VDRTCTL2 after: 0x00000bfd
+acpi_intel_sst0: === Power-Up Complete ===
+acpi_intel_sst0:   VDRTCTL0: 0x00000003
+acpi_intel_sst0:   VDRTCTL2: 0x00000bff
+acpi_intel_sst0:   PMCS:     0x00000008
+acpi_intel_sst0: Step 8: Extended PCI config dump...
+acpi_intel_sst0:   IMC (0xE4): 0x00000000
+acpi_intel_sst0:   IMD (0xEC): 0x00000000
+acpi_intel_sst0:   IPCC (0xE0): 0x00000000
+acpi_intel_sst0:   IPCD (0xE8): 0x00000000
+acpi_intel_sst0: Step 9: Clearing interrupt masks...
+acpi_intel_sst0:   IMC before: 0x00000000
+acpi_intel_sst0:   IMC after: 0x00000000
+acpi_intel_sst0: Step 10: Setting IMD default...
+acpi_intel_sst0:   IMD before: 0x00000000
+acpi_intel_sst0:   IMD after: 0x00000000
+acpi_intel_sst0: PCI Config Space (via BAR1 mirror):
+acpi_intel_sst0:   DevID/VenID: 0x9cb68086
+acpi_intel_sst0:   Status/Cmd:  0x00100006
+acpi_intel_sst0:   Class/Rev:   0x04010003
+acpi_intel_sst0:   PCI BAR0:    0xfe000000
+acpi_intel_sst0:   PCI BAR1:    0xfe100000
+acpi_intel_sst0:   Final BAR0:  0xfe000000
+acpi_intel_sst0: Testing BAR0 @ 0xfe000000 directly...
+acpi_intel_sst0: Direct mapping successful!
+acpi_intel_sst0:   Direct BAR0[0]: 0xffffffff
+acpi_intel_sst0: DSP Memory (BAR0): 0xfe000000, Size: 0x100000
+acpi_intel_sst0: Probing DSP memory layout:
+acpi_intel_sst0:   BAR0+0x00000 (IRAM): 0xffffffff
+acpi_intel_sst0:   BAR0+0x80000 (DRAM): 0xffffffff
+acpi_intel_sst0:   BAR0+0xC0000 (SHIM): 0xffffffff
+acpi_intel_sst0:   BAR0+0xE0000 (MBOX): 0xffffffff
+acpi_intel_sst0:   BAR1+0x00 (SHIM mirror?): 0x9cb68086
+acpi_intel_sst0: SHIM Register Dump (BAR0+0xc0000):
+acpi_intel_sst0:   CSR : 0xffffffff
+acpi_intel_sst0:   IPCX: 0xffffffff
+acpi_intel_sst0:   PISR: 0xffffffff
+acpi_intel_sst0:   IMRX: 0xffffffff
+acpi_intel_sst0: Error: Registers read 0xFFFFFFFF
+device_attach: acpi_intel_sst0 attach returned 6
 + acpidump -dt
 /*
   RSD PTR: OEM=DELL, ACPI_Rev=2.0x (2)
@@ -811,7 +879,7 @@ device_attach: acpi_intel_sst0 attach returned 6
  * 
  * Disassembling to symbolic ASL+ operators
  *
- * Disassembly of /tmp/acpidump.sJW9v8/acpdump.din
+ * Disassembly of /tmp/acpidump.wpw0gv/acpdump.din
  *
  * Original Table Header:
  *     Signature        "DSDT"
