@@ -15,10 +15,13 @@
 
 /*
  * PCM Channel Configuration
+ *
+ * Multi-stream support: allows multiple simultaneous playback/capture streams
+ * Each stream gets its own DMA buffer and DSP stream allocation
  */
-#define SST_PCM_CHANNELS	2	/* Playback + Capture */
-#define SST_PCM_PLAY		0	/* Playback channel index */
-#define SST_PCM_REC		1	/* Capture channel index */
+#define SST_PCM_MAX_PLAY	4	/* Max simultaneous playback streams */
+#define SST_PCM_MAX_REC		2	/* Max simultaneous capture streams */
+#define SST_PCM_MAX_STREAMS	(SST_PCM_MAX_PLAY + SST_PCM_MAX_REC)
 
 /*
  * Buffer Configuration
@@ -48,6 +51,8 @@ enum sst_pcm_state {
 struct sst_pcm_channel {
 	struct sst_softc	*sc;		/* Parent softc */
 	int			dir;		/* PCMDIR_PLAY/PCMDIR_REC */
+	int			index;		/* Stream index (0 to MAX-1) */
+	bool			allocated;	/* Channel slot allocated */
 	enum sst_pcm_state	state;		/* Channel state */
 
 	/* Buffer */
@@ -84,11 +89,17 @@ struct sst_pcm {
 	device_t		dev;		/* PCM device */
 	struct sst_softc	*sc;		/* Parent softc */
 
-	/* Channels */
-	struct sst_pcm_channel	play;		/* Playback */
-	struct sst_pcm_channel	rec;		/* Capture */
+	/* Multi-stream channels */
+	struct sst_pcm_channel	play[SST_PCM_MAX_PLAY];	/* Playback streams */
+	struct sst_pcm_channel	rec[SST_PCM_MAX_REC];	/* Capture streams */
+	uint32_t		play_count;		/* Active play streams */
+	uint32_t		rec_count;		/* Active rec streams */
 
-	/* Mixer */
+	/* Stream allocation bitmaps */
+	uint32_t		play_alloc;		/* Playback allocation bitmap */
+	uint32_t		rec_alloc;		/* Capture allocation bitmap */
+
+	/* Mixer (master) */
 	int			vol_left;	/* Left volume (0-100) */
 	int			vol_right;	/* Right volume (0-100) */
 	int			mute;		/* Mute state */

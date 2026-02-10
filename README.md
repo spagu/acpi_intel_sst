@@ -416,7 +416,7 @@ graph LR
 | Feature | Status | Description |
 |---------|--------|-------------|
 | Topology Loading | ✅ Done | Dynamic audio pipeline |
-| Multi-stream | ⏳ TODO | Multiple simultaneous streams |
+| Multi-stream | ✅ Done | 4 playback + 2 capture streams |
 
 ---
 
@@ -977,7 +977,7 @@ Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for gui
 ### Areas Needing Help
 
 - 🟢 Topology loading (implemented)
-- 🟡 Multi-stream support
+- 🟢 Multi-stream support (implemented)
 - 🟡 Testing on different Broadwell-U devices
 - 🟢 Documentation improvements
 

@@ -174,6 +174,70 @@ sst_pcm_free_buffer(struct sst_pcm_channel *ch)
 }
 
 /*
+ * Find free channel slot (multi-stream support)
+ */
+static struct sst_pcm_channel *
+sst_pcm_alloc_channel(struct sst_softc *sc, int dir)
+{
+	struct sst_pcm_channel *ch;
+	uint32_t *alloc;
+	uint32_t max;
+	int i;
+
+	if (dir == PCMDIR_PLAY) {
+		alloc = &sc->pcm.play_alloc;
+		max = SST_PCM_MAX_PLAY;
+	} else {
+		alloc = &sc->pcm.rec_alloc;
+		max = SST_PCM_MAX_REC;
+	}
+
+	/* Find first free slot */
+	for (i = 0; i < max; i++) {
+		if ((*alloc & (1 << i)) == 0) {
+			*alloc |= (1 << i);
+			if (dir == PCMDIR_PLAY) {
+				ch = &sc->pcm.play[i];
+				sc->pcm.play_count++;
+			} else {
+				ch = &sc->pcm.rec[i];
+				sc->pcm.rec_count++;
+			}
+			ch->index = i;
+			ch->allocated = true;
+			return (ch);
+		}
+	}
+
+	return (NULL);	/* No free slots */
+}
+
+/*
+ * Release channel slot
+ */
+static void
+sst_pcm_release_channel(struct sst_softc *sc, struct sst_pcm_channel *ch)
+{
+	uint32_t *alloc;
+
+	if (!ch->allocated)
+		return;
+
+	if (ch->dir == PCMDIR_PLAY) {
+		alloc = &sc->pcm.play_alloc;
+		if (sc->pcm.play_count > 0)
+			sc->pcm.play_count--;
+	} else {
+		alloc = &sc->pcm.rec_alloc;
+		if (sc->pcm.rec_count > 0)
+			sc->pcm.rec_count--;
+	}
+
+	*alloc &= ~(1 << ch->index);
+	ch->allocated = false;
+}
+
+/*
  * Channel init
  */
 static void *
@@ -184,14 +248,16 @@ sst_chan_init(kobj_t obj, void *devinfo, struct snd_dbuf *b,
 	struct sst_pcm_channel *ch;
 	int error;
 
-	if (dir == PCMDIR_PLAY) {
-		ch = &sc->pcm.play;
-		ch->ssp_port = 0;	/* SSP0 for playback */
-	} else {
-		ch = &sc->pcm.rec;
-		ch->ssp_port = 1;	/* SSP1 for capture */
+	/* Allocate channel slot from pool */
+	ch = sst_pcm_alloc_channel(sc, dir);
+	if (ch == NULL) {
+		device_printf(sc->dev, "No free %s channel slots\n",
+		    (dir == PCMDIR_PLAY) ? "playback" : "capture");
+		return (NULL);
 	}
 
+	/* SSP port: 0 for playback, 1 for capture */
+	ch->ssp_port = (dir == PCMDIR_PLAY) ? 0 : 1;
 	ch->dir = dir;
 	ch->state = SST_PCM_STATE_INIT;
 	ch->ptr = 0;
@@ -199,14 +265,17 @@ sst_chan_init(kobj_t obj, void *devinfo, struct snd_dbuf *b,
 
 	/* Allocate DMA buffer */
 	error = sst_pcm_alloc_buffer(sc, ch);
-	if (error)
+	if (error) {
+		sst_pcm_release_channel(sc, ch);
 		return (NULL);
+	}
 
 	/* Allocate DMA channel */
 	ch->dma_ch = sst_dma_alloc(sc);
 	if (ch->dma_ch < 0) {
 		device_printf(sc->dev, "Failed to allocate DMA channel\n");
 		sst_pcm_free_buffer(ch);
+		sst_pcm_release_channel(sc, ch);
 		return (NULL);
 	}
 
@@ -215,6 +284,7 @@ sst_chan_init(kobj_t obj, void *devinfo, struct snd_dbuf *b,
 		device_printf(sc->dev, "Failed to setup sound buffer\n");
 		sst_dma_free(sc, ch->dma_ch);
 		sst_pcm_free_buffer(ch);
+		sst_pcm_release_channel(sc, ch);
 		return (NULL);
 	}
 
@@ -226,6 +296,9 @@ sst_chan_init(kobj_t obj, void *devinfo, struct snd_dbuf *b,
 	/* DSP stream not yet allocated */
 	ch->stream_id = 0;
 	ch->stream_allocated = false;
+
+	device_printf(sc->dev, "PCM: Allocated %s stream %d\n",
+	    (dir == PCMDIR_PLAY) ? "playback" : "capture", ch->index);
 
 	return (ch);
 }
@@ -257,6 +330,12 @@ sst_chan_free(kobj_t obj, void *data)
 	}
 
 	sst_pcm_free_buffer(ch);
+
+	/* Release channel slot back to pool */
+	sst_pcm_release_channel(sc, ch);
+
+	device_printf(sc->dev, "PCM: Released %s stream %d\n",
+	    (ch->dir == PCMDIR_PLAY) ? "playback" : "capture", ch->index);
 
 	return (0);
 }
@@ -569,6 +648,8 @@ sst_mixer_set(struct snd_mixer *m, unsigned dev, unsigned left, unsigned right)
 {
 	struct sst_softc *sc = mix_getdevinfo(m);
 	struct sst_mixer_params params;
+	struct sst_stream_params sp;
+	int i;
 
 	switch (dev) {
 	case SOUND_MIXER_VOLUME:
@@ -576,7 +657,7 @@ sst_mixer_set(struct snd_mixer *m, unsigned dev, unsigned left, unsigned right)
 		sc->pcm.vol_left = left;
 		sc->pcm.vol_right = right;
 
-		/* Update DSP mixer if firmware running */
+		/* Update DSP master mixer if firmware running */
 		if (sc->fw.state == SST_FW_STATE_RUNNING) {
 			memset(&params, 0, sizeof(params));
 			params.output_id = 0;	/* Main output */
@@ -585,15 +666,16 @@ sst_mixer_set(struct snd_mixer *m, unsigned dev, unsigned left, unsigned right)
 			sst_ipc_set_mixer(sc, &params);
 		}
 
-		/* Also update stream volume if allocated */
-		if (sc->pcm.play.stream_allocated) {
-			struct sst_stream_params sp;
-			memset(&sp, 0, sizeof(sp));
-			sp.stream_id = sc->pcm.play.stream_id;
-			sp.volume_left = left;
-			sp.volume_right = right;
-			sp.mute = sc->pcm.mute;
-			sst_ipc_stream_set_params(sc, &sp);
+		/* Update volume on all active playback streams */
+		for (i = 0; i < SST_PCM_MAX_PLAY; i++) {
+			if (sc->pcm.play[i].stream_allocated) {
+				memset(&sp, 0, sizeof(sp));
+				sp.stream_id = sc->pcm.play[i].stream_id;
+				sp.volume_left = left;
+				sp.volume_right = right;
+				sp.mute = sc->pcm.mute;
+				sst_ipc_stream_set_params(sc, &sp);
+			}
 		}
 		break;
 	default:
@@ -625,33 +707,51 @@ MIXER_DECLARE(sst_mixer);
 int
 sst_pcm_init(struct sst_softc *sc)
 {
+	int i;
+
 	sc->pcm.sc = sc;
 	sc->pcm.dev = NULL;
 	sc->pcm.registered = false;
 
-	/* Initialize channel structures */
-	sc->pcm.play.sc = sc;
-	sc->pcm.play.dir = PCMDIR_PLAY;
-	sc->pcm.play.state = SST_PCM_STATE_INIT;
-	sc->pcm.play.dma_ch = -1;
-	sc->pcm.play.dma_tag = NULL;
-	sc->pcm.play.stream_id = 0;
-	sc->pcm.play.stream_allocated = false;
+	/* Initialize stream counters and allocation bitmaps */
+	sc->pcm.play_count = 0;
+	sc->pcm.rec_count = 0;
+	sc->pcm.play_alloc = 0;
+	sc->pcm.rec_alloc = 0;
 
-	sc->pcm.rec.sc = sc;
-	sc->pcm.rec.dir = PCMDIR_REC;
-	sc->pcm.rec.state = SST_PCM_STATE_INIT;
-	sc->pcm.rec.dma_ch = -1;
-	sc->pcm.rec.dma_tag = NULL;
-	sc->pcm.rec.stream_id = 0;
-	sc->pcm.rec.stream_allocated = false;
+	/* Initialize all playback channel slots */
+	for (i = 0; i < SST_PCM_MAX_PLAY; i++) {
+		sc->pcm.play[i].sc = sc;
+		sc->pcm.play[i].dir = PCMDIR_PLAY;
+		sc->pcm.play[i].index = i;
+		sc->pcm.play[i].allocated = false;
+		sc->pcm.play[i].state = SST_PCM_STATE_INIT;
+		sc->pcm.play[i].dma_ch = -1;
+		sc->pcm.play[i].dma_tag = NULL;
+		sc->pcm.play[i].stream_id = 0;
+		sc->pcm.play[i].stream_allocated = false;
+	}
+
+	/* Initialize all capture channel slots */
+	for (i = 0; i < SST_PCM_MAX_REC; i++) {
+		sc->pcm.rec[i].sc = sc;
+		sc->pcm.rec[i].dir = PCMDIR_REC;
+		sc->pcm.rec[i].index = i;
+		sc->pcm.rec[i].allocated = false;
+		sc->pcm.rec[i].state = SST_PCM_STATE_INIT;
+		sc->pcm.rec[i].dma_ch = -1;
+		sc->pcm.rec[i].dma_tag = NULL;
+		sc->pcm.rec[i].stream_id = 0;
+		sc->pcm.rec[i].stream_allocated = false;
+	}
 
 	/* Default mixer values */
 	sc->pcm.vol_left = 100;
 	sc->pcm.vol_right = 100;
 	sc->pcm.mute = 0;
 
-	device_printf(sc->dev, "PCM subsystem initialized\n");
+	device_printf(sc->dev, "PCM subsystem initialized: %d play, %d rec streams\n",
+	    SST_PCM_MAX_PLAY, SST_PCM_MAX_REC);
 
 	return (0);
 }
@@ -672,6 +772,7 @@ int
 sst_pcm_register(struct sst_softc *sc)
 {
 	int error;
+	int i;
 	char status[SND_STATUSLEN];
 
 	if (sc->pcm.registered)
@@ -699,9 +800,15 @@ sst_pcm_register(struct sst_softc *sc)
 		return (error);
 	}
 
-	/* Add channels */
-	pcm_addchan(sc->pcm.dev, PCMDIR_PLAY, &sst_chan_class, sc);
-	pcm_addchan(sc->pcm.dev, PCMDIR_REC, &sst_chan_class, sc);
+	/* Add multiple playback channels for multi-stream support */
+	for (i = 0; i < SST_PCM_MAX_PLAY; i++) {
+		pcm_addchan(sc->pcm.dev, PCMDIR_PLAY, &sst_chan_class, sc);
+	}
+
+	/* Add multiple capture channels */
+	for (i = 0; i < SST_PCM_MAX_REC; i++) {
+		pcm_addchan(sc->pcm.dev, PCMDIR_REC, &sst_chan_class, sc);
+	}
 
 	/* Register mixer */
 	error = mixer_init(sc->pcm.dev, &sst_mixer_class, sc);
@@ -711,7 +818,8 @@ sst_pcm_register(struct sst_softc *sc)
 
 	sc->pcm.registered = true;
 
-	device_printf(sc->dev, "PCM device registered: /dev/dsp\n");
+	device_printf(sc->dev, "PCM device registered: /dev/dsp (%d play, %d rec)\n",
+	    SST_PCM_MAX_PLAY, SST_PCM_MAX_REC);
 
 	return (0);
 }
@@ -735,19 +843,31 @@ sst_pcm_unregister(struct sst_softc *sc)
 
 /*
  * PCM interrupt handler (called from DMA completion)
+ * Iterates over all active streams and updates their positions
  */
 void
 sst_pcm_intr(struct sst_softc *sc, int dir)
 {
 	struct sst_pcm_channel *ch;
+	int i;
 
-	ch = (dir == PCMDIR_PLAY) ? &sc->pcm.play : &sc->pcm.rec;
-
-	if (ch->state != SST_PCM_STATE_RUNNING)
-		return;
-
-	/* Update position and notify */
-	ch->ptr += ch->blk_size;
-	if (ch->ptr >= ch->buf_size)
-		ch->ptr = 0;
+	if (dir == PCMDIR_PLAY) {
+		for (i = 0; i < SST_PCM_MAX_PLAY; i++) {
+			ch = &sc->pcm.play[i];
+			if (ch->allocated && ch->state == SST_PCM_STATE_RUNNING) {
+				ch->ptr += ch->blk_size;
+				if (ch->ptr >= ch->buf_size)
+					ch->ptr = 0;
+			}
+		}
+	} else {
+		for (i = 0; i < SST_PCM_MAX_REC; i++) {
+			ch = &sc->pcm.rec[i];
+			if (ch->allocated && ch->state == SST_PCM_STATE_RUNNING) {
+				ch->ptr += ch->blk_size;
+				if (ch->ptr >= ch->buf_size)
+					ch->ptr = 0;
+			}
+		}
+	}
 }

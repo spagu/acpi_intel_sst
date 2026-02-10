@@ -120,6 +120,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Default playback pipeline: PCM0 -> PGA0 -> SSP0 (speakers)
   - Default capture pipeline: SSP1 -> PGA1 -> PCM1 (microphone)
   - Max 8 pipelines, 32 widgets, 64 routes per topology
+- **Multi-stream Support** (`sst_pcm.c`) - multiple simultaneous audio streams
+  - 4 simultaneous playback streams (SST_PCM_MAX_PLAY)
+  - 2 simultaneous capture streams (SST_PCM_MAX_REC)
+  - Dynamic channel allocation from pool
+  - Per-stream DMA buffer and DSP stream allocation
+  - Stream allocation bitmap tracking
+  - Master mixer applies volume to all active streams
+  - Independent stream lifecycle (alloc/free per open/close)
 
 ### Planned
 - ALSA compatibility layer
