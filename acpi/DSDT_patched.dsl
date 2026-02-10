@@ -87,7 +87,7 @@ DefinitionBlock ("", "DSDT", 2, "DELL  ", "CBX3   ", 0x01072009)
     External (_SB_.PCI0.I2C0.SHUB.PS0X, MethodObj)    // Warning: Unknown method, guessing 0 arguments
     External (_SB_.PCI0.I2C0.SHUB.PS3X, MethodObj)    // Warning: Unknown method, guessing 0 arguments
     External (_SB_.PCI0.LPCB.H_EC.ECMD, MethodObj)    // Warning: Unknown method, guessing 1 arguments
-    External (_SB_.PCI0.LPCB.H_EC.ECRD, MethodObj, 1)    // Fixed: was IntObj, takes 1 arg
+    External (_SB_.PCI0.LPCB.H_EC.ECRD, MethodObj)    // Fixed: was IntObj
     External (_SB_.PCI0.LPCB.H_EC.ECWT, MethodObj)    // Warning: Unknown method, guessing 2 arguments
     External (_SB_.PCI0.LPCB.H_EC.PECH, UnknownObj)
     External (_SB_.PCI0.LPCB.H_EC.PECL, UnknownObj)
@@ -100,7 +100,7 @@ DefinitionBlock ("", "DSDT", 2, "DELL  ", "CBX3   ", 0x01072009)
     External (_SB_.TPM_.PTS_, MethodObj)    // Warning: Unknown method, guessing 1 arguments
     External (HNOT, MethodObj)    // Warning: Unknown method, guessing 1 arguments
     External (INIR, MethodObj)    // Warning: Unknown method, guessing 0 arguments
-    External (MDBG, MethodObj, 1)    // Fixed: was IntObj, takes 1 arg
+    External (MDBG, MethodObj)    // Fixed: was IntObj
     External (MPMF, UnknownObj)
     External (NHDA, UnknownObj)
     External (PS0X, MethodObj)    // Warning: Unknown method, guessing 0 arguments
