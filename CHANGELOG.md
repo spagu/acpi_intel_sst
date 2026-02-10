@@ -15,6 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - This was causing BAR0 memory to return 0xFFFFFFFF
 
 ### Added
+- **ACPI `_INI` method call** - calls ACPI initialization method during device attach
+- **Known Issues documentation** - documented Dell XPS 13 9343 BAR0 memory access issue
+  - Comprehensive troubleshooting guide in README.md
+  - HDA controller disable workaround (`hint.hdac.0.disabled="1"`)
 - **Extended PCI config register support** - additional registers from Linux catpt driver
   - IMC (0xE4): Interrupt Mask Clear register
   - IMD (0xEC): Interrupt Mask Set register (default: 0x7FFF0003)

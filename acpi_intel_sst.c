@@ -212,6 +212,19 @@ sst_acpi_attach(device_t dev)
 		device_printf(dev, "Warning: acpi_pwr_switch_consumer failed\n");
 	}
 
+	/* Try _INI method if available (ACPI device initialization) */
+	{
+		ACPI_STATUS status;
+		status = AcpiEvaluateObject(sc->handle, "_INI", NULL, NULL);
+		if (ACPI_SUCCESS(status)) {
+			device_printf(dev, "Called _INI method successfully\n");
+			DELAY(100000);  /* 100ms */
+		} else if (status != AE_NOT_FOUND) {
+			device_printf(dev, "Warning: _INI method failed (0x%x)\n",
+			    status);
+		}
+	}
+
 	/*
 	 * Try to find and power on the parent LPE device
 	 * The SST DSP might be gated by the LPE (Low Power Engine)

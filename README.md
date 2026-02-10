@@ -22,6 +22,7 @@
 - [Firmware](#-firmware)
 - [Installation](#-installation)
 - [Usage](#-usage)
+- [Known Issues](#-known-issues)
 - [Debugging](#-debugging)
 - [Project Roadmap](#-project-roadmap)
 - [Technical Details](#-technical-details)
@@ -663,6 +664,56 @@ sysctl dev.acpi_intel_sst.0.jack
 | No sound output | Mixer muted | Run `mixer vol 100` |
 | Distorted audio | Sample rate mismatch | Check SSP clock config |
 | Crackling sound | DMA underrun | Increase buffer size |
+
+---
+
+## ⚠️ Known Issues
+
+### Dell XPS 13 9343 - BAR0 Memory Access
+
+**Status:** Under Investigation
+
+On Dell XPS 13 9343, the SST DSP BAR0 memory region (0xFE000000) may return `0xFFFFFFFF` despite correct power management configuration. This is a known hardware/firmware limitation.
+
+**Symptoms:**
+- BAR0 reads return `0xFFFFFFFF`
+- BAR1 (PCI config mirror at 0xFE100000) works correctly
+- SST DSP (8086:9CB6) does not appear in `lspci` output
+- Audio works correctly in Windows
+
+**What we've tried:**
+- Correct WPT (Wildcat Point) power-up sequence
+- PMCS D0 power state
+- VDRTCTL0/VDRTCTL2 power gating configuration
+- IOMMU disabled (`hw.dmar.enable=0`)
+- GPIO audio power enable
+- PCH RCBA FD2 ADSP enable check
+- Warm reboots from Windows
+- ACPI `_PS0`, `_ON`, `_INI` methods
+- Intel Audio `_DSM` calls
+
+**Possible causes:**
+1. Intel SST DSP on Broadwell-U requires proprietary Windows driver initialization
+2. Hardware strapping or BIOS configuration locks the device
+3. Dell-specific BIOS implementation hides the device from non-Windows OSes
+
+**Workarounds to try:**
+
+1. **Disable HDA Controller** - Force system to use SST instead of HDA:
+   ```bash
+   # Add to /boot/loader.conf
+   hint.hdac.0.disabled="1"
+   ```
+
+2. **Check BIOS Settings** - Ensure "Audio" is set to "On" (not "Off" or "HDA only")
+
+3. **Test with different i915 configurations**:
+   ```bash
+   # Add to /boot/loader.conf
+   hw.i915kms.enable="1"
+   ```
+
+If you have a Dell XPS 13 9343 and can get audio working, please report your configuration.
 
 ---
 
