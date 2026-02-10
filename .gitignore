@@ -58,3 +58,7 @@ tests/*.out
 *.tar.gz
 *.tar.xz
 *.zip
+
+# ACPI compiled tables (keep source .dsl files)
+acpi/*.aml
+acpi/*.hex

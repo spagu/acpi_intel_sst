@@ -397,14 +397,20 @@ To match Linux behavior, FreeBSD would need:
 
 ### 7.6 Testing ACPI _OSI Override
 
-Try adding to `/boot/loader.conf`:
+**TESTED - DID NOT HELP**
+
+Added to `/boot/loader.conf`:
 ```bash
-# Spoof Windows for ACPI _OSI queries
 hw.acpi.osi="Windows 2015"
-hw.acpi.osi="!Linux"
 ```
 
-This may cause BIOS to expose LPSS devices on PCI bus.
+**Results:**
+- SST still does NOT appear in pciconf (remains ACPI-only)
+- BAR0 still returns 0xFFFFFFFF
+- ig4iic0 I2C controllers still fail
+- Power state correct (PMCS=D0, VDRTCTL0=0x03)
+
+**Conclusion:** The `_OSI` spoofing does not unlock the LPSS memory region on Dell XPS 13 9343. The device hiding/locking occurs at a deeper level than ACPI OS detection.
 
 ---
 
@@ -456,13 +462,145 @@ The Intel SST DSP on Dell XPS 13 9343 **cannot be enabled from FreeBSD** due to 
 
 ### 9.3 Recommendations
 
-1. **For Dell XPS 13 9343 users:** Use HDMI/DisplayPort audio or USB audio adapter
-2. **For driver development:** Test on other Broadwell-U platforms (HP, Lenovo, ASUS)
-3. **For FreeBSD project:** Consider reporting BIOS behavior to Dell/Intel
+1. **For Dell XPS 13 9343 users:** Try DSDT override to force HDA mode (see Section 10)
+2. **Alternative:** Use HDMI/DisplayPort audio or USB audio adapter
+3. **For driver development:** Test on other Broadwell-U platforms (HP, Lenovo, ASUS)
+4. **For FreeBSD project:** Consider reporting BIOS behavior to Dell/Intel
 
 ---
 
-## 10. Files Modified
+## 10. Alternative Solution: HDA Mode via DSDT Override
+
+### 10.1 The HDA vs I2S Mode Discovery
+
+**Critical Finding:** The Dell XPS 13 9343 uses the Realtek ALC3263 codec, which is a **dual-mode** audio chip supporting both:
+- **HDA (High Definition Audio)** - Standard Intel HD Audio, works with FreeBSD hdac driver
+- **I2S (Inter-IC Sound)** - Requires Intel SST DSP driver
+
+The BIOS uses the **ACPI `_REV` value** provided by the OS to determine which mode to initialize:
+- `_REV` = 2 → HDA mode (Windows 8.1 / Windows 10 compatibility)
+- `_REV` = 5 → I2S mode (Modern Windows expecting SST)
+
+### 10.2 Linux Solution: acpi_rev_override
+
+Linux kernel has `CONFIG_ACPI_REV_OVERRIDE_POSSIBLE` which enables:
+
+```bash
+# Linux boot parameter to force HDA mode
+acpi_rev_override=5
+```
+
+This makes Linux report `_REV` = 5, triggering HDA mode initialization.
+
+**FreeBSD does NOT have an equivalent parameter.**
+
+### 10.3 FreeBSD Solution: DSDT Override
+
+FreeBSD supports loading a modified DSDT at boot:
+
+#### Step 1: Extract Current DSDT
+```bash
+# On FreeBSD
+acpidump -dt > /tmp/acpi.tables
+acpidump -t -o /tmp/DSDT.dat DSDT
+iasl -d /tmp/DSDT.dat    # Produces DSDT.dsl
+```
+
+#### Step 2: Modify DSDT to Force HDA Mode
+
+Find the `_REV` method or OSYS variable and modify it:
+
+**Option A: Modify _REV return value**
+```asl
+// Original
+Method (_REV, 0, NotSerialized)
+{
+    Return (0x02)  // or depends on OS detection
+}
+
+// Modified - always return 5 for HDA mode
+Method (_REV, 0, NotSerialized)
+{
+    Return (0x05)
+}
+```
+
+**Option B: Modify OSYS variable initialization**
+```asl
+// In _INI or _OSI handler, find:
+If (_OSI ("Windows 2013"))
+{
+    Store (0x07DD, OSYS)  // I2S mode
+}
+
+// Change to never trigger I2S mode
+If (0x00)  // Disabled
+{
+    Store (0x07DD, OSYS)
+}
+```
+
+**Option C: Modify ADSP device _STA**
+```asl
+// In _SB.PCI0.ADSP
+Method (_STA, 0, NotSerialized)
+{
+    Return (0x00)  // Disable SST, let HDA controller take over
+}
+```
+
+#### Step 3: Compile and Install Modified DSDT
+```bash
+# Compile
+iasl /tmp/DSDT.dsl   # Produces DSDT.aml
+
+# Copy to /boot
+cp DSDT.aml /boot/acpi_dsdt.aml
+```
+
+#### Step 4: Configure loader.conf
+```bash
+# /boot/loader.conf
+acpi_dsdt_load="YES"
+acpi_dsdt_name="/boot/acpi_dsdt.aml"
+```
+
+#### Step 5: Reboot and Test
+```bash
+# Check dmesg for custom DSDT loading
+dmesg | grep -i dsdt
+
+# Check if HDA controller appears
+cat /dev/sndstat
+mixer
+```
+
+### 10.4 Expected Outcome
+
+If HDA mode is activated successfully:
+
+1. **Intel Broadwell Audio Controller (hdac1)** should enumerate Realtek ALC3263 codec
+2. `/dev/dsp` should appear
+3. `mixer` should show volume controls
+4. SST device (INT3438) may still appear but be non-functional (expected)
+
+### 10.5 Resources for DSDT Modification
+
+- [GitHub: rbreaves/XPS-13-9343-DSDT](https://github.com/rbreaves/XPS-13-9343-DSDT) - DSDT dumps and patches
+- [GitHub: major/xps-13-9343-dsdt](https://github.com/major/xps-13-9343-dsdt) - DSDT testing repository
+- [ArchWiki: Dell XPS 13 (9343)](https://wiki.archlinux.org/title/Dell_XPS_13_(9343)) - Linux audio mode information
+- [FreeBSD Forums: Loading ACPI DSDT AML](https://forums.freebsd.org/threads/loading-acpi-dsdt-aml.46692/)
+
+### 10.6 Caveats
+
+1. **Cold Boot Required:** HDA/I2S mode is set during cold boot, not soft reboot
+2. **Windows Dual-Boot:** Requires 2 cold boots to switch between Windows and FreeBSD audio
+3. **BIOS Updates:** May reset DSDT override requirements
+4. **DSDT Complexity:** Modifications require ACPI Source Language (ASL) knowledge
+
+---
+
+## 11. Files Modified
 
 | File | Changes |
 |------|---------|

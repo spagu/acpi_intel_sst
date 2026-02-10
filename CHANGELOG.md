@@ -16,17 +16,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - **ACPI `_INI` method call** - calls ACPI initialization method during device attach
+- **HDA Mode Alternative (DSDT Override)** - documented workaround for Dell XPS 13 9343
+  - Discovery: Dell XPS 13 9343 uses dual-mode Realtek ALC3263 (HDA + I2S)
+  - BIOS uses ACPI `OSYS` variable to select audio mode at cold boot
+  - Linux has `CONFIG_ACPI_REV_OVERRIDE_POSSIBLE` with `acpi_rev_override` parameter
+  - FreeBSD has NO equivalent - must use DSDT override method
+  - Complete DSDT modification instructions in README.md
+  - DSDT patching resources from GitHub repos (rbreaves, major)
+  - If HDA mode works, standard `hdac` driver handles audio (no SST driver needed)
+- **ACPI DSDT Patch Files** - `acpi/` folder with ready-to-use patches
+  - `acpi/DSDT.dat` - Original DSDT binary from Dell XPS 13 9343
+  - `acpi/DSDT.dsl` - Decompiled original DSDT (ASL source)
+  - `acpi/DSDT_patched.dsl` - Patched DSDT that disables ADSP to force HDA mode
+  - `acpi/README.md` - Installation instructions for FreeBSD
+  - Patch modifies `_SB.PCI0.ADSP._STA` to always return Zero (disabled)
 - **Known Issues documentation** - documented Dell XPS 13 9343 BAR0 memory access issue
   - Comprehensive troubleshooting guide in README.md
   - HDA controller disable workaround (`hint.hdac.0.disabled="1"`)
   - ig4iic0 (I2C) also fails - entire LPSS memory region inaccessible
   - Combined loader.conf workarounds for LPSS devices
-  - ACPI `_OSI` spoofing workaround (`hw.acpi.osi="Windows 2015"`)
+  - ACPI `_OSI` spoofing workaround (`hw.acpi.osi="Windows 2015"`) - **TESTED: Did NOT help**
   - Comparison: How Linux/Windows handle LPSS (intel-lpss driver, Intel Serial IO)
 - **Technical Findings Document** - `docs/TECHNICAL_FINDINGS.md`
   - Complete investigation timeline and methodology
   - Register dumps and power sequence analysis
   - Linux vs Windows LPSS handling comparison
+  - HDA vs I2S mode switching via ACPI `_REV`
+  - DSDT override solution with step-by-step instructions
   - Root cause hypothesis and conclusions
 - **Extended PCI config register support** - additional registers from Linux catpt driver
   - IMC (0xE4): Interrupt Mask Clear register

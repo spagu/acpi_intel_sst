@@ -727,7 +727,7 @@ On Dell XPS 13 9343, the SST DSP BAR0 memory region (0xFE000000) may return `0xF
    # Add to /boot/loader.conf
    hw.acpi.osi="Windows 2015"
    ```
-   Linux does this by default, which may unlock LPSS devices.
+   **TESTED: Did NOT help** - SST remains ACPI-only, BAR0 still 0xFFFFFFFF.
 
 6. **Combined loader.conf for testing**:
    ```bash
@@ -753,6 +753,63 @@ On Dell XPS 13 9343, the SST DSP BAR0 memory region (0xFE000000) may return `0xF
 For detailed technical analysis, see [docs/TECHNICAL_FINDINGS.md](docs/TECHNICAL_FINDINGS.md).
 
 If you have a Dell XPS 13 9343 and can get audio working, please report your configuration.
+
+### Alternative: Force HDA Mode via DSDT Override
+
+**Key Discovery:** The Dell XPS 13 9343 uses a **dual-mode** Realtek ALC3263 codec supporting both HDA and I2S. The BIOS uses ACPI `_REV` value to determine which mode to initialize:
+
+- **HDA mode** → Works with standard FreeBSD `hdac` driver (no SST driver needed)
+- **I2S mode** → Requires Intel SST DSP driver (this driver)
+
+Linux has `CONFIG_ACPI_REV_OVERRIDE_POSSIBLE` with `acpi_rev_override` boot parameter. **FreeBSD has no equivalent**, but you can use **DSDT override**:
+
+#### Step 1: Extract and Modify DSDT
+
+```bash
+# Extract DSDT
+acpidump -dt > /tmp/acpi.tables
+acpidump -t -o /tmp/DSDT.dat DSDT
+iasl -d /tmp/DSDT.dat    # Creates DSDT.dsl
+
+# Edit DSDT.dsl - find _REV or OSYS and modify:
+# Option A: Force _REV to return 5 (HDA mode)
+# Option B: Disable ADSP device by changing _STA to return 0x00
+# Option C: Modify OSYS checks to prevent I2S mode selection
+```
+
+#### Step 2: Compile and Install
+
+```bash
+iasl DSDT.dsl   # Creates DSDT.aml
+sudo cp DSDT.aml /boot/acpi_dsdt.aml
+```
+
+#### Step 3: Configure loader.conf
+
+```bash
+# Add to /boot/loader.conf
+acpi_dsdt_load="YES"
+acpi_dsdt_name="/boot/acpi_dsdt.aml"
+```
+
+#### Step 4: Cold Boot and Test
+
+```bash
+# After cold reboot (not soft reboot!)
+cat /dev/sndstat
+mixer
+dmesg | grep -i hda
+```
+
+**Expected Result:** With HDA mode active, the `hdac1` controller should enumerate the Realtek codec and `/dev/dsp` should appear without needing this SST driver.
+
+**DSDT Resources:**
+- [GitHub: rbreaves/XPS-13-9343-DSDT](https://github.com/rbreaves/XPS-13-9343-DSDT)
+- [GitHub: major/xps-13-9343-dsdt](https://github.com/major/xps-13-9343-dsdt)
+- [ArchWiki: Dell XPS 13 (9343)](https://wiki.archlinux.org/title/Dell_XPS_13_(9343))
+- [FreeBSD Forums: Loading ACPI DSDT AML](https://forums.freebsd.org/threads/loading-acpi-dsdt-aml.46692/)
+
+> ⚠️ **Caveats:** Cold boot required for mode switch. Dual-booting Windows requires 2 cold boots to switch audio modes.
 
 ---
 
