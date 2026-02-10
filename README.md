@@ -697,21 +697,60 @@ On Dell XPS 13 9343, the SST DSP BAR0 memory region (0xFE000000) may return `0xF
 2. Hardware strapping or BIOS configuration locks the device
 3. Dell-specific BIOS implementation hides the device from non-Windows OSes
 
+**Related issue:** The I2C controllers (ig4iic0) at 0xfe103000 and 0xfe105000 also fail with the same error - they're inside the same LPSS memory region. This confirms the **entire LPSS (Low Power SubSystem) memory range is inaccessible** from FreeBSD.
+
 **Workarounds to try:**
 
-1. **Disable HDA Controller** - Force system to use SST instead of HDA:
+1. **Disable conflicting LPSS drivers** - Prevent ig4iic0 from claiming LPSS resources:
+   ```bash
+   # Add to /boot/loader.conf
+   hint.ig4.0.disabled="1"
+   hint.ig4.1.disabled="1"
+   ```
+
+2. **Disable HDA Controller** - Force system to use SST instead of HDA:
    ```bash
    # Add to /boot/loader.conf
    hint.hdac.0.disabled="1"
    ```
 
-2. **Check BIOS Settings** - Ensure "Audio" is set to "On" (not "Off" or "HDA only")
+3. **Check BIOS Settings** - Ensure "Audio" is set to "On" (not "Off" or "HDA only")
 
-3. **Test with different i915 configurations**:
+4. **Test with different i915 configurations**:
    ```bash
    # Add to /boot/loader.conf
    hw.i915kms.enable="1"
    ```
+
+5. **ACPI _OSI spoofing** - Make BIOS think FreeBSD is Windows:
+   ```bash
+   # Add to /boot/loader.conf
+   hw.acpi.osi="Windows 2015"
+   ```
+   Linux does this by default, which may unlock LPSS devices.
+
+6. **Combined loader.conf for testing**:
+   ```bash
+   # /boot/loader.conf - try all LPSS-related options
+   hw.acpi.osi="Windows 2015"
+   hint.ig4.0.disabled="1"
+   hint.ig4.1.disabled="1"
+   hint.hdac.0.disabled="1"
+   hw.dmar.enable="0"
+   ```
+
+### How Linux and Windows Handle LPSS
+
+| Feature | FreeBSD | Linux | Windows |
+|---------|---------|-------|---------|
+| SST in lspci/pciconf | No (ACPI only) | Yes (PCI) | Yes (PCI) |
+| LPSS power domain | Not managed | intel-lpss driver | Intel Serial IO |
+| I2C (ig4) | Fails | Works | Works |
+| ACPI `_OSI` return | "FreeBSD" | "Windows 20XX" | Native |
+
+**Key insight:** Linux returns Windows compatibility strings for `_OSI()` queries, which may cause BIOS to expose LPSS devices on PCI bus instead of hiding them as ACPI-only devices.
+
+For detailed technical analysis, see [docs/TECHNICAL_FINDINGS.md](docs/TECHNICAL_FINDINGS.md).
 
 If you have a Dell XPS 13 9343 and can get audio working, please report your configuration.
 

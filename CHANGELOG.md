@@ -19,6 +19,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Known Issues documentation** - documented Dell XPS 13 9343 BAR0 memory access issue
   - Comprehensive troubleshooting guide in README.md
   - HDA controller disable workaround (`hint.hdac.0.disabled="1"`)
+  - ig4iic0 (I2C) also fails - entire LPSS memory region inaccessible
+  - Combined loader.conf workarounds for LPSS devices
+  - ACPI `_OSI` spoofing workaround (`hw.acpi.osi="Windows 2015"`)
+  - Comparison: How Linux/Windows handle LPSS (intel-lpss driver, Intel Serial IO)
+- **Technical Findings Document** - `docs/TECHNICAL_FINDINGS.md`
+  - Complete investigation timeline and methodology
+  - Register dumps and power sequence analysis
+  - Linux vs Windows LPSS handling comparison
+  - Root cause hypothesis and conclusions
 - **Extended PCI config register support** - additional registers from Linux catpt driver
   - IMC (0xE4): Interrupt Mask Clear register
   - IMD (0xEC): Interrupt Mask Set register (default: 0x7FFF0003)
