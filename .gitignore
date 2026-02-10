@@ -49,7 +49,6 @@ core
 
 # Firmware files (may be added locally for testing)
 *.fw
-*.bin
 firmware/
 
 # Test output
