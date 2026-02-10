@@ -22,6 +22,7 @@
 
 #include <machine/bus.h>
 #include <machine/resource.h>
+#include <machine/cpufunc.h>	/* inl/outl for GPIO access */
 
 #include <contrib/dev/acpica/include/acpi.h>
 #include <dev/acpica/acpivar.h>
@@ -321,6 +322,55 @@ sst_acpi_attach(device_t dev)
 			}
 			if (result.Pointer)
 				AcpiOsFree(result.Pointer);
+		}
+	}
+
+	/*
+	 * 1.5 Direct GPIO control for audio power
+	 * ACPI PAUD power resource uses GPIO 0x4C to control audio power
+	 * GPIO base is at LPC bridge (0:0x1F:0) config offset 0x48, bits 7-15
+	 * GPIO register = GPIO_BASE + 0x100 + (pin * 8)
+	 * Bit 31 = output value
+	 */
+	{
+		uint32_t lpc_gpio_reg, gpio_base;
+		uint32_t gpio_addr, gpio_val;
+
+		/* Read GPIO base from LPC bridge config space */
+		/* LPC bridge is at bus 0, device 0x1F, function 0 */
+		lpc_gpio_reg = pci_cfgregread(0, 0, 0x1F, 0, 0x48, 4);
+		gpio_base = (lpc_gpio_reg >> 7) << 7;  /* bits 7-15, shifted */
+
+		device_printf(dev, "GPIO Control:\n");
+		device_printf(dev, "  LPC GPIO reg (0x48): 0x%08x\n",
+		    lpc_gpio_reg);
+		device_printf(dev, "  GPIO Base: 0x%08x\n", gpio_base);
+
+		if (gpio_base != 0 && gpio_base != 0xFFFFFFFF) {
+			/* GPIO 0x4C (76) register address */
+			gpio_addr = gpio_base + 0x100 + (0x4C * 8);
+			device_printf(dev, "  GPIO 0x4C addr: 0x%08x\n",
+			    gpio_addr);
+
+			/* Read current GPIO 0x4C state via I/O port */
+			gpio_val = inl(gpio_addr);
+			device_printf(dev, "  GPIO 0x4C value: 0x%08x "
+			    "(bit31=%d)\n", gpio_val, (gpio_val >> 31) & 1);
+
+			/* If bit 31 is not set, try to enable audio power */
+			if ((gpio_val & (1U << 31)) == 0) {
+				device_printf(dev,
+				    "  Enabling audio power (GPIO 0x4C)...\n");
+				gpio_val |= (1U << 31);
+				outl(gpio_addr, gpio_val);
+				DELAY(100000);  /* 100ms */
+
+				/* Verify */
+				gpio_val = inl(gpio_addr);
+				device_printf(dev,
+				    "  GPIO 0x4C after: 0x%08x (bit31=%d)\n",
+				    gpio_val, (gpio_val >> 31) & 1);
+			}
 		}
 	}
 
