@@ -12,6 +12,31 @@
 
 ---
 
+## Quick Start
+
+```bash
+# 1. Clone and build
+git clone https://github.com/spagu/acpi_intel_sst.git
+cd acpi_intel_sst
+make
+
+# 2. Download Intel SST firmware (Broadwell)
+sudo mkdir -p /boot/firmware/intel
+fetch -o /tmp/fw.deb 'http://ftp.debian.org/debian/pool/non-free-firmware/f/firmware-nonfree/firmware-intel-sound_20230210-5_all.deb'
+cd /tmp && ar x fw.deb && tar xf data.tar.xz
+sudo cp lib/firmware/intel/IntcSST2.bin /boot/firmware/intel/
+
+# 3. Load the driver
+sudo kldload ./acpi_intel_sst.ko
+
+# 4. Test audio
+cat /dev/sndstat
+mixer vol 80
+play -n synth 3 sine 440  # requires audio/sox
+```
+
+---
+
 ## 📋 Table of Contents
 
 - [Overview](#-overview)
@@ -438,8 +463,8 @@ Alternative (Linux catpt driver firmware):
 # Create firmware directory
 sudo mkdir -p /boot/firmware/intel
 
-# Download and extract Debian firmware package
-fetch -o /tmp/firmware-intel-sound.deb 'http://ftp.debian.org/debian/pool/non-free-firmware/f/firmware-nonfree/firmware-intel-sound_20260110-1_all.deb'
+# Download and extract Debian firmware package (bookworm version)
+fetch -o /tmp/firmware-intel-sound.deb 'http://ftp.debian.org/debian/pool/non-free-firmware/f/firmware-nonfree/firmware-intel-sound_20230210-5_all.deb'
 cd /tmp
 ar x firmware-intel-sound.deb
 tar xf data.tar.xz
@@ -454,6 +479,8 @@ sudo cp lib/firmware/intel/catpt/bdw/dsp_basefw.bin /boot/firmware/intel/catpt/b
 # Cleanup
 rm -rf /tmp/firmware-intel-sound.deb /tmp/data.tar.xz /tmp/control.tar.xz /tmp/debian-binary /tmp/lib
 ```
+
+> **Note:** Check [Debian firmware-intel-sound packages](https://packages.debian.org/search?keywords=firmware-intel-sound) for the latest version.
 
 #### Option 2: From Debian/Ubuntu System
 
@@ -978,10 +1005,24 @@ modification, are permitted provided that the following conditions are met:
 
 ## 📚 References
 
+### Intel Documentation
 - [Intel Broadwell U/Y Platform Documentation](https://www.intel.com/content/www/us/en/products/platforms/details/broadwell-u-y/docs.html)
 - [Intel SST Audio Drivers](https://www.intel.com/content/www/us/en/products/platforms/details/broadwell-u-y/downloads.html)
 - [Broadwell Ultrabooks List](https://www.ultrabookreview.com/5165-broadwell-ultrabooks/)
-- [Linux SOF Project](https://github.com/thesofproject/linux)
+
+### Linux Driver Sources (Reference Implementation)
+- [Linux catpt driver](https://github.com/torvalds/linux/tree/master/sound/soc/intel/catpt) - Official Linux kernel driver for Haswell/Broadwell SST
+- [Linux SOF Project](https://github.com/thesofproject/linux) - Sound Open Firmware (newer platforms)
+- [CoolStar Windows SST Driver](https://github.com/coolstar/csaudiosstcatpt) - Open source Windows driver for Broadwell SST
+
+### Firmware
+- [Debian firmware-intel-sound](https://packages.debian.org/bookworm/firmware-intel-sound) - Official firmware packages
+- [linux-firmware repository](https://git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git) - Upstream firmware source
+
+### Dell XPS 13 9343 DSDT Resources
+- [GitHub: rbreaves/XPS-13-9343-DSDT](https://github.com/rbreaves/XPS-13-9343-DSDT)
+- [GitHub: major/xps-13-9343-dsdt](https://github.com/major/xps-13-9343-dsdt)
+- [ArchWiki: Dell XPS 13 (9343)](https://wiki.archlinux.org/title/Dell_XPS_13_(9343))
 
 ---
 

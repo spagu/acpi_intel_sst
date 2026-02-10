@@ -217,6 +217,10 @@ sst_chan_init(kobj_t obj, void *devinfo, struct snd_dbuf *b,
 	ch->speed = 48000;
 	ch->channels = 2;
 
+	/* DSP stream not yet allocated */
+	ch->stream_id = 0;
+	ch->stream_allocated = false;
+
 	return (ch);
 }
 
@@ -236,6 +240,10 @@ sst_chan_free(kobj_t obj, void *data)
 
 	if (ch->state == SST_PCM_STATE_RUNNING)
 		sst_ssp_stop(sc, ch->ssp_port);
+
+	/* Free DSP stream if allocated */
+	if (ch->stream_allocated)
+		sst_pcm_free_dsp_stream(sc, ch);
 
 	if (ch->dma_ch >= 0) {
 		sst_dma_free(sc, ch->dma_ch);
@@ -303,6 +311,74 @@ sst_chan_setblocksize(kobj_t obj, void *data, uint32_t blocksize)
 }
 
 /*
+ * Allocate DSP stream via IPC
+ */
+static int
+sst_pcm_alloc_dsp_stream(struct sst_softc *sc, struct sst_pcm_channel *ch)
+{
+	struct sst_alloc_stream_req req;
+	int error;
+
+	if (ch->stream_allocated)
+		return (0);
+
+	memset(&req, 0, sizeof(req));
+
+	/* Set stream type */
+	req.stream_type = (ch->dir == PCMDIR_PLAY) ?
+	    SST_STREAM_TYPE_RENDER : SST_STREAM_TYPE_CAPTURE;
+
+	/* Set audio path (SSP port) */
+	req.path_id = ch->ssp_port;
+
+	/* Set audio format */
+	req.format.sample_rate = ch->speed;
+	req.format.bit_depth = AFMT_BIT(ch->format);
+	req.format.channels = ch->channels;
+	req.format.format_id = SST_FMT_PCM;
+	req.format.interleaving = 1;	/* Interleaved */
+
+	/* Channel map: stereo = 0x03 (front left + front right) */
+	if (ch->channels == 2)
+		req.format.channel_map = 0x03;
+	else
+		req.format.channel_map = (1 << ch->channels) - 1;
+
+	/* Set DMA buffer info */
+	req.ring_buf_addr = (uint32_t)ch->dma_addr;
+	req.ring_buf_size = ch->buf_size;
+	req.period_count = ch->blk_count;
+
+	/* Allocate stream on DSP */
+	error = sst_ipc_alloc_stream(sc, &req, &ch->stream_id);
+	if (error) {
+		device_printf(sc->dev, "PCM: DSP stream allocation failed\n");
+		return (error);
+	}
+
+	ch->stream_allocated = true;
+	device_printf(sc->dev, "PCM: Allocated DSP stream %u for %s\n",
+		      ch->stream_id,
+		      (ch->dir == PCMDIR_PLAY) ? "playback" : "capture");
+
+	return (0);
+}
+
+/*
+ * Free DSP stream via IPC
+ */
+static void
+sst_pcm_free_dsp_stream(struct sst_softc *sc, struct sst_pcm_channel *ch)
+{
+	if (!ch->stream_allocated)
+		return;
+
+	sst_ipc_free_stream(sc, ch->stream_id);
+	ch->stream_allocated = false;
+	ch->stream_id = 0;
+}
+
+/*
  * Trigger (start/stop)
  */
 static int
@@ -321,6 +397,16 @@ sst_chan_trigger(kobj_t obj, void *data, int go)
 	case PCMTRIG_START:
 		if (ch->state == SST_PCM_STATE_RUNNING)
 			return (0);
+
+		/* Allocate DSP stream if firmware is running */
+		if (sc->fw.state == SST_FW_STATE_RUNNING) {
+			error = sst_pcm_alloc_dsp_stream(sc, ch);
+			if (error) {
+				device_printf(sc->dev,
+				    "DSP stream alloc failed: %d\n", error);
+				/* Continue without DSP - direct SSP mode */
+			}
+		}
 
 		/* Configure SSP */
 		ssp_cfg.sample_rate = ch->speed;
@@ -365,6 +451,10 @@ sst_chan_trigger(kobj_t obj, void *data, int go)
 		/* Set DMA callback */
 		sst_dma_set_callback(sc, ch->dma_ch, sst_pcm_dma_callback, ch);
 
+		/* Resume DSP stream if allocated */
+		if (ch->stream_allocated)
+			sst_ipc_stream_resume(sc, ch->stream_id);
+
 		/* Start DMA first, then SSP */
 		ch->ptr = 0;
 		sst_dma_start(sc, ch->dma_ch);
@@ -378,9 +468,17 @@ sst_chan_trigger(kobj_t obj, void *data, int go)
 		if (ch->state != SST_PCM_STATE_RUNNING)
 			return (0);
 
+		/* Pause DSP stream */
+		if (ch->stream_allocated)
+			sst_ipc_stream_pause(sc, ch->stream_id);
+
 		/* Stop SSP first, then DMA */
 		sst_ssp_stop(sc, ch->ssp_port);
 		sst_dma_stop(sc, ch->dma_ch);
+
+		/* Free DSP stream on abort */
+		if (go == PCMTRIG_ABORT && ch->stream_allocated)
+			sst_pcm_free_dsp_stream(sc, ch);
 
 		ch->state = SST_PCM_STATE_PREPARED;
 		break;
@@ -464,12 +562,33 @@ static int
 sst_mixer_set(struct snd_mixer *m, unsigned dev, unsigned left, unsigned right)
 {
 	struct sst_softc *sc = mix_getdevinfo(m);
+	struct sst_mixer_params params;
 
 	switch (dev) {
 	case SOUND_MIXER_VOLUME:
 	case SOUND_MIXER_PCM:
 		sc->pcm.vol_left = left;
 		sc->pcm.vol_right = right;
+
+		/* Update DSP mixer if firmware running */
+		if (sc->fw.state == SST_FW_STATE_RUNNING) {
+			memset(&params, 0, sizeof(params));
+			params.output_id = 0;	/* Main output */
+			params.volume = (left + right) / 2;
+			params.mute = sc->pcm.mute;
+			sst_ipc_set_mixer(sc, &params);
+		}
+
+		/* Also update stream volume if allocated */
+		if (sc->pcm.play.stream_allocated) {
+			struct sst_stream_params sp;
+			memset(&sp, 0, sizeof(sp));
+			sp.stream_id = sc->pcm.play.stream_id;
+			sp.volume_left = left;
+			sp.volume_right = right;
+			sp.mute = sc->pcm.mute;
+			sst_ipc_stream_set_params(sc, &sp);
+		}
 		break;
 	default:
 		return (-1);
@@ -510,12 +629,16 @@ sst_pcm_init(struct sst_softc *sc)
 	sc->pcm.play.state = SST_PCM_STATE_INIT;
 	sc->pcm.play.dma_ch = -1;
 	sc->pcm.play.dma_tag = NULL;
+	sc->pcm.play.stream_id = 0;
+	sc->pcm.play.stream_allocated = false;
 
 	sc->pcm.rec.sc = sc;
 	sc->pcm.rec.dir = PCMDIR_REC;
 	sc->pcm.rec.state = SST_PCM_STATE_INIT;
 	sc->pcm.rec.dma_ch = -1;
 	sc->pcm.rec.dma_tag = NULL;
+	sc->pcm.rec.stream_id = 0;
+	sc->pcm.rec.stream_allocated = false;
 
 	/* Default mixer values */
 	sc->pcm.vol_left = 100;

@@ -65,6 +65,8 @@ struct sst_pcm_channel {
 	/* Hardware resources */
 	int			ssp_port;	/* SSP port (0 or 1) */
 	int			dma_ch;		/* DMA channel */
+	uint32_t		stream_id;	/* DSP stream ID */
+	bool			stream_allocated; /* Stream allocated flag */
 
 	/* PCM channel reference for chn_intr */
 	struct pcm_channel	*pcm_ch;	/* sound(4) channel */

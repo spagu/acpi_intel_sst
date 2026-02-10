@@ -282,3 +282,211 @@ sst_ipc_get_fw_version(struct sst_softc *sc, struct sst_fw_version *version)
 
 	return (0);
 }
+
+/*
+ * Allocate a stream on the DSP
+ */
+int
+sst_ipc_alloc_stream(struct sst_softc *sc, struct sst_alloc_stream_req *req,
+		     uint32_t *stream_id)
+{
+	struct sst_alloc_stream_rsp rsp;
+	uint32_t header;
+	size_t size;
+	int error;
+
+	header = SST_IPC_HEADER(SST_IPC_GLBL_ALLOCATE_STREAM, 0,
+				sizeof(*req));
+
+	error = sst_ipc_send(sc, header, req, sizeof(*req));
+	if (error) {
+		device_printf(sc->dev, "IPC: Stream allocation send failed\n");
+		return (error);
+	}
+
+	size = sizeof(rsp);
+	error = sst_ipc_recv(sc, NULL, &rsp, &size);
+	if (error) {
+		device_printf(sc->dev, "IPC: Stream allocation recv failed\n");
+		return (error);
+	}
+
+	if (rsp.status != SST_IPC_REPLY_SUCCESS) {
+		device_printf(sc->dev, "IPC: Stream allocation failed: %u\n",
+			      rsp.status);
+		return (EIO);
+	}
+
+	if (stream_id != NULL)
+		*stream_id = rsp.stream_id;
+
+	device_printf(sc->dev, "IPC: Allocated stream %u\n", rsp.stream_id);
+
+	return (0);
+}
+
+/*
+ * Free a stream on the DSP
+ */
+int
+sst_ipc_free_stream(struct sst_softc *sc, uint32_t stream_id)
+{
+	uint32_t header;
+	int error;
+
+	header = SST_IPC_HEADER(SST_IPC_GLBL_FREE_STREAM, stream_id, 0);
+
+	error = sst_ipc_send(sc, header, NULL, 0);
+	if (error) {
+		device_printf(sc->dev, "IPC: Stream free failed: %d\n", error);
+		return (error);
+	}
+
+	device_printf(sc->dev, "IPC: Freed stream %u\n", stream_id);
+
+	return (0);
+}
+
+/*
+ * Pause a stream
+ */
+int
+sst_ipc_stream_pause(struct sst_softc *sc, uint32_t stream_id)
+{
+	uint32_t header;
+
+	header = SST_IPC_HEADER(SST_IPC_GLBL_STREAM_MESSAGE,
+				SST_IPC_STR_PAUSE, 0);
+	header |= (stream_id << 4);
+
+	return sst_ipc_send(sc, header, NULL, 0);
+}
+
+/*
+ * Resume a stream
+ */
+int
+sst_ipc_stream_resume(struct sst_softc *sc, uint32_t stream_id)
+{
+	uint32_t header;
+
+	header = SST_IPC_HEADER(SST_IPC_GLBL_STREAM_MESSAGE,
+				SST_IPC_STR_RESUME, 0);
+	header |= (stream_id << 4);
+
+	return sst_ipc_send(sc, header, NULL, 0);
+}
+
+/*
+ * Reset a stream
+ */
+int
+sst_ipc_stream_reset(struct sst_softc *sc, uint32_t stream_id)
+{
+	uint32_t header;
+
+	header = SST_IPC_HEADER(SST_IPC_GLBL_STREAM_MESSAGE,
+				SST_IPC_STR_RESET, 0);
+	header |= (stream_id << 4);
+
+	return sst_ipc_send(sc, header, NULL, 0);
+}
+
+/*
+ * Set stream parameters (volume, mute)
+ */
+int
+sst_ipc_stream_set_params(struct sst_softc *sc, struct sst_stream_params *params)
+{
+	uint32_t header;
+
+	header = SST_IPC_HEADER(SST_IPC_GLBL_STREAM_MESSAGE,
+				SST_IPC_STR_SET_PARAMS, sizeof(*params));
+	header |= (params->stream_id << 4);
+
+	return sst_ipc_send(sc, header, params, sizeof(*params));
+}
+
+/*
+ * Get current stream position
+ */
+int
+sst_ipc_stream_get_position(struct sst_softc *sc, uint32_t stream_id,
+			    struct sst_stream_position *pos)
+{
+	uint32_t header;
+	size_t size;
+	int error;
+
+	header = SST_IPC_HEADER(SST_IPC_GLBL_STREAM_MESSAGE,
+				SST_IPC_STR_GET_POSITION, 0);
+	header |= (stream_id << 4);
+
+	error = sst_ipc_send(sc, header, NULL, 0);
+	if (error)
+		return (error);
+
+	if (pos != NULL) {
+		size = sizeof(*pos);
+		error = sst_ipc_recv(sc, NULL, pos, &size);
+	}
+
+	return (error);
+}
+
+/*
+ * Set mixer parameters
+ */
+int
+sst_ipc_set_mixer(struct sst_softc *sc, struct sst_mixer_params *params)
+{
+	uint32_t header;
+
+	header = SST_IPC_HEADER(SST_IPC_GLBL_SET_MIXER_PARAMS, 0,
+				sizeof(*params));
+
+	return sst_ipc_send(sc, header, params, sizeof(*params));
+}
+
+/*
+ * Get mixer parameters
+ */
+int
+sst_ipc_get_mixer(struct sst_softc *sc, struct sst_mixer_params *params)
+{
+	uint32_t header;
+	size_t size;
+	int error;
+
+	header = SST_IPC_HEADER(SST_IPC_GLBL_GET_MIXER_PARAMS, 0, 0);
+
+	error = sst_ipc_send(sc, header, NULL, 0);
+	if (error)
+		return (error);
+
+	if (params != NULL) {
+		size = sizeof(*params);
+		error = sst_ipc_recv(sc, NULL, params, &size);
+	}
+
+	return (error);
+}
+
+/*
+ * Set device power state (D0/D3)
+ */
+int
+sst_ipc_set_dx(struct sst_softc *sc, uint32_t state)
+{
+	struct sst_dx_state dx;
+	uint32_t header;
+
+	memset(&dx, 0, sizeof(dx));
+	dx.state = state;
+
+	header = SST_IPC_HEADER(SST_IPC_GLBL_SET_DX, 0, sizeof(dx));
+
+	device_printf(sc->dev, "IPC: Setting DX state to %u\n", state);
+
+	return sst_ipc_send(sc, header, &dx, sizeof(dx));
+}

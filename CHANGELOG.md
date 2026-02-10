@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Complete IPC Stream Allocation API** (`sst_ipc.c`) - full DSP stream management
+  - `sst_ipc_alloc_stream()` - allocate audio stream on DSP
+  - `sst_ipc_free_stream()` - release DSP stream resources
+  - `sst_ipc_stream_pause/resume/reset()` - stream control
+  - `sst_ipc_stream_set_params()` - set volume, mute per stream
+  - `sst_ipc_stream_get_position()` - get current playback position
+  - `sst_ipc_set_mixer/get_mixer()` - master mixer control
+  - `sst_ipc_set_dx()` - power state management (D0/D3)
+- **Stream Allocation Structures** (`sst_ipc.h`)
+  - `struct sst_audio_format` - sample rate, bit depth, channels, format
+  - `struct sst_alloc_stream_req/rsp` - stream allocation request/response
+  - `struct sst_stream_params` - per-stream volume control
+  - `struct sst_stream_position` - playback position tracking
+  - `struct sst_mixer_params` - master mixer parameters
+  - `struct sst_dx_state` - power state structure
+- **Additional IPC Message Types**
+  - `SST_IPC_GLBL_REQUEST_DUMP` - debug dump
+  - `SST_IPC_GLBL_SET_DEVICE_FORMATS` - device format configuration
+  - `SST_IPC_GLBL_SET_DX` / `ENTER_DX_STATE` - power management
+  - `SST_IPC_GLBL_NOTIFICATION` - DSP notifications
+  - Stream messages: RESET, MUTE, UNMUTE
+  - Notification types: POSITION_CHANGED, GLITCH, UNDERRUN, OVERRUN
+  - Stream types: RENDER, CAPTURE, SYSTEM, LOOPBACK
+  - Audio format IDs: PCM, MP3, AAC, WMA
+- **PCM DSP Stream Integration** (`sst_pcm.c`)
+  - PCM trigger now allocates DSP stream via IPC
+  - Stream ID tracking per channel
+  - DSP stream pause/resume on playback start/stop
+  - Automatic stream cleanup on channel close
+  - Mixer updates propagate to DSP via IPC
+
 ### Fixed
 - **Critical: WPT (Broadwell-U) power-up sequence** - VDRTCTL0 register bits were using LPT (Haswell) positions
   - WPT uses bits 0-1 for D3PGD/D3SRAMPGD (not bits 8/16 like LPT)
