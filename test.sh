@@ -13,20 +13,19 @@ sysctl dev.drm
 
 mixer 
 
-pciconf -lv | grep -A5 "vgapci0"
+kldstat
 
-# Check PCH Device Control register (LPC bridge)
+lspci
+
+pciconf -lv | grep -A5 "vgapci0"
 pciconf -r pci0:31:0:0 0x80
 pciconf -r pci0:31:0:0 0x84
-
-# Check if there's a RCBA (Root Complex Base Address) we can access
 pciconf -r pci0:31:0:0 0xF0
 
 acpiconf | grep -i audio
 
 devinfo -rv | grep -A10 acpi0
-
-# Check if there's a GPIO controller
+    
 pciconf -lv | grep -i gpio
 
 cat /boot/firmware/intel/IntcSST2.bin | hexdump -C | head
@@ -35,12 +34,8 @@ cat /dev/sndstat
 
 sysctl hw.dmar.enable
 
-dmesg | grep -i dmar
-
-dmesg | grep -i iommu
-
 cat /boot/loader.conf
 
-dmesg | grep -i sst
+dmesg
 
 acpidump -dt
