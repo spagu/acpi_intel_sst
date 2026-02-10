@@ -21,4 +21,12 @@ cat /boot/firmware/intel/IntcSST2.bin | hexdump -C | head
 
 cat /dev/sndstat
 
+sysctl hw.dmar.enable
+
+dmesg | grep -i dmar
+
+dmesg | grep -i iommu
+
+cat /boot/loader.conf
+
 acpidump -dt
