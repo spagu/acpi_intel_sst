@@ -1,0 +1,1809 @@
+DSDT_patched.dsl   2099:         Device (PCI0)
+Warning  3073 -             Multiple types ^  (Device object requires either a _HID or _ADR, but not both)
+
+DSDT_patched.dsl   2677:                 Method (NPTS, 1, NotSerialized)
+Remark   2146 -      Method Argument is never used ^  (Arg0)
+
+DSDT_patched.dsl   2695:                 Method (NWAK, 1, NotSerialized)
+Remark   2146 -      Method Argument is never used ^  (Arg0)
+
+DSDT_patched.dsl   4808:                 Method (SPTS, 1, NotSerialized)
+Remark   2146 -      Method Argument is never used ^  (Arg0)
+
+DSDT_patched.dsl   4814:                 Method (SWAK, 1, NotSerialized)
+Remark   2146 -      Method Argument is never used ^  (Arg0)
+
+DSDT_patched.dsl   4944:         Processor (CPU0, 0x01, 0x00001810, 0x06){}
+Warning  3168 -                               ^ Legacy Processor() keyword detected. Use Device() keyword instead.
+
+DSDT_patched.dsl   4945:         Processor (CPU1, 0x02, 0x00001810, 0x06){}
+Warning  3168 -                               ^ Legacy Processor() keyword detected. Use Device() keyword instead.
+
+DSDT_patched.dsl   4946:         Processor (CPU2, 0x03, 0x00001810, 0x06){}
+Warning  3168 -                               ^ Legacy Processor() keyword detected. Use Device() keyword instead.
+
+DSDT_patched.dsl   4947:         Processor (CPU3, 0x04, 0x00001810, 0x06){}
+Warning  3168 -                               ^ Legacy Processor() keyword detected. Use Device() keyword instead.
+
+DSDT_patched.dsl   4948:         Processor (CPU4, 0x05, 0x00001810, 0x06){}
+Warning  3168 -                               ^ Legacy Processor() keyword detected. Use Device() keyword instead.
+
+DSDT_patched.dsl   4949:         Processor (CPU5, 0x06, 0x00001810, 0x06){}
+Warning  3168 -                               ^ Legacy Processor() keyword detected. Use Device() keyword instead.
+
+DSDT_patched.dsl   4950:         Processor (CPU6, 0x07, 0x00001810, 0x06){}
+Warning  3168 -                               ^ Legacy Processor() keyword detected. Use Device() keyword instead.
+
+DSDT_patched.dsl   4951:         Processor (CPU7, 0x08, 0x00001810, 0x06){}
+Warning  3168 -                               ^ Legacy Processor() keyword detected. Use Device() keyword instead.
+
+DSDT_patched.dsl   5906:         Method (RDGI, 1, Serialized)
+Warning  3115 -                            ^ Not all control paths return a value (\_SB.RDGI)
+
+DSDT_patched.dsl   5911:                 OperationRegion (LGPI, SystemIO, Local0, 0x04)
+Remark   2173 -                                             ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.RDGI)
+
+DSDT_patched.dsl   5922:         Method (RDGP, 1, Serialized)
+Warning  3115 -                            ^ Not all control paths return a value (\_SB.RDGP)
+
+DSDT_patched.dsl   5927:                 OperationRegion (LGPI, SystemIO, Local0, 0x04)
+Remark   2173 -                                             ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.RDGP)
+
+DSDT_patched.dsl   5943:                 OperationRegion (LGPI, SystemIO, Local0, 0x04)
+Remark   2173 -                                             ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.WTGP)
+
+DSDT_patched.dsl   5959:                 OperationRegion (LGPI, SystemIO, Local0, 0x04)
+Remark   2173 -                                             ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.WTIN)
+
+DSDT_patched.dsl   5975:                 OperationRegion (LGPI, SystemIO, Local0, 0x04)
+Remark   2173 -                                             ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.WPGP)
+
+DSDT_patched.dsl   5990:                 OperationRegion (LGPI, SystemIO, Local0, 0x04)
+Remark   2173 -                                             ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.GP2N)
+
+DSDT_patched.dsl   6005:                 OperationRegion (LGP2, SystemIO, Local0, 0x04)
+Remark   2173 -                                             ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.GP2A)
+
+DSDT_patched.dsl   6024:                 OperationRegion (LGPI, SystemIO, Local0, 0x02)
+Remark   2173 -                                             ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.GP2A)
+
+DSDT_patched.dsl   6060:                 OperationRegion (LGPI, SystemIO, Local0, 0x02)
+Remark   2173 -                                             ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.GP2B)
+
+DSDT_patched.dsl   6117:             Method (GPEH, 0, NotSerialized)
+Warning  3115 -                                ^ Not all control paths return a value (\_SB.PCI0.GLAN.GPEH)
+
+DSDT_patched.dsl   6161:             Method (GPEH, 0, NotSerialized)
+Warning  3115 -                                ^ Not all control paths return a value (\_SB.PCI0.EHC1.GPEH)
+
+DSDT_patched.dsl   6193:                         Name (UPCA, Package (0x04)
+Remark   2173 -                                          ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.EHC1.HUBN.PR01._UPC)
+
+DSDT_patched.dsl   6205:                         Name (PLDP, Package (0x01)
+Remark   2173 -                                          ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.EHC1.HUBN.PR01._PLD)
+
+DSDT_patched.dsl   6237:                             If ((Arg0 == ToUUID ("a5fc708f-8775-4ba6-bd0c-ba90a1ec72f8") /* Unknown UUID */))
+Remark   2184 -                                                                           Unknown UUID string ^ 
+
+DSDT_patched.dsl   6287:                             If ((Arg0 == ToUUID ("a5fc708f-8775-4ba6-bd0c-ba90a1ec72f8") /* Unknown UUID */))
+Remark   2184 -                                                                           Unknown UUID string ^ 
+
+DSDT_patched.dsl   6337:                             If ((Arg0 == ToUUID ("a5fc708f-8775-4ba6-bd0c-ba90a1ec72f8") /* Unknown UUID */))
+Remark   2184 -                                                                           Unknown UUID string ^ 
+
+DSDT_patched.dsl   6387:                             If ((Arg0 == ToUUID ("a5fc708f-8775-4ba6-bd0c-ba90a1ec72f8") /* Unknown UUID */))
+Remark   2184 -                                                                           Unknown UUID string ^ 
+
+DSDT_patched.dsl   6467:             Method (GPEH, 0, NotSerialized)
+Warning  3115 -                                ^ Not all control paths return a value (\_SB.PCI0.EHC2.GPEH)
+
+DSDT_patched.dsl   6499:                         Name (UPCA, Package (0x04)
+Remark   2173 -                                          ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.EHC2.HUBN.PR01._UPC)
+
+DSDT_patched.dsl   6511:                         Name (PLDP, Package (0x01)
+Remark   2173 -                                          ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.EHC2.HUBN.PR01._PLD)
+
+DSDT_patched.dsl   6533:                             If ((Arg0 == ToUUID ("a5fc708f-8775-4ba6-bd0c-ba90a1ec72f8") /* Unknown UUID */))
+Remark   2184 -                                                                           Unknown UUID string ^ 
+
+DSDT_patched.dsl   6583:                             If ((Arg0 == ToUUID ("a5fc708f-8775-4ba6-bd0c-ba90a1ec72f8") /* Unknown UUID */))
+Remark   2184 -                                                                           Unknown UUID string ^ 
+
+DSDT_patched.dsl   6690:             Method (GPEH, 0, NotSerialized)
+Warning  3115 -                                ^ Not all control paths return a value (\_SB.PCI0.XHC.GPEH)
+
+DSDT_patched.dsl   6729:                         Switch (Arg0)
+Warning  3124 -                                            ^ Switch expression is not a static Integer/Buffer/String data type, defaulting to Integer
+
+DSDT_patched.dsl   6796:                         Switch (Arg0)
+Warning  3124 -                                            ^ Switch expression is not a static Integer/Buffer/String data type, defaulting to Integer
+
+DSDT_patched.dsl   6868:                     Switch (Local0)
+Warning  3124 -                                          ^ Switch expression is not a static Integer/Buffer/String data type, defaulting to Integer
+
+DSDT_patched.dsl   6906:             Method (_PS0, 0, Serialized)  // _PS0: Power State 0
+Warning  3115 -                                ^ Not all control paths return a value (\_SB.PCI0.XHC._PS0)
+
+DSDT_patched.dsl   6920:                 OperationRegion (MCA1, SystemMemory, XWMB, 0x9000)
+Remark   2173 -                                             ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.XHC._PS0)
+
+DSDT_patched.dsl   6953:                     OperationRegion (PSCA, SystemMemory, Local3, 0x40)
+Remark   2173 -                                                 ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.XHC._PS0)
+
+DSDT_patched.dsl   7058:                 OperationRegion (MCA1, SystemMemory, XWMB, 0x9000)
+Remark   2173 -                                             ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.XHC._PS3)
+
+DSDT_patched.dsl   7111:                 If ((Arg0 == ToUUID ("7c9512a9-1705-4cb4-af7d-506a2423ab71") /* Unknown UUID */))
+Remark   2184 -                                                               Unknown UUID string ^ 
+
+DSDT_patched.dsl   7119:             Method (POSC, 3, Serialized)
+Remark   2146 -  Method Argument is never used ^  (Arg1)
+
+DSDT_patched.dsl   7195:                 Method (_PS0, 0, Serialized)  // _PS0: Power State 0
+Warning  3115 -                                    ^ Not all control paths return a value (\_SB.PCI0.XHC.RHUB._PS0)
+
+DSDT_patched.dsl   7391:         Method (LPD3, 2, Serialized)
+Warning  3115 -                            ^ Not all control paths return a value (\_SB.PCI0.LPD3)
+
+DSDT_patched.dsl   7398:             OperationRegion (ICB1, SystemMemory, (Arg0 + 0x84), 0x04)
+Remark   2173 -                                         ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.LPD3)
+
+DSDT_patched.dsl   7405:             Local0 = TEMP /* \_SB_.PCI0.LPD3.TEMP */
+Warning  3144 -                          ^ Method Local is set but never used (Local0)
+
+DSDT_patched.dsl   7408:         Method (LPD0, 2, Serialized)
+Warning  3115 -                            ^ Not all control paths return a value (\_SB.PCI0.LPD0)
+
+DSDT_patched.dsl   7415:             OperationRegion (ICB1, SystemMemory, (Arg0 + 0x84), 0x04)
+Remark   2173 -                                         ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.LPD0)
+
+DSDT_patched.dsl   7422:             Local0 = TEMP /* \_SB_.PCI0.LPD0.TEMP */
+Warning  3144 -                          ^ Method Local is set but never used (Local0)
+
+DSDT_patched.dsl   7427:             Name (RBUF, ResourceTemplate ()
+Remark   2173 -                              ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.MBUF)
+
+DSDT_patched.dsl   7443:             Name (RBUF, ResourceTemplate ()
+Remark   2173 -                              ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.LCRS)
+
+DSDT_patched.dsl   7477:             Name (DBUF, ResourceTemplate ()
+Remark   2173 -                              ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.LDMA)
+
+DSDT_patched.dsl   7495:             Name (PKG, Package (0x01)
+Remark   2173 -                             ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.PKG1)
+
+DSDT_patched.dsl   7505:             Name (PKG, Package (0x03)
+Remark   2173 -                             ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.PKG3)
+
+DSDT_patched.dsl   7714:             Name (_ADR, 0x00150000)  // _ADR: Address
+Error    6074 - Name already exists in scope ^  (\_SB.PCI0.SDMA._ADR)
+
+    Original name creation/declaration below: (\_SB.PCI0.SDMA._ADR)
+    DSDT_patched.dsl   7669:             Name (_ADR, Zero)  // Placeholder - overridden by conditional scope
+
+DSDT_patched.dsl   7833:             Name (_ADR, 0x00150001)  // _ADR: Address
+Error    6074 - Name already exists in scope ^  (\_SB.PCI0.I2C0._ADR)
+
+    Original name creation/declaration below: (\_SB.PCI0.I2C0._ADR)
+    DSDT_patched.dsl   7722:             Name (_ADR, Zero)  // Placeholder - overridden by conditional scope
+
+DSDT_patched.dsl   7949:             Name (_ADR, 0x00150002)  // _ADR: Address
+Error    6074 - Name already exists in scope ^  (\_SB.PCI0.I2C1._ADR)
+
+    Original name creation/declaration below: (\_SB.PCI0.I2C1._ADR)
+    DSDT_patched.dsl   7841:             Name (_ADR, Zero)  // Placeholder - overridden by conditional scope
+
+DSDT_patched.dsl   8034:             Name (_ADR, 0x00150003)  // _ADR: Address
+Error    6074 - Name already exists in scope ^  (\_SB.PCI0.SPI0._ADR)
+
+    Original name creation/declaration below: (\_SB.PCI0.SPI0._ADR)
+    DSDT_patched.dsl   7957:             Name (_ADR, Zero)  // Placeholder - overridden by conditional scope
+
+DSDT_patched.dsl   8120:             Name (_ADR, 0x00150004)  // _ADR: Address
+Error    6074 - Name already exists in scope ^  (\_SB.PCI0.SPI1._ADR)
+
+    Original name creation/declaration below: (\_SB.PCI0.SPI1._ADR)
+    DSDT_patched.dsl   8042:             Name (_ADR, Zero)  // Placeholder - overridden by conditional scope
+
+DSDT_patched.dsl   8210:             Name (_ADR, 0x00150005)  // _ADR: Address
+Error    6074 - Name already exists in scope ^  (\_SB.PCI0.UA00._ADR)
+
+    Original name creation/declaration below: (\_SB.PCI0.UA00._ADR)
+    DSDT_patched.dsl   8128:             Name (_ADR, Zero)  // Placeholder - overridden by conditional scope
+
+DSDT_patched.dsl   8301:             Name (_ADR, 0x00150006)  // _ADR: Address
+Error    6074 - Name already exists in scope ^  (\_SB.PCI0.UA01._ADR)
+
+    Original name creation/declaration below: (\_SB.PCI0.UA01._ADR)
+    DSDT_patched.dsl   8218:             Name (_ADR, Zero)  // Placeholder - overridden by conditional scope
+
+DSDT_patched.dsl   8367:             Name (_ADR, 0x00170000)  // _ADR: Address
+Error    6074 - Name already exists in scope ^  (\_SB.PCI0.SDHC._ADR)
+
+    Original name creation/declaration below: (\_SB.PCI0.SDHC._ADR)
+    DSDT_patched.dsl   8309:             Name (_ADR, Zero)  // Placeholder - overridden by conditional scope
+
+DSDT_patched.dsl   8373:         Method (CDSM, 5, Serialized)
+Remark   2146 -                            ^ Method Argument is never used (Arg3)
+
+DSDT_patched.dsl   8411:         Device (ACD0)
+Warning  3073 -             Multiple types ^  (Device object requires either a _HID or _ADR, but not both)
+
+DSDT_patched.dsl   8411:         Device (ACD0)
+Warning  3141 -         Missing dependency ^  (Device has a _SRS, missing a _PRS, required)
+
+DSDT_patched.dsl   8458:             Method (_CRS, 0, NotSerialized)  // _CRS: Current Resource Settings
+Remark   2120 -                                ^ Control Method should be made Serialized due to creation of named objects within (\_SB.PCI0.I2C0.ACD0._CRS)
+
+DSDT_patched.dsl   8460:                 Name (RBUF, ResourceTemplate ()
+Remark   2173 -                                  ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.I2C0.ACD0._CRS)
+
+DSDT_patched.dsl   8467:                 Name (IRB0, ResourceTemplate ()
+Remark   2173 -                                  ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.I2C0.ACD0._CRS)
+
+DSDT_patched.dsl   8474:                 Name (IRB1, ResourceTemplate ()
+Remark   2173 -                                  ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.I2C0.ACD0._CRS)
+
+DSDT_patched.dsl   8481:                 Name (IRB2, ResourceTemplate ()
+Remark   2173 -                                  ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.I2C0.ACD0._CRS)
+
+DSDT_patched.dsl   8490:                     CreateByteField (IRB0, \_SB.PCI0.I2C0.ACD0._CRS._Y1D._INT, VAL1)  // _INT: Interrupts
+Warning  3128 -                                                       ResourceTag larger than Field ^  (Size mismatch, Tag: 32 bits, Field: 8 bits)
+
+DSDT_patched.dsl   8492:                     CreateByteField (IRB1, \_SB.PCI0.I2C0.ACD0._CRS._Y1E._INT, VAL3)  // _INT: Interrupts
+Warning  3128 -                                                       ResourceTag larger than Field ^  (Size mismatch, Tag: 32 bits, Field: 8 bits)
+
+DSDT_patched.dsl   8549:         Device (ACD1)
+Warning  3073 -             Multiple types ^  (Device object requires either a _HID or _ADR, but not both)
+
+DSDT_patched.dsl   8549:         Device (ACD1)
+Warning  3141 -         Missing dependency ^  (Device has a _SRS, missing a _PRS, required)
+
+DSDT_patched.dsl   8572:             Method (_CRS, 0, NotSerialized)  // _CRS: Current Resource Settings
+Remark   2120 -                                ^ Control Method should be made Serialized due to creation of named objects within (\_SB.PCI0.I2C0.ACD1._CRS)
+
+DSDT_patched.dsl   8574:                 Name (RBUF, ResourceTemplate ()
+Remark   2173 -                                  ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.I2C0.ACD1._CRS)
+
+DSDT_patched.dsl   8593:                     CreateByteField (RBUF, \_SB.PCI0.I2C0.ACD1._CRS._Y1F._INT, VAL1)  // _INT: Interrupts
+Warning  3128 -                                                       ResourceTag larger than Field ^  (Size mismatch, Tag: 32 bits, Field: 8 bits)
+
+DSDT_patched.dsl   8630:         Device (ACD2)
+Warning  3073 -             Multiple types ^  (Device object requires either a _HID or _ADR, but not both)
+
+DSDT_patched.dsl   8630:         Device (ACD2)
+Warning  3141 -         Missing dependency ^  (Device has a _SRS, missing a _PRS, required)
+
+DSDT_patched.dsl   8671:             Method (_CRS, 0, NotSerialized)  // _CRS: Current Resource Settings
+Remark   2120 -                                ^ Control Method should be made Serialized due to creation of named objects within (\_SB.PCI0.I2C0.ACD2._CRS)
+
+DSDT_patched.dsl   8673:                 Name (RBUF, ResourceTemplate ()
+Remark   2173 -                                  ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.I2C0.ACD2._CRS)
+
+DSDT_patched.dsl   8704:                     CreateByteField (RBUF, \_SB.PCI0.I2C0.ACD2._CRS._Y20._INT, VAL3)  // _INT: Interrupts
+Warning  3128 -                                                       ResourceTag larger than Field ^  (Size mismatch, Tag: 32 bits, Field: 8 bits)
+
+DSDT_patched.dsl   8708:                 Name (RBF4, ResourceTemplate ()
+Remark   2173 -                                  ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.I2C0.ACD2._CRS)
+
+DSDT_patched.dsl   8752:         Device (ACD3)
+Warning  3073 -             Multiple types ^  (Device object requires either a _HID or _ADR, but not both)
+
+DSDT_patched.dsl   8752:         Device (ACD3)
+Warning  3141 -         Missing dependency ^  (Device has a _SRS, missing a _PRS, required)
+
+DSDT_patched.dsl   8815:         Device (SHUB)
+Warning  3073 -             Multiple types ^  (Device object requires either a _HID or _ADR, but not both)
+
+DSDT_patched.dsl   8819:                 Switch (SHTP)
+Warning  3124 -                                    ^ Switch expression is not a static Integer/Buffer/String data type, defaulting to Integer
+
+DSDT_patched.dsl   8836:                 Switch (SHTP)
+Warning  3124 -                                    ^ Switch expression is not a static Integer/Buffer/String data type, defaulting to Integer
+
+DSDT_patched.dsl   8847:                         If (((RDGP (0x2C) == One) && (_HID () == "INT33D1")))
+Warning  3122 -        Called method may not always return a value ^  (\_SB.RDGP)
+
+DSDT_patched.dsl   8852:                         If (((RDGP (0x2C) == Zero) && (_HID () == "INT33D7")))
+Warning  3122 -        Called method may not always return a value ^  (\_SB.RDGP)
+
+DSDT_patched.dsl   8863:             Method (_DSM, 4, NotSerialized)  // _DSM: Device-Specific Method
+Warning  3115 -                                ^ Not all control paths return a value (\_SB.PCI0.I2C0.SHUB._DSM)
+
+DSDT_patched.dsl   8863:             Method (_DSM, 4, NotSerialized)  // _DSM: Device-Specific Method
+Warning  3107 -                                ^ Reserved method must return a value (Integer/String/Buffer/Package/Reference required for _DSM)
+
+DSDT_patched.dsl   8892:             Method (_CRS, 0, NotSerialized)  // _CRS: Current Resource Settings
+Remark   2120 -                                ^ Control Method should be made Serialized due to creation of named objects within (\_SB.PCI0.I2C0.SHUB._CRS)
+
+DSDT_patched.dsl   8894:                 Name (SBFI, ResourceTemplate ()
+Remark   2173 -                                  ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.I2C0.SHUB._CRS)
+
+DSDT_patched.dsl   8968:         Device (DFUD)
+Warning  3073 -             Multiple types ^  (Device object requires either a _HID or _ADR, but not both)
+
+DSDT_patched.dsl   8975:                 Switch (SHTP)
+Warning  3124 -                                    ^ Switch expression is not a static Integer/Buffer/String data type, defaulting to Integer
+
+DSDT_patched.dsl   8986:                         If (((RDGP (0x2C) == One) && (_HID == "INT33D1")))
+Warning  3122 -        Called method may not always return a value ^  (\_SB.RDGP)
+
+DSDT_patched.dsl   8991:                         If (((RDGP (0x2C) == Zero) && (_HID == "INT33D7")))
+Warning  3122 -        Called method may not always return a value ^  (\_SB.RDGP)
+
+DSDT_patched.dsl   9002:             Method (_DSM, 4, NotSerialized)  // _DSM: Device-Specific Method
+Warning  3115 -                                ^ Not all control paths return a value (\_SB.PCI0.I2C0.DFUD._DSM)
+
+DSDT_patched.dsl   9002:             Method (_DSM, 4, NotSerialized)  // _DSM: Device-Specific Method
+Warning  3107 -                                ^ Reserved method must return a value (Integer/String/Buffer/Package/Reference required for _DSM)
+
+DSDT_patched.dsl   9031:             Method (_CRS, 0, NotSerialized)  // _CRS: Current Resource Settings
+Remark   2120 -                                ^ Control Method should be made Serialized due to creation of named objects within (\_SB.PCI0.I2C0.DFUD._CRS)
+
+DSDT_patched.dsl   9033:                 Name (SBFI, ResourceTemplate ()
+Remark   2173 -                                  ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.I2C0.DFUD._CRS)
+
+DSDT_patched.dsl   9107:         Device (TPD4)
+Warning  3073 -             Multiple types ^  (Device object requires either a _HID or _ADR, but not both)
+
+DSDT_patched.dsl   9113:             Method (_DSM, 4, NotSerialized)  // _DSM: Device-Specific Method
+Warning  3115 -                                ^ Not all control paths return a value (\_SB.PCI0.I2C0.TPD4._DSM)
+
+DSDT_patched.dsl   9113:             Method (_DSM, 4, NotSerialized)  // _DSM: Device-Specific Method
+Warning  3107 -                                ^ Reserved method must return a value (Integer/String/Buffer/Package/Reference required for _DSM)
+
+DSDT_patched.dsl   9154:             Method (_CRS, 0, NotSerialized)  // _CRS: Current Resource Settings
+Remark   2120 -                                ^ Control Method should be made Serialized due to creation of named objects within (\_SB.PCI0.I2C0.TPD4._CRS)
+
+DSDT_patched.dsl   9156:                 Name (SBFI, ResourceTemplate ()
+Remark   2173 -                                  ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.I2C0.TPD4._CRS)
+
+DSDT_patched.dsl   9253:             Method (_CRS, 0, NotSerialized)  // _CRS: Current Resource Settings
+Remark   2120 -                                ^ Control Method should be made Serialized due to creation of named objects within (\_SB.PCI0.I2C0.TPD9._CRS)
+
+DSDT_patched.dsl   9255:                 Name (SBFI, ResourceTemplate ()
+Remark   2173 -                                  ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.I2C0.TPD9._CRS)
+
+DSDT_patched.dsl   9273:         Device (TPL0)
+Warning  3073 -             Multiple types ^  (Device object requires either a _HID or _ADR, but not both)
+
+DSDT_patched.dsl   9280:             Method (_DSM, 4, NotSerialized)  // _DSM: Device-Specific Method
+Warning  3115 -                                ^ Not all control paths return a value (\_SB.PCI0.I2C1.TPL0._DSM)
+
+DSDT_patched.dsl   9280:             Method (_DSM, 4, NotSerialized)  // _DSM: Device-Specific Method
+Warning  3107 -                                ^ Reserved method must return a value (Integer/String/Buffer/Package/Reference required for _DSM)
+
+DSDT_patched.dsl   9328:             Method (_CRS, 0, NotSerialized)  // _CRS: Current Resource Settings
+Remark   2120 -                                ^ Control Method should be made Serialized due to creation of named objects within (\_SB.PCI0.I2C1.TPL0._CRS)
+
+DSDT_patched.dsl   9330:                 Name (SBFI, ResourceTemplate ()
+Remark   2173 -                                  ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.I2C1.TPL0._CRS)
+
+DSDT_patched.dsl   9343:                     CreateByteField (SBFI, \_SB.PCI0.I2C1.TPL0._CRS._Y23._INT, VAL4)  // _INT: Interrupts
+Warning  3128 -                                                       ResourceTag larger than Field ^  (Size mismatch, Tag: 32 bits, Field: 8 bits)
+
+DSDT_patched.dsl   9351:         Device (TPFU)
+Warning  3073 -             Multiple types ^  (Device object requires either a _HID or _ADR, but not both)
+
+DSDT_patched.dsl   9369:             Method (_CRS, 0, NotSerialized)  // _CRS: Current Resource Settings
+Remark   2120 -                                ^ Control Method should be made Serialized due to creation of named objects within (\_SB.PCI0.I2C1.TPFU._CRS)
+
+DSDT_patched.dsl   9371:                 Name (SBFI, ResourceTemplate ()
+Remark   2173 -                                  ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.I2C1.TPFU._CRS)
+
+DSDT_patched.dsl   9392:             Method (_DSM, 4, NotSerialized)  // _DSM: Device-Specific Method
+Warning  3115 -                                ^ Not all control paths return a value (\_SB.PCI0.I2C1.TPL1._DSM)
+
+DSDT_patched.dsl   9392:             Method (_DSM, 4, NotSerialized)  // _DSM: Device-Specific Method
+Warning  3107 -                                ^ Reserved method must return a value (Integer/String/Buffer/Package/Reference required for _DSM)
+
+DSDT_patched.dsl   9440:             Method (_CRS, 0, NotSerialized)  // _CRS: Current Resource Settings
+Remark   2120 -                                ^ Control Method should be made Serialized due to creation of named objects within (\_SB.PCI0.I2C1.TPL1._CRS)
+
+DSDT_patched.dsl   9442:                 Name (SBFI, ResourceTemplate ()
+Remark   2173 -                                  ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.I2C1.TPL1._CRS)
+
+DSDT_patched.dsl   9453:                 CreateByteField (SBFI, \_SB.PCI0.I2C1.TPL1._CRS._Y24._INT, VAL4)  // _INT: Interrupts
+Warning  3128 -                                                   ResourceTag larger than Field ^  (Size mismatch, Tag: 32 bits, Field: 8 bits)
+
+DSDT_patched.dsl   9464:         Device (TPL2)
+Warning  3073 -             Multiple types ^  (Device object requires either a _HID or _ADR, but not both)
+
+DSDT_patched.dsl   9471:             Method (_DSM, 4, NotSerialized)  // _DSM: Device-Specific Method
+Warning  3115 -                                ^ Not all control paths return a value (\_SB.PCI0.I2C1.TPL2._DSM)
+
+DSDT_patched.dsl   9471:             Method (_DSM, 4, NotSerialized)  // _DSM: Device-Specific Method
+Warning  3107 -                                ^ Reserved method must return a value (Integer/String/Buffer/Package/Reference required for _DSM)
+
+DSDT_patched.dsl   9519:             Method (_CRS, 0, NotSerialized)  // _CRS: Current Resource Settings
+Remark   2120 -                                ^ Control Method should be made Serialized due to creation of named objects within (\_SB.PCI0.I2C1.TPL2._CRS)
+
+DSDT_patched.dsl   9521:                 Name (SBFI, ResourceTemplate ()
+Remark   2173 -                                  ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.I2C1.TPL2._CRS)
+
+DSDT_patched.dsl   9528:                 Name (IRBY, ResourceTemplate ()
+Remark   2173 -                                  ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.I2C1.TPL2._CRS)
+
+DSDT_patched.dsl   9535:                 Name (IRBU, ResourceTemplate ()
+Remark   2173 -                                  ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.I2C1.TPL2._CRS)
+
+DSDT_patched.dsl   9544:                     CreateByteField (IRBU, \_SB.PCI0.I2C1.TPL2._CRS._Y25._INT, VAL4)  // _INT: Interrupts
+Warning  3128 -                                                       ResourceTag larger than Field ^  (Size mismatch, Tag: 32 bits, Field: 8 bits)
+
+DSDT_patched.dsl   9563:         Device (TPL3)
+Warning  3073 -             Multiple types ^  (Device object requires either a _HID or _ADR, but not both)
+
+DSDT_patched.dsl   9570:             Method (_DSM, 4, NotSerialized)  // _DSM: Device-Specific Method
+Warning  3115 -                                ^ Not all control paths return a value (\_SB.PCI0.I2C1.TPL3._DSM)
+
+DSDT_patched.dsl   9570:             Method (_DSM, 4, NotSerialized)  // _DSM: Device-Specific Method
+Warning  3107 -                                ^ Reserved method must return a value (Integer/String/Buffer/Package/Reference required for _DSM)
+
+DSDT_patched.dsl   9620:                 Name (SBFI, ResourceTemplate ()
+Remark   2173 -                                  ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.I2C1.TPL3._CRS)
+
+DSDT_patched.dsl   9631:                 CreateByteField (SBFI, \_SB.PCI0.I2C1.TPL3._CRS._Y27._INT, VAL4)  // _INT: Interrupts
+Warning  3128 -                                                   ResourceTag larger than Field ^  (Size mismatch, Tag: 32 bits, Field: 8 bits)
+
+DSDT_patched.dsl   9646:         Device (TPL4)
+Warning  3073 -             Multiple types ^  (Device object requires either a _HID or _ADR, but not both)
+
+DSDT_patched.dsl   9653:             Method (_DSM, 4, NotSerialized)  // _DSM: Device-Specific Method
+Warning  3115 -                                ^ Not all control paths return a value (\_SB.PCI0.I2C1.TPL4._DSM)
+
+DSDT_patched.dsl   9653:             Method (_DSM, 4, NotSerialized)  // _DSM: Device-Specific Method
+Warning  3107 -                                ^ Reserved method must return a value (Integer/String/Buffer/Package/Reference required for _DSM)
+
+DSDT_patched.dsl   9694:             Method (_CRS, 0, NotSerialized)  // _CRS: Current Resource Settings
+Remark   2120 -                                ^ Control Method should be made Serialized due to creation of named objects within (\_SB.PCI0.I2C1.TPL4._CRS)
+
+DSDT_patched.dsl   9696:                 Name (SBFI, ResourceTemplate ()
+Remark   2173 -                                  ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.I2C1.TPL4._CRS)
+
+DSDT_patched.dsl   9709:                     CreateByteField (SBFI, \_SB.PCI0.I2C1.TPL4._CRS._Y28._INT, VAL4)  // _INT: Interrupts
+Warning  3128 -                                                       ResourceTag larger than Field ^  (Size mismatch, Tag: 32 bits, Field: 8 bits)
+
+DSDT_patched.dsl   9717:         Device (TPD0)
+Warning  3073 -             Multiple types ^  (Device object requires either a _HID or _ADR, but not both)
+
+DSDT_patched.dsl   9724:             Method (_DSM, 4, NotSerialized)  // _DSM: Device-Specific Method
+Warning  3115 -                                ^ Not all control paths return a value (\_SB.PCI0.I2C1.TPD0._DSM)
+
+DSDT_patched.dsl   9724:             Method (_DSM, 4, NotSerialized)  // _DSM: Device-Specific Method
+Warning  3107 -                                ^ Reserved method must return a value (Integer/String/Buffer/Package/Reference required for _DSM)
+
+DSDT_patched.dsl   9774:                 Name (SBFI, ResourceTemplate ()
+Remark   2173 -                                  ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.I2C1.TPD0._CRS)
+
+DSDT_patched.dsl   9787:                     CreateByteField (SBFI, \_SB.PCI0.I2C1.TPD0._CRS._Y29._INT, VAL3)  // _INT: Interrupts
+Warning  3128 -                                                       ResourceTag larger than Field ^  (Size mismatch, Tag: 32 bits, Field: 8 bits)
+
+DSDT_patched.dsl   9793:                     CreateByteField (SBFI, \_SB.PCI0.I2C1.TPD0._CRS._Y29._INT, VAL4)  // _INT: Interrupts
+Warning  3128 -                                                       ResourceTag larger than Field ^  (Size mismatch, Tag: 32 bits, Field: 8 bits)
+
+DSDT_patched.dsl   9801:         Device (TPD1)
+Warning  3073 -             Multiple types ^  (Device object requires either a _HID or _ADR, but not both)
+
+DSDT_patched.dsl   9808:             Method (_DSM, 4, NotSerialized)  // _DSM: Device-Specific Method
+Warning  3115 -                                ^ Not all control paths return a value (\_SB.PCI0.I2C1.TPD1._DSM)
+
+DSDT_patched.dsl   9808:             Method (_DSM, 4, NotSerialized)  // _DSM: Device-Specific Method
+Warning  3107 -                                ^ Reserved method must return a value (Integer/String/Buffer/Package/Reference required for _DSM)
+
+DSDT_patched.dsl   9858:                 Name (SBFI, ResourceTemplate ()
+Remark   2173 -                                  ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.I2C1.TPD1._CRS)
+
+DSDT_patched.dsl   9871:                     CreateByteField (SBFI, \_SB.PCI0.I2C1.TPD1._CRS._Y2A._INT, VAL3)  // _INT: Interrupts
+Warning  3128 -                                                       ResourceTag larger than Field ^  (Size mismatch, Tag: 32 bits, Field: 8 bits)
+
+DSDT_patched.dsl   9877:                     CreateByteField (SBFI, \_SB.PCI0.I2C1.TPD1._CRS._Y2A._INT, VAL4)  // _INT: Interrupts
+Warning  3128 -                                                       ResourceTag larger than Field ^  (Size mismatch, Tag: 32 bits, Field: 8 bits)
+
+DSDT_patched.dsl   9885:         Device (TPD2)
+Warning  3073 -             Multiple types ^  (Device object requires either a _HID or _ADR, but not both)
+
+DSDT_patched.dsl   9892:             Method (_DSM, 4, NotSerialized)  // _DSM: Device-Specific Method
+Warning  3115 -                                ^ Not all control paths return a value (\_SB.PCI0.I2C1.TPD2._DSM)
+
+DSDT_patched.dsl   9892:             Method (_DSM, 4, NotSerialized)  // _DSM: Device-Specific Method
+Warning  3107 -                                ^ Reserved method must return a value (Integer/String/Buffer/Package/Reference required for _DSM)
+
+DSDT_patched.dsl   9942:                 Name (SBFI, ResourceTemplate ()
+Remark   2173 -                                  ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.I2C1.TPD2._CRS)
+
+DSDT_patched.dsl   9955:                     CreateByteField (SBFI, \_SB.PCI0.I2C1.TPD2._CRS._Y2B._INT, VAL3)  // _INT: Interrupts
+Warning  3128 -                                                       ResourceTag larger than Field ^  (Size mismatch, Tag: 32 bits, Field: 8 bits)
+
+DSDT_patched.dsl   9961:                     CreateByteField (SBFI, \_SB.PCI0.I2C1.TPD2._CRS._Y2B._INT, VAL4)  // _INT: Interrupts
+Warning  3128 -                                                       ResourceTag larger than Field ^  (Size mismatch, Tag: 32 bits, Field: 8 bits)
+
+DSDT_patched.dsl   9969:         Device (TPD3)
+Warning  3073 -             Multiple types ^  (Device object requires either a _HID or _ADR, but not both)
+
+DSDT_patched.dsl   9976:             Method (_DSM, 4, NotSerialized)  // _DSM: Device-Specific Method
+Warning  3115 -                                ^ Not all control paths return a value (\_SB.PCI0.I2C1.TPD3._DSM)
+
+DSDT_patched.dsl   9976:             Method (_DSM, 4, NotSerialized)  // _DSM: Device-Specific Method
+Warning  3107 -                                ^ Reserved method must return a value (Integer/String/Buffer/Package/Reference required for _DSM)
+
+DSDT_patched.dsl  10026:                 Name (SBFI, ResourceTemplate ()
+Remark   2173 -                                  ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.I2C1.TPD3._CRS)
+
+DSDT_patched.dsl  10039:                     CreateByteField (SBFI, \_SB.PCI0.I2C1.TPD3._CRS._Y2C._INT, VAL3)  // _INT: Interrupts
+Warning  3128 -                                                       ResourceTag larger than Field ^  (Size mismatch, Tag: 32 bits, Field: 8 bits)
+
+DSDT_patched.dsl  10045:                     CreateByteField (SBFI, \_SB.PCI0.I2C1.TPD3._CRS._Y2C._INT, VAL4)  // _INT: Interrupts
+Warning  3128 -                                                       ResourceTag larger than Field ^  (Size mismatch, Tag: 32 bits, Field: 8 bits)
+
+DSDT_patched.dsl  10053:         Device (TPD7)
+Warning  3073 -             Multiple types ^  (Device object requires either a _HID or _ADR, but not both)
+
+DSDT_patched.dsl  10072:             Method (_DSM, 4, NotSerialized)  // _DSM: Device-Specific Method
+Warning  3115 -                                ^ Not all control paths return a value (\_SB.PCI0.I2C1.TPD7._DSM)
+
+DSDT_patched.dsl  10072:             Method (_DSM, 4, NotSerialized)  // _DSM: Device-Specific Method
+Warning  3107 -                                ^ Reserved method must return a value (Integer/String/Buffer/Package/Reference required for _DSM)
+
+DSDT_patched.dsl  10122:                 Name (SBFI, ResourceTemplate ()
+Remark   2173 -                                  ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.I2C1.TPD7._CRS)
+
+DSDT_patched.dsl  10135:                     CreateByteField (SBFI, \_SB.PCI0.I2C1.TPD7._CRS._Y2D._INT, VAL3)  // _INT: Interrupts
+Warning  3128 -                                                       ResourceTag larger than Field ^  (Size mismatch, Tag: 32 bits, Field: 8 bits)
+
+DSDT_patched.dsl  10146:                     CreateByteField (SBFI, \_SB.PCI0.I2C1.TPD7._CRS._Y2D._INT, VAL7)  // _INT: Interrupts
+Warning  3128 -                                                       ResourceTag larger than Field ^  (Size mismatch, Tag: 32 bits, Field: 8 bits)
+
+DSDT_patched.dsl  10263:             Method (_CRS, 0, NotSerialized)  // _CRS: Current Resource Settings
+Remark   2120 -                                ^ Control Method should be made Serialized due to creation of named objects within (\_SB.PCI0.I2C1.TPD8._CRS)
+
+DSDT_patched.dsl  10265:                 Name (SBFI, ResourceTemplate ()
+Remark   2173 -                                  ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.I2C1.TPD8._CRS)
+
+DSDT_patched.dsl  10278:                     CreateByteField (SBFI, \_SB.PCI0.I2C1.TPD8._CRS._Y2E._INT, VAL3)  // _INT: Interrupts
+Warning  3128 -                                                       ResourceTag larger than Field ^  (Size mismatch, Tag: 32 bits, Field: 8 bits)
+
+DSDT_patched.dsl  10289:                     CreateByteField (SBFI, \_SB.PCI0.I2C1.TPD8._CRS._Y2E._INT, VAL7)  // _INT: Interrupts
+Warning  3128 -                                                       ResourceTag larger than Field ^  (Size mismatch, Tag: 32 bits, Field: 8 bits)
+
+DSDT_patched.dsl  10346:             Method (_CRS, 0, NotSerialized)  // _CRS: Current Resource Settings
+Remark   2120 -                                ^ Control Method should be made Serialized due to creation of named objects within (\_SB.PCI0.UA00.BTH0._CRS)
+
+DSDT_patched.dsl  10348:                 Name (UBUF, ResourceTemplate ()
+Remark   2173 -                                  ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.UA00.BTH0._CRS)
+
+DSDT_patched.dsl  10384:                 Method (_CRS, 0, NotSerialized)  // _CRS: Current Resource Settings
+Remark   2120 -                                    ^ Control Method should be made Serialized due to creation of named objects within (\_SB.PCI0.UA00.BTH2._CRS)
+
+DSDT_patched.dsl  10386:                     Name (UBUF, ResourceTemplate ()
+Remark   2173 -                                      ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.UA00.BTH2._CRS)
+
+DSDT_patched.dsl  10429:             Method (_CRS, 0, NotSerialized)  // _CRS: Current Resource Settings
+Remark   2120 -                                ^ Control Method should be made Serialized due to creation of named objects within (\_SB.PCI0.UA01.BTH1._CRS)
+
+DSDT_patched.dsl  10431:                 Name (UBUF, ResourceTemplate ()
+Remark   2173 -                                  ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.UA01.BTH1._CRS)
+
+DSDT_patched.dsl  10483:             Method (_CRS, 0, NotSerialized)  // _CRS: Current Resource Settings
+Remark   2120 -                                ^ Control Method should be made Serialized due to creation of named objects within (\_SB.PCI0.UA01.BTH2._CRS)
+
+DSDT_patched.dsl  10487:                     Name (UBUF, ResourceTemplate ()
+Remark   2173 -                                      ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.UA01.BTH2._CRS)
+
+DSDT_patched.dsl  10515:                     Name (PBUF, ResourceTemplate ()
+Remark   2173 -                                      ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.UA01.BTH2._CRS)
+
+DSDT_patched.dsl  10543:                     Name (OBUF, ResourceTemplate ()
+Remark   2173 -                                      ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.UA01.BTH2._CRS)
+
+DSDT_patched.dsl  10595:                 Method (_CRS, 0, NotSerialized)  // _CRS: Current Resource Settings
+Remark   2120 -                                    ^ Control Method should be made Serialized due to creation of named objects within (\_SB.PCI0.UA01.GPS2._CRS)
+
+DSDT_patched.dsl  10597:                     Name (UBUF, ResourceTemplate ()
+Remark   2173 -                                      ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.UA01.GPS2._CRS)
+
+DSDT_patched.dsl  10637:                 Method (_CRS, 0, NotSerialized)  // _CRS: Current Resource Settings
+Remark   2120 -                                    ^ Control Method should be made Serialized due to creation of named objects within (\_SB.PCI0.UA00.GPS2._CRS)
+
+DSDT_patched.dsl  10639:                     Name (UBUF, ResourceTemplate ()
+Remark   2173 -                                      ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.UA00.GPS2._CRS)
+
+DSDT_patched.dsl  10762:             Method (GPEH, 0, NotSerialized)
+Warning  3115 -                                ^ Not all control paths return a value (\_SB.PCI0.HDEF.GPEH)
+
+DSDT_patched.dsl  10782:         Device (ADSP)
+Warning  3141 -         Missing dependency ^  (Device has a _SRS, missing a _PRS, required)
+
+DSDT_patched.dsl  10969:             Method (RDCA, 5, Serialized)
+Remark   2146 -  Method Argument is never used ^  (Arg0)
+
+DSDT_patched.dsl  10969:             Method (RDCA, 5, Serialized)
+Warning  3115 -                                ^ Not all control paths return a value (\_SB.PCI0.SAT0.RDCA)
+
+DSDT_patched.dsl  10971:                 OperationRegion (RPAC, SystemMemory, (GPCB () + (0x000FA100 + Arg1)), 0x04)
+Remark   2173 -                                             ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.SAT0.RDCA)
+
+DSDT_patched.dsl  10977:                 OperationRegion (EPAC, SystemMemory, (GPCB () + 0x000FA308), 0x08)
+Remark   2173 -                                             ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.SAT0.RDCA)
+
+DSDT_patched.dsl  11032:             Method (CNRS, 0, Serialized)
+Warning  3115 -                                ^ Not all control paths return a value (\_SB.PCI0.SAT0.CNRS)
+
+DSDT_patched.dsl  11071:                 While (((RDCA (Zero, 0x52, Zero, Zero, Zero) & 0x2000) == Zero))
+Warning  3122 -                          Called method may not always return a value ^  (\_SB.PCI0.SAT0.RDCA)
+
+DSDT_patched.dsl  11082:                 Method (_PS3, 0, Serialized)  // _PS3: Power State 3
+Warning  3115 -                                    ^ Not all control paths return a value (\_SB.PCI0.SAT0.NVM0._PS3)
+
+DSDT_patched.dsl  11089:                     PCMD = RDCA (Zero, 0x04, Zero, Zero, 0x02)
+Warning  3122 -                                ^ Called method may not always return a value (\_SB.PCI0.SAT0.RDCA)
+
+DSDT_patched.dsl  11093:                         PRBD = RDCA (Zero, 0x24, Zero, Zero, 0x02)
+Warning  3122 -                                    ^ Called method may not always return a value (\_SB.PCI0.SAT0.RDCA)
+
+DSDT_patched.dsl  11098:                         PRBD = RDCA (Zero, 0x10, Zero, Zero, 0x02)
+Warning  3122 -                                    ^ Called method may not always return a value (\_SB.PCI0.SAT0.RDCA)
+
+DSDT_patched.dsl  11105:                 Method (_PS0, 0, Serialized)  // _PS0: Power State 0
+Warning  3115 -                                    ^ Not all control paths return a value (\_SB.PCI0.SAT0.NVM0._PS0)
+
+DSDT_patched.dsl  11114:                     Local0 = RDCA (Zero, (PMCP + 0x04), Zero, Zero, 0x02)
+Warning  3122 -                                  ^ Called method may not always return a value (\_SB.PCI0.SAT0.RDCA)
+
+DSDT_patched.dsl  11338:                 Name (TBUF, Buffer (0x0100){})
+Remark   2173 -                                  ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.SBUS.SBLR)
+
+DSDT_patched.dsl  11475:                 Return (0x0F)
+Warning  3134 -           Statement is unreachable ^ 
+
+DSDT_patched.dsl  11517:     Method (ADBG, 1, Serialized)
+Remark   2146 -                        ^ Method Argument is never used (Arg0)
+
+DSDT_patched.dsl  11834:             OperationRegion (NVID, SystemMemory, 0xF8100000, 0x02)
+Warning  3175 -                                         ^ Static OperationRegion should be declared outside control method
+
+DSDT_patched.dsl  11834:             OperationRegion (NVID, SystemMemory, 0xF8100000, 0x02)
+Remark   2173 -                                         ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\RWAK)
+
+DSDT_patched.dsl  11855:             OperationRegion (DXHC, SystemMemory, 0xFED1F418, 0x04)
+Warning  3175 -                                         ^ Static OperationRegion should be declared outside control method
+
+DSDT_patched.dsl  11855:             OperationRegion (DXHC, SystemMemory, 0xFED1F418, 0x04)
+Remark   2173 -                                         ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\RWAK)
+
+DSDT_patched.dsl  12074:     Method (SPL1, 0, Serialized)
+Warning  3115 -                        ^ Not all control paths return a value (\SPL1)
+
+DSDT_patched.dsl  12076:         Name (PPUU, Zero)
+Remark   2173 -                          ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\SPL1)
+
+DSDT_patched.dsl  12250:             If (CondRefOf (\_OSI, Local0))
+Warning  3144 -             Method Local is set but never used ^  (Local0)
+
+DSDT_patched.dsl  12286:             OperationRegion (DXHC, SystemMemory, 0xFED1F418, 0x04)
+Warning  3175 -                                         ^ Static OperationRegion should be declared outside control method
+
+DSDT_patched.dsl  12286:             OperationRegion (DXHC, SystemMemory, 0xFED1F418, 0x04)
+Remark   2173 -                                         ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0._INI)
+
+DSDT_patched.dsl  12505:     Method (RRIO, 4, Serialized)
+Remark   2146 -                        ^ Method Argument is never used (Arg3)
+
+DSDT_patched.dsl  12714:     Method (RDMA, 3, NotSerialized)
+Remark   2146 -                        ^ Method Argument is never used (Arg0)
+
+DSDT_patched.dsl  12714:     Method (RDMA, 3, NotSerialized)
+Remark   2146 -                        ^ Method Argument is never used (Arg1)
+
+DSDT_patched.dsl  12714:     Method (RDMA, 3, NotSerialized)
+Remark   2146 -                        ^ Method Argument is never used (Arg2)
+
+DSDT_patched.dsl  12722:             Name (UPCP, Package (0x04)
+Remark   2173 -                              ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.EHC1.HUBN.PR01.PR11._UPC)
+
+DSDT_patched.dsl  12734:             Name (PLDP, Package (0x01)
+Remark   2173 -                              ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.EHC1.HUBN.PR01.PR11._PLD)
+
+DSDT_patched.dsl  12750:             Name (UPCP, Package (0x04)
+Remark   2173 -                              ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.EHC1.HUBN.PR01.PR12._UPC)
+
+DSDT_patched.dsl  12762:             Name (PLDP, Package (0x01)
+Remark   2173 -                              ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.EHC1.HUBN.PR01.PR12._PLD)
+
+DSDT_patched.dsl  12778:             Name (UPCP, Package (0x04)
+Remark   2173 -                              ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.EHC1.HUBN.PR01.PR13._UPC)
+
+DSDT_patched.dsl  12790:             Name (PLDP, Package (0x01)
+Remark   2173 -                              ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.EHC1.HUBN.PR01.PR13._PLD)
+
+DSDT_patched.dsl  12812:             Name (UPCP, Package (0x04)
+Remark   2173 -                              ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.EHC1.HUBN.PR01.PR14._UPC)
+
+DSDT_patched.dsl  12824:             Name (PLDP, Package (0x01)
+Remark   2173 -                              ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.EHC1.HUBN.PR01.PR14._PLD)
+
+DSDT_patched.dsl  12840:             Name (UPCP, Package (0x04)
+Remark   2173 -                              ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.EHC1.HUBN.PR01.PR15._UPC)
+
+DSDT_patched.dsl  12852:             Name (PLDP, Package (0x01)
+Remark   2173 -                              ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.EHC1.HUBN.PR01.PR15._PLD)
+
+DSDT_patched.dsl  12868:             Name (UPCP, Package (0x04)
+Remark   2173 -                              ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.EHC1.HUBN.PR01.PR16._UPC)
+
+DSDT_patched.dsl  12880:             Name (PLDP, Package (0x01)
+Remark   2173 -                              ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.EHC1.HUBN.PR01.PR16._PLD)
+
+DSDT_patched.dsl  12896:             Name (UPCP, Package (0x04)
+Remark   2173 -                              ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.EHC1.HUBN.PR01.PR17._UPC)
+
+DSDT_patched.dsl  12908:             Name (PLDP, Package (0x01)
+Remark   2173 -                              ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.EHC1.HUBN.PR01.PR17._PLD)
+
+DSDT_patched.dsl  12924:             Name (UPCP, Package (0x04)
+Remark   2173 -                              ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.EHC1.HUBN.PR01.PR18._UPC)
+
+DSDT_patched.dsl  12936:             Name (PLDP, Package (0x01)
+Remark   2173 -                              ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.EHC1.HUBN.PR01.PR18._PLD)
+
+DSDT_patched.dsl  12952:             Name (UPCP, Package (0x04)
+Remark   2173 -                              ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.EHC2.HUBN.PR01.PR11._UPC)
+
+DSDT_patched.dsl  12964:             Name (PLDP, Package (0x01)
+Remark   2173 -                              ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.EHC2.HUBN.PR01.PR11._PLD)
+
+DSDT_patched.dsl  12980:             Name (UPCP, Package (0x04)
+Remark   2173 -                              ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.EHC2.HUBN.PR01.PR12._UPC)
+
+DSDT_patched.dsl  12992:             Name (PLDP, Package (0x01)
+Remark   2173 -                              ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.EHC2.HUBN.PR01.PR12._PLD)
+
+DSDT_patched.dsl  13008:             Name (UPCP, Package (0x04)
+Remark   2173 -                              ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.EHC2.HUBN.PR01.PR13._UPC)
+
+DSDT_patched.dsl  13020:             Name (PLDP, Package (0x01)
+Remark   2173 -                              ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.EHC2.HUBN.PR01.PR13._PLD)
+
+DSDT_patched.dsl  13036:             Name (UPCP, Package (0x04)
+Remark   2173 -                              ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.EHC2.HUBN.PR01.PR14._UPC)
+
+DSDT_patched.dsl  13048:             Name (PLDP, Package (0x01)
+Remark   2173 -                              ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.EHC2.HUBN.PR01.PR14._PLD)
+
+DSDT_patched.dsl  13064:             Name (UPCP, Package (0x04)
+Remark   2173 -                              ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.EHC2.HUBN.PR01.PR15._UPC)
+
+DSDT_patched.dsl  13076:             Name (PLDP, Package (0x01)
+Remark   2173 -                              ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.EHC2.HUBN.PR01.PR15._PLD)
+
+DSDT_patched.dsl  13092:             Name (UPCP, Package (0x04)
+Remark   2173 -                              ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.EHC2.HUBN.PR01.PR16._UPC)
+
+DSDT_patched.dsl  13104:             Name (PLDP, Package (0x01)
+Remark   2173 -                              ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.EHC2.HUBN.PR01.PR16._PLD)
+
+DSDT_patched.dsl  13196:             If ((Arg0 == ToUUID ("1730e71d-e5dd-4a34-be57-4d76b6a2fe37") /* Unknown UUID */))
+Remark   2184 -                                                           Unknown UUID string ^ 
+
+DSDT_patched.dsl  13215:                     Switch (DerefOf (Arg3 [Zero]))
+Warning  3124 -                                                 ^ Switch expression is not a static Integer/Buffer/String data type, defaulting to Integer
+
+DSDT_patched.dsl  13246:             ElseIf ((Arg0 == ToUUID ("c5c5d98d-360e-43af-b7c1-3ede8f669ad3") /* Unknown UUID */))
+Remark   2184 -                                                               Unknown UUID string ^ 
+
+DSDT_patched.dsl  13249:                 Switch (Arg2)
+Warning  3124 -                                    ^ Switch expression is not a static Integer/Buffer/String data type, defaulting to Integer
+
+DSDT_patched.dsl  13313:                 Name (PIB1, Buffer (0x07)
+Remark   2173 -                                  ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.SAT0.PRT0._GTF)
+
+DSDT_patched.dsl  13320:             Name (PIB2, Buffer (0x07)
+Remark   2173 -                              ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.SAT0.PRT0._GTF)
+
+DSDT_patched.dsl  13366:                 Name (PIB1, Buffer (0x07)
+Remark   2173 -                                  ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.SAT0.PRT1._GTF)
+
+DSDT_patched.dsl  13373:             Name (PIB2, Buffer (0x07)
+Remark   2173 -                              ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.SAT0.PRT1._GTF)
+
+DSDT_patched.dsl  13419:                 Name (PIB1, Buffer (0x07)
+Remark   2173 -                                  ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.SAT0.PRT2._GTF)
+
+DSDT_patched.dsl  13426:             Name (PIB2, Buffer (0x07)
+Remark   2173 -                              ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.SAT0.PRT2._GTF)
+
+DSDT_patched.dsl  13451:                 Name (PIB1, Buffer (0x07)
+Remark   2173 -                                  ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.SAT0.PRT3._GTF)
+
+DSDT_patched.dsl  13458:             Name (PIB2, Buffer (0x07)
+Remark   2173 -                              ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.SAT0.PRT3._GTF)
+
+DSDT_patched.dsl  13473:                 If ((Arg0 == ToUUID ("1730e71d-e5dd-4a34-be57-4d76b6a2fe37") /* Unknown UUID */))
+Remark   2184 -                                                               Unknown UUID string ^ 
+
+DSDT_patched.dsl  13492:                         Switch (DerefOf (Arg3 [Zero]))
+Warning  3124 -                                                     ^ Switch expression is not a static Integer/Buffer/String data type, defaulting to Integer
+
+DSDT_patched.dsl  13536:             If ((Arg0 == ToUUID ("c5c5d98d-360e-43af-b7c1-3ede8f669ad3") /* Unknown UUID */))
+Remark   2184 -                                                           Unknown UUID string ^ 
+
+DSDT_patched.dsl  13539:                 Switch (Arg2)
+Warning  3124 -                                    ^ Switch expression is not a static Integer/Buffer/String data type, defaulting to Integer
+
+DSDT_patched.dsl  13597:                 Return (Package (0x00){})
+Remark   2095 -        Effective AML package length is zero ^ 
+
+DSDT_patched.dsl  13616:                 Return (Package (0x00){})
+Remark   2095 -        Effective AML package length is zero ^ 
+
+DSDT_patched.dsl  13634:                 Return (Package (0x00){})
+Remark   2095 -        Effective AML package length is zero ^ 
+
+DSDT_patched.dsl  13652:                 Return (Package (0x00){})
+Remark   2095 -        Effective AML package length is zero ^ 
+
+DSDT_patched.dsl  13670:                 Return (Package (0x00){})
+Remark   2095 -        Effective AML package length is zero ^ 
+
+DSDT_patched.dsl  13688:                 Return (Package (0x00){})
+Remark   2095 -        Effective AML package length is zero ^ 
+
+DSDT_patched.dsl  13706:                 Return (Package (0x00){})
+Remark   2095 -        Effective AML package length is zero ^ 
+
+DSDT_patched.dsl  13724:                 Return (Package (0x00){})
+Remark   2095 -        Effective AML package length is zero ^ 
+
+DSDT_patched.dsl  13742:                 Return (Package (0x00){})
+Remark   2095 -        Effective AML package length is zero ^ 
+
+DSDT_patched.dsl  13765:                 Return (Package (0x00){})
+Remark   2095 -        Effective AML package length is zero ^ 
+
+DSDT_patched.dsl  13826:             Return (Package (0x00){})
+Remark   2095 -    Effective AML package length is zero ^ 
+
+DSDT_patched.dsl  13886:             Return (Package (0x00){})
+Remark   2095 -    Effective AML package length is zero ^ 
+
+DSDT_patched.dsl  13946:             Return (Package (0x00){})
+Remark   2095 -    Effective AML package length is zero ^ 
+
+DSDT_patched.dsl  14008:                 Return (Package (0x00){})
+Remark   2095 -        Effective AML package length is zero ^ 
+
+DSDT_patched.dsl  14069:             Return (Package (0x00){})
+Remark   2095 -    Effective AML package length is zero ^ 
+
+DSDT_patched.dsl  14129:             Return (Package (0x00){})
+Remark   2095 -    Effective AML package length is zero ^ 
+
+DSDT_patched.dsl  14189:             Return (Package (0x00){})
+Remark   2095 -    Effective AML package length is zero ^ 
+
+DSDT_patched.dsl  14249:                 Return (Package (0x00){})
+Remark   2095 -        Effective AML package length is zero ^ 
+
+DSDT_patched.dsl  14270:                 Return (Package (0x00){})
+Remark   2095 -        Effective AML package length is zero ^ 
+
+DSDT_patched.dsl  14291:                 Return (Package (0x00){})
+Remark   2095 -        Effective AML package length is zero ^ 
+
+DSDT_patched.dsl  14312:                 Return (Package (0x00){})
+Remark   2095 -        Effective AML package length is zero ^ 
+
+DSDT_patched.dsl  14333:                 Return (Package (0x00){})
+Remark   2095 -        Effective AML package length is zero ^ 
+
+DSDT_patched.dsl  14354:                 Return (Package (0x00){})
+Remark   2095 -        Effective AML package length is zero ^ 
+
+DSDT_patched.dsl  14375:                 Return (Package (0x00){})
+Remark   2095 -        Effective AML package length is zero ^ 
+
+DSDT_patched.dsl  14396:                 Return (Package (0x00){})
+Remark   2095 -        Effective AML package length is zero ^ 
+
+DSDT_patched.dsl  15399:                 If ((Arg0 == ToUUID ("b8febfe0-baf8-454b-aecd-49fb91137b21") /* Unknown UUID */))
+Remark   2184 -                                                               Unknown UUID string ^ 
+
+DSDT_patched.dsl  15419:                             Switch (PEPY)
+Warning  3124 -                                                ^ Switch expression is not a static Integer/Buffer/String data type, defaulting to Integer
+
+DSDT_patched.dsl  15505:                 If ((Arg0 == ToUUID ("c4eb40a0-6cd2-11e2-bcfd-0800200c9a66") /* Unknown UUID */))
+Remark   2184 -                                                               Unknown UUID string ^ 
+
+DSDT_patched.dsl  17562:     Method (STRE, 2, NotSerialized)
+Remark   2120 -                        ^ Control Method should be made Serialized due to creation of named objects within (\STRE)
+
+DSDT_patched.dsl  17585:     Method (XPTB, 1, NotSerialized)
+Remark   2120 -                        ^ Control Method should be made Serialized due to creation of named objects within (\XPTB)
+
+DSDT_patched.dsl  17593:         Name (OBUF, Buffer (Local0){})
+Remark   2173 -                          ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\XPTB)
+
+DSDT_patched.dsl  17610:             Arg2 = STDG (Local1, Arg1, Arg2)
+Remark   2098 -         Recursive method call ^  (STDG)
+
+DSDT_patched.dsl  17619:     Method (XPTS, 1, NotSerialized)
+Remark   2120 -                        ^ Control Method should be made Serialized due to creation of named objects within (\XPTS)
+
+DSDT_patched.dsl  17621:         Name (LBUF, Buffer (0x20){})
+Remark   2173 -                          ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\XPTS)
+
+DSDT_patched.dsl  17625:         Name (OBUF, Buffer (Local0){})
+Remark   2173 -                          ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\XPTS)
+
+DSDT_patched.dsl  17635:         Method (SNVC, 1, NotSerialized)
+Remark   2120 -                            ^ Control Method should be made Serialized due to creation of named objects within (\SNVC)
+
+DSDT_patched.dsl  17637:             OperationRegion (WWPR, SystemMemory, SMBA, 0x04)
+Remark   2173 -                                         ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\SNVC)
+
+DSDT_patched.dsl  17646:         Method (SNWB, 2, NotSerialized)
+Remark   2120 -                            ^ Control Method should be made Serialized due to creation of named objects within (\SNWB)
+
+DSDT_patched.dsl  17651:             OperationRegion (WWPR, SystemMemory, Local0, One)
+Remark   2173 -                                         ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\SNWB)
+
+DSDT_patched.dsl  17661:         Method (SNRB, 2, NotSerialized)
+Remark   2120 -                            ^ Control Method should be made Serialized due to creation of named objects within (\SNRB)
+
+DSDT_patched.dsl  17666:             OperationRegion (WWPR, SystemMemory, Local0, 0x04)
+Remark   2173 -                                         ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\SNRB)
+
+DSDT_patched.dsl  17677:         Method (SNVP, 2, NotSerialized)
+Remark   2120 -                            ^ Control Method should be made Serialized due to creation of named objects within (\SNVP)
+
+DSDT_patched.dsl  17682:             OperationRegion (WWPR, SystemMemory, Local0, 0x04)
+Remark   2173 -                                         ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\SNVP)
+
+DSDT_patched.dsl  17692:         Method (SNVG, 2, NotSerialized)
+Remark   2120 -                            ^ Control Method should be made Serialized due to creation of named objects within (\SNVG)
+
+DSDT_patched.dsl  17697:             OperationRegion (WWPR, SystemMemory, Local0, 0x04)
+Remark   2173 -                                         ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\SNVG)
+
+DSDT_patched.dsl  17726:         Method (SMBI, 2, NotSerialized)
+Remark   2120 -                            ^ Control Method should be made Serialized due to creation of named objects within (\SMBI)
+
+DSDT_patched.dsl  17730:             OperationRegion (WWPR, SystemMemory, Local0, 0x04)
+Remark   2173 -                                         ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\SMBI)
+
+DSDT_patched.dsl  17754:             Divide (Arg2, 0x04, Local3, Local4)
+Warning  3144 -                   Method Local is set but never used ^  (Local4)
+
+DSDT_patched.dsl  17785:         Method (ASMI, 0, NotSerialized)
+Remark   2120 -                            ^ Control Method should be made Serialized due to creation of named objects within (\ASMI)
+
+DSDT_patched.dsl  17787:             OperationRegion (SMIR, SystemIO, PSMI, One)
+Remark   2173 -                                         ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\ASMI)
+
+DSDT_patched.dsl  17828:             Method (WCAA, 1, NotSerialized)
+Remark   2146 -  Method Argument is never used ^  (Arg0)
+
+DSDT_patched.dsl  17855:             Method (WSAA, 2, NotSerialized)
+Remark   2146 -  Method Argument is never used ^  (Arg0)
+
+DSDT_patched.dsl  17860:             Method (WMBA, 3, NotSerialized)
+Remark   2146 -  Method Argument is never used ^  (Arg0)
+
+DSDT_patched.dsl  17860:             Method (WMBA, 3, NotSerialized)
+Remark   2146 -  Method Argument is never used ^  (Arg1)
+
+DSDT_patched.dsl  18139:         Method (WMNF, 2, NotSerialized)
+Remark   2146 -                            ^ Method Argument is never used (Arg1)
+
+DSDT_patched.dsl  18165:                 If (CondRefOf (\_OSI, Local0))
+Warning  3144 -                 Method Local is set but never used ^  (Local0)
+
+DSDT_patched.dsl  18235:         Method (SOS0, 2, NotSerialized)
+Remark   2146 -                            ^ Method Argument is never used (Arg0)
+
+DSDT_patched.dsl  18235:         Method (SOS0, 2, NotSerialized)
+Remark   2146 -                            ^ Method Argument is never used (Arg1)
+
+DSDT_patched.dsl  18240:         Method (SOS4, 2, NotSerialized)
+Remark   2146 -                            ^ Method Argument is never used (Arg1)
+
+DSDT_patched.dsl  18263:         Method (VINI, 2, NotSerialized)
+Remark   2146 -                            ^ Method Argument is never used (Arg1)
+
+DSDT_patched.dsl  18268:                 Local1 = DCLS /* \_SB_.PCI0.GFX0.DCLS */
+Warning  3144 -                              ^ Method Local is set but never used (Local1)
+
+DSDT_patched.dsl  18272:                     Local0 = ^^^LID0._LID ()
+Warning  3144 -                                  ^ Method Local is set but never used (Local0)
+
+DSDT_patched.dsl  18282:         Method (DINI, 2, NotSerialized)
+Remark   2146 -                            ^ Method Argument is never used (Arg1)
+
+DSDT_patched.dsl  18499:                     Name (BRT1, Buffer (0x12){})
+Remark   2173 -                                      ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.GFX0.LCD._BCL)
+
+DSDT_patched.dsl  18519:                 Name (BRT3, Buffer (0x02){})
+Remark   2173 -                                  ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.GFX0.LCD._BCM)
+
+DSDT_patched.dsl  18688:         Method (BRT6, 2, NotSerialized)
+Remark   2146 -                            ^ Method Argument is never used (Arg1)
+
+DSDT_patched.dsl  18720:         Method (ILDE, 2, NotSerialized)
+Remark   2146 -                            ^ Method Argument is never used (Arg1)
+
+DSDT_patched.dsl  18728:         Method (IVD1, 2, NotSerialized)
+Remark   2146 -                            ^ Method Argument is never used (Arg0)
+
+DSDT_patched.dsl  18728:         Method (IVD1, 2, NotSerialized)
+Remark   2146 -                            ^ Method Argument is never used (Arg1)
+
+DSDT_patched.dsl  18733:         Method (IVD2, 2, NotSerialized)
+Remark   2146 -                            ^ Method Argument is never used (Arg0)
+
+DSDT_patched.dsl  18733:         Method (IVD2, 2, NotSerialized)
+Remark   2146 -                            ^ Method Argument is never used (Arg1)
+
+DSDT_patched.dsl  18742:                         Sleep (0x07D0)
+Remark   2159 -      Very long Sleep, greater than 1 second ^ 
+
+DSDT_patched.dsl  18749:                         Sleep (0x07D0)
+Remark   2159 -      Very long Sleep, greater than 1 second ^ 
+
+DSDT_patched.dsl  18755:         Method (IVD4, 2, NotSerialized)
+Remark   2146 -                            ^ Method Argument is never used (Arg0)
+
+DSDT_patched.dsl  18755:         Method (IVD4, 2, NotSerialized)
+Remark   2146 -                            ^ Method Argument is never used (Arg1)
+
+DSDT_patched.dsl  18760:         Method (IVD3, 2, NotSerialized)
+Remark   2146 -                            ^ Method Argument is never used (Arg1)
+
+DSDT_patched.dsl  18786:         Method (VDP2, 2, NotSerialized)
+Remark   2120 -                            ^ Control Method should be made Serialized due to creation of named objects within (\VDP2)
+
+DSDT_patched.dsl  18788:             Name (VDP3, Buffer (0x10){})
+Remark   2173 -                              ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\VDP2)
+
+DSDT_patched.dsl  18810:         Method (NWAK, 2, NotSerialized)
+Remark   2146 -                            ^ Method Argument is never used (Arg0)
+
+DSDT_patched.dsl  18810:         Method (NWAK, 2, NotSerialized)
+Remark   2146 -                            ^ Method Argument is never used (Arg1)
+
+DSDT_patched.dsl  18954:         Method (PPCE, 2, NotSerialized)
+Remark   2146 -                            ^ Method Argument is never used (Arg0)
+
+DSDT_patched.dsl  18954:         Method (PPCE, 2, NotSerialized)
+Remark   2146 -                            ^ Method Argument is never used (Arg1)
+
+DSDT_patched.dsl  19149:             Method (ECM9, 2, NotSerialized)
+Remark   2146 -  Method Argument is never used ^  (Arg1)
+
+DSDT_patched.dsl  19157:                 Acquire (PATM, 0x0064)
+Warning  3130 -                                             ^ Result is not used, possible operator timeout will be missed
+
+DSDT_patched.dsl  19606:         Method (EISC, 3, NotSerialized)
+Remark   2120 -                            ^ Control Method should be made Serialized due to creation of named objects within (\EISC)
+
+DSDT_patched.dsl  19609:             Name (ECIB, Buffer (0x04){})
+Remark   2173 -                              ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\EISC)
+
+DSDT_patched.dsl  19739:         Method (ECM8, 1, NotSerialized)
+Remark   2120 -                            ^ Control Method should be made Serialized due to creation of named objects within (\ECM8)
+
+DSDT_patched.dsl  19742:             Name (LBUF, Buffer (0x21){})
+Remark   2173 -                              ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\ECM8)
+
+DSDT_patched.dsl  19763:             Name (OBUF, Buffer (Local0){})
+Remark   2173 -                              ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\ECM8)
+
+DSDT_patched.dsl  19853:             Divide (Local0, 0x64, Local5, Local3)
+Warning  3144 -             Method Local is set but never used ^  (Local5)
+
+DSDT_patched.dsl  19882:         Method (ECS1, 2, NotSerialized)
+Remark   2146 -                            ^ Method Argument is never used (Arg1)
+
+DSDT_patched.dsl  19935:     Method (NEVT, 0, NotSerialized)
+Remark   2120 -                        ^ Control Method should be made Serialized due to creation of named objects within (\NEVT)
+
+DSDT_patched.dsl  19972:             OperationRegion (LGPI, SystemIO, Local2, 0x04)
+Remark   2173 -                                         ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\NEVT)
+
+DSDT_patched.dsl  20192:         Method (EINI, 2, NotSerialized)
+Remark   2146 -                            ^ Method Argument is never used (Arg1)
+
+DSDT_patched.dsl  20247:             Name (EABF, Buffer (0x08){})
+Remark   2173 -                              ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.EEAC)
+
+DSDT_patched.dsl  20262:                 Name (EPRW, Package (0x02)
+Remark   2173 -                                  ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PPRW)
+
+DSDT_patched.dsl  20372:             Method (ACEV, 2, NotSerialized)
+Remark   2146 -  Method Argument is never used ^  (Arg0)
+
+DSDT_patched.dsl  20372:             Method (ACEV, 2, NotSerialized)
+Remark   2146 -  Method Argument is never used ^  (Arg1)
+
+DSDT_patched.dsl  20400:                 Method (_BIF, 0, NotSerialized)  // _BIF: Battery Information
+Remark   2120 -                                    ^ Control Method should be made Serialized due to creation of named objects within (\_SB.BAT0._BIF)
+
+DSDT_patched.dsl  20402:                     Name (BIF0, Package (0x0D){})
+Remark   2173 -                                      ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.BAT0._BIF)
+
+DSDT_patched.dsl  20407:                 Method (_BST, 0, NotSerialized)  // _BST: Battery Status
+Remark   2120 -                                    ^ Control Method should be made Serialized due to creation of named objects within (\_SB.BAT0._BST)
+
+DSDT_patched.dsl  20409:                     Name (BST0, Package (0x04){})
+Remark   2173 -                                      ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.BAT0._BST)
+
+DSDT_patched.dsl  20441:                 Method (_BIF, 0, NotSerialized)  // _BIF: Battery Information
+Remark   2120 -                                    ^ Control Method should be made Serialized due to creation of named objects within (\_SB.BAT1._BIF)
+
+DSDT_patched.dsl  20443:                     Name (BIF1, Package (0x0D){})
+Remark   2173 -                                      ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.BAT1._BIF)
+
+DSDT_patched.dsl  20448:                 Method (_BST, 0, NotSerialized)  // _BST: Battery Status
+Remark   2120 -                                    ^ Control Method should be made Serialized due to creation of named objects within (\_SB.BAT1._BST)
+
+DSDT_patched.dsl  20450:                     Name (BST1, Package (0x04){})
+Remark   2173 -                                      ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.BAT1._BST)
+
+DSDT_patched.dsl  20500:             Method (CBAT, 2, NotSerialized)
+Remark   2146 -  Method Argument is never used ^  (Arg0)
+
+DSDT_patched.dsl  20500:             Method (CBAT, 2, NotSerialized)
+Remark   2146 -  Method Argument is never used ^  (Arg1)
+
+DSDT_patched.dsl  20512:         Device (PS2K)
+Warning  3141 -         Missing dependency ^  (Device has a _PRS, missing a _SRS, required)
+
+DSDT_patched.dsl  20557:         Device (PS2M)
+Warning  3141 -         Missing dependency ^  (Device has a _PRS, missing a _SRS, required)
+
+DSDT_patched.dsl  20625:                 Name (DPKG, Package (0x04)
+Remark   2173 -                                  ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.HIDD.HDDM)
+
+DSDT_patched.dsl  20688:             Method (NRBT, 2, NotSerialized)
+Remark   2146 -  Method Argument is never used ^  (Arg0)
+
+DSDT_patched.dsl  20688:             Method (NRBT, 2, NotSerialized)
+Remark   2146 -  Method Argument is never used ^  (Arg1)
+
+DSDT_patched.dsl  21046:         Method (OSJG, 2, NotSerialized)
+Remark   2146 -                            ^ Method Argument is never used (Arg0)
+
+DSDT_patched.dsl  21046:         Method (OSJG, 2, NotSerialized)
+Remark   2146 -                            ^ Method Argument is never used (Arg1)
+
+DSDT_patched.dsl  21048:             If (CondRefOf (\_OSI, Local0))
+Warning  3144 -             Method Local is set but never used ^  (Local0)
+
+DSDT_patched.dsl  21116:                     If (Local1 = (Local0 & One))
+Warning  3144 -   Method Local is set but never used ^  (Local1)
+
+DSDT_patched.dsl  21132:     Method (EV16, 2, NotSerialized)
+Remark   2146 -                        ^ Method Argument is never used (Arg0)
+
+DSDT_patched.dsl  21132:     Method (EV16, 2, NotSerialized)
+Remark   2146 -                        ^ Method Argument is never used (Arg1)
+
+DSDT_patched.dsl  21136:     Method (EV13, 2, NotSerialized)
+Remark   2146 -                        ^ Method Argument is never used (Arg0)
+
+DSDT_patched.dsl  21136:     Method (EV13, 2, NotSerialized)
+Remark   2146 -                        ^ Method Argument is never used (Arg1)
+
+DSDT_patched.dsl  21185:     Method (EV11, 2, NotSerialized)
+Remark   2146 -                        ^ Method Argument is never used (Arg0)
+
+DSDT_patched.dsl  21185:     Method (EV11, 2, NotSerialized)
+Remark   2146 -                        ^ Method Argument is never used (Arg1)
+
+DSDT_patched.dsl  21189:     Method (EV12, 2, NotSerialized)
+Remark   2146 -                        ^ Method Argument is never used (Arg0)
+
+DSDT_patched.dsl  21189:     Method (EV12, 2, NotSerialized)
+Remark   2146 -                        ^ Method Argument is never used (Arg1)
+
+DSDT_patched.dsl  21254:         Method (_REG, 2, NotSerialized)  // _REG: Region Availability
+Warning  3079 -                            ^ _REG has no corresponding Operation Region
+
+DSDT_patched.dsl  21285:             Method (_SDD, 1, NotSerialized)  // _SDD: Set Device Data
+Remark   2120 -                                ^ Control Method should be made Serialized due to creation of named objects within (\_SB.PCI0.SAT0.SPT0._SDD)
+
+DSDT_patched.dsl  21287:                 Name (FFS0, Buffer (0x07)
+Remark   2173 -                                  ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.SAT0.SPT0._SDD)
+
+DSDT_patched.dsl  21335:             Method (_SDD, 1, NotSerialized)  // _SDD: Set Device Data
+Remark   2120 -                                ^ Control Method should be made Serialized due to creation of named objects within (\_SB.PCI0.SAT0.SPT1._SDD)
+
+DSDT_patched.dsl  21337:                 Name (FFS0, Buffer (0x07)
+Remark   2173 -                                  ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.SAT0.SPT1._SDD)
+
+DSDT_patched.dsl  21529:             Method (HINF, 3, Serialized)
+Remark   2146 -  Method Argument is never used ^  (Arg0)
+
+DSDT_patched.dsl  21529:             Method (HINF, 3, Serialized)
+Remark   2146 -  Method Argument is never used ^  (Arg2)
+
+DSDT_patched.dsl  21542:                         Name (TPMV, Package (0x02)
+Remark   2173 -                                          ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.TPMI.HINF)
+
+DSDT_patched.dsl  21585:             Method (TPPI, 3, Serialized)
+Remark   2146 -  Method Argument is never used ^  (Arg0)
+
+DSDT_patched.dsl  21652:             Method (TMCI, 3, Serialized)
+Remark   2146 -  Method Argument is never used ^  (Arg0)
+
+DSDT_patched.dsl  21680:             Method (TSMI, 3, Serialized)
+Remark   2146 -  Method Argument is never used ^  (Arg0)
+
+DSDT_patched.dsl  21680:             Method (TSMI, 3, Serialized)
+Remark   2146 -  Method Argument is never used ^  (Arg2)
+
+DSDT_patched.dsl  21682:                 OperationRegion (TPMR, SystemMemory, PTTB, 0x1000)
+Remark   2173 -                                             ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.TPMI.TSMI)
+
+DSDT_patched.dsl  21735:                 If ((Arg0 == ToUUID ("cf8e16a5-c1e8-4e25-b712-4f54a96702c8") /* Unknown UUID */))
+Remark   2184 -                                                               Unknown UUID string ^ 
+
+DSDT_patched.dsl  21745:                 If ((Arg0 == ToUUID ("376054ed-cc13-4675-901c-4756d7f2d45d") /* Unknown UUID */))
+Remark   2184 -                                                               Unknown UUID string ^ 
+
+DSDT_patched.dsl  21750:                 If ((Arg0 == ToUUID ("6bbf6cab-5463-4714-b7cd-f0203c0368d4") /* Unknown UUID */))
+Remark   2184 -                                                               Unknown UUID string ^ 
+
+DSDT_patched.dsl  21849:                             If ((\_SB.RDGP (RSTG) == RONP))
+Warning  3122 -                Called method may not always return a value ^  (\_SB.RDGP)
+
+DSDT_patched.dsl  21858:                         ElseIf (((\_SB.RDGP (PWRG) == PONP) && (\_SB.RDGP (RSTG) == RONP)))
+Warning  3122 -                 Called method may not always return a value ^  (\_SB.RDGP)
+
+DSDT_patched.dsl  21858:                         ElseIf (((\_SB.RDGP (PWRG) == PONP) && (\_SB.RDGP (RSTG) == RONP)))
+Warning  3122 -                                               Called method may not always return a value ^  (\_SB.RDGP)
+
+DSDT_patched.dsl  21868:                     Method (_ON, 0, Serialized)  // _ON_: Power On
+Warning  3115 -  Not all control paths return a value ^  (\_SB.PCI0.RP01.PXP._ON)
+
+DSDT_patched.dsl  21879:                             Sleep (PEP0)
+Remark   2159 -        Very long Sleep, greater than 1 second ^ 
+
+DSDT_patched.dsl  21885:                             Switch (SLOT)
+Warning  3124 -                                                ^ Switch expression is not a static Integer/Buffer/String data type, defaulting to Integer
+
+DSDT_patched.dsl  21889:                                     If (\_SB.RDGP (0x08))
+Warning  3122 -             Called method may not always return a value ^  (\_SB.RDGP)
+
+DSDT_patched.dsl  21897:                                     If (\_SB.RDGP (0x38))
+Warning  3122 -             Called method may not always return a value ^  (\_SB.RDGP)
+
+DSDT_patched.dsl  21910:                         Switch (SLOT)
+Warning  3124 -                                            ^ Switch expression is not a static Integer/Buffer/String data type, defaulting to Integer
+
+DSDT_patched.dsl  21928:                     Method (_OFF, 0, Serialized)  // _OFF: Power Off
+Warning  3115 -   Not all control paths return a value ^  (\_SB.PCI0.RP01.PXP._OFF)
+
+DSDT_patched.dsl  21944:                             Switch (SLOT)
+Warning  3124 -                                                ^ Switch expression is not a static Integer/Buffer/String data type, defaulting to Integer
+
+DSDT_patched.dsl  22072:                             If ((\_SB.RDGP (RSTG) == RONP))
+Warning  3122 -                Called method may not always return a value ^  (\_SB.RDGP)
+
+DSDT_patched.dsl  22081:                         ElseIf (((\_SB.RDGP (PWRG) == PONP) && (\_SB.RDGP (RSTG) == RONP)))
+Warning  3122 -                 Called method may not always return a value ^  (\_SB.RDGP)
+
+DSDT_patched.dsl  22081:                         ElseIf (((\_SB.RDGP (PWRG) == PONP) && (\_SB.RDGP (RSTG) == RONP)))
+Warning  3122 -                                               Called method may not always return a value ^  (\_SB.RDGP)
+
+DSDT_patched.dsl  22091:                     Method (_ON, 0, Serialized)  // _ON_: Power On
+Warning  3115 -  Not all control paths return a value ^  (\_SB.PCI0.RP06.PXP._ON)
+
+DSDT_patched.dsl  22102:                             Sleep (PEP0)
+Remark   2159 -        Very long Sleep, greater than 1 second ^ 
+
+DSDT_patched.dsl  22108:                             Switch (SLOT)
+Warning  3124 -                                                ^ Switch expression is not a static Integer/Buffer/String data type, defaulting to Integer
+
+DSDT_patched.dsl  22112:                                     If (\_SB.RDGP (0x08))
+Warning  3122 -             Called method may not always return a value ^  (\_SB.RDGP)
+
+DSDT_patched.dsl  22120:                                     If (\_SB.RDGP (0x38))
+Warning  3122 -             Called method may not always return a value ^  (\_SB.RDGP)
+
+DSDT_patched.dsl  22133:                         Switch (SLOT)
+Warning  3124 -                                            ^ Switch expression is not a static Integer/Buffer/String data type, defaulting to Integer
+
+DSDT_patched.dsl  22151:                     Method (_OFF, 0, Serialized)  // _OFF: Power Off
+Warning  3115 -   Not all control paths return a value ^  (\_SB.PCI0.RP06.PXP._OFF)
+
+DSDT_patched.dsl  22167:                             Switch (SLOT)
+Warning  3124 -                                                ^ Switch expression is not a static Integer/Buffer/String data type, defaulting to Integer
+
+DSDT_patched.dsl  22241:                         Return (Package (0x00){})
+Remark   2095 -                Effective AML package length is zero ^ 
+
+DSDT_patched.dsl  22256:                         Return (Package (0x00){})
+Remark   2095 -                Effective AML package length is zero ^ 
+
+DSDT_patched.dsl  22303:                             Return (Package (0x00){})
+Remark   2095 -                    Effective AML package length is zero ^ 
+
+DSDT_patched.dsl  22318:                             Return (Package (0x00){})
+Remark   2095 -                    Effective AML package length is zero ^ 
+
+DSDT_patched.dsl  22352:                                 Return (\_SB.RDGP (0x53))
+Warning  3122 -             Called method may not always return a value ^  (\_SB.RDGP)
+
+DSDT_patched.dsl  22357:                                 Return (\_SB.RDGP (0x55))
+Warning  3122 -             Called method may not always return a value ^  (\_SB.RDGP)
+
+DSDT_patched.dsl  22413:                         Switch (Arg2)
+Warning  3124 -                                            ^ Switch expression is not a static Integer/Buffer/String data type, defaulting to Integer
+
+DSDT_patched.dsl  22421:                                 Return (Package (0x00){})
+Remark   2095 -                        Effective AML package length is zero ^ 
+
+DSDT_patched.dsl  22427:                                 Switch (DRV)
+Warning  3124 -                                                   ^ Switch expression is not a static Integer/Buffer/String data type, defaulting to Integer
+
+DSDT_patched.dsl  22444:                                 Switch (DRV)
+Warning  3124 -                                                   ^ Switch expression is not a static Integer/Buffer/String data type, defaulting to Integer
+
+DSDT_patched.dsl  22502:             Method (PS2X, 0, Serialized)
+Warning  3115 -                                ^ Not all control paths return a value (\_SB.PCI0.XHC.RHUB.PS2X)
+
+DSDT_patched.dsl  22504:                 OperationRegion (XHCM, SystemMemory, (MEMB & 0xFFFFFFFFFFFF0000), 0x0600)
+Remark   2173 -                                             ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.XHC.RHUB.PS2X)
+
+DSDT_patched.dsl  22526:                 OperationRegion (XHCN, SystemMemory, Local1, 0x40)
+Remark   2173 -                                             ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.XHC.RHUB.PS2X)
+
+DSDT_patched.dsl  22563:                         If ((\_SB.RDGP (0x0A) == One))
+Warning  3122 -            Called method may not always return a value ^  (\_SB.RDGP)
+
+DSDT_patched.dsl  22594:                         If ((\_SB.RDGP (0x13) == One))
+Warning  3122 -            Called method may not always return a value ^  (\_SB.RDGP)
+
+DSDT_patched.dsl  22625:                         If ((\_SB.RDGP (0x19) == One))
+Warning  3122 -            Called method may not always return a value ^  (\_SB.RDGP)
+
+DSDT_patched.dsl  22680:                         If ((\_SB.RDGP (0x39) == Zero))
+Warning  3122 -            Called method may not always return a value ^  (\_SB.RDGP)
+
+DSDT_patched.dsl  22816:                         If ((\_SB.RDGP (0x4C) == One))
+Warning  3122 -            Called method may not always return a value ^  (\_SB.RDGP)
+
+DSDT_patched.dsl  22837:                 Method (_PS0, 0, Serialized)  // _PS0: Power State 0
+Warning  3115 -                                    ^ Not all control paths return a value (\_SB.PCI0.HDEF._PS0)
+
+DSDT_patched.dsl  22867:                 Method (_PS0, 0, Serialized)  // _PS0: Power State 0
+Warning  3115 -                                    ^ Not all control paths return a value (\_SB.PCI0.ADSP._PS0)
+
+DSDT_patched.dsl  22916:                 Return (Package (0x00){})
+Remark   2095 -        Effective AML package length is zero ^ 
+
+DSDT_patched.dsl  22921:                 Sleep (I20D)
+Remark   2159 -                                   ^ Very long Sleep, greater than 1 second
+
+DSDT_patched.dsl  22979:                 Sleep (I21D)
+Remark   2159 -                                   ^ Very long Sleep, greater than 1 second
+
+DSDT_patched.dsl  22996:                     ElseIf (((\_SB.RDGP (0x58) == One) && (\_SB.RDGP (0x59) == One)))
+Warning  3122 -             Called method may not always return a value ^  (\_SB.RDGP)
+
+DSDT_patched.dsl  22996:                     ElseIf (((\_SB.RDGP (0x58) == One) && (\_SB.RDGP (0x59) == One)))
+Warning  3122 -                                          Called method may not always return a value ^  (\_SB.RDGP)
+
+DSDT_patched.dsl  23010:                     ElseIf ((((\_SB.RDGP (0x58) == Zero) || (\_SB.RDGP (0x59) == Zero)) || 
+Warning  3122 -              Called method may not always return a value ^  (\_SB.RDGP)
+
+DSDT_patched.dsl  23010:                     ElseIf ((((\_SB.RDGP (0x58) == Zero) || (\_SB.RDGP (0x59) == Zero)) || 
+Warning  3122 -                                            Called method may not always return a value ^  (\_SB.RDGP)
+
+DSDT_patched.dsl  23011:                         (\_SB.RDGP (0x34) == Zero)))
+Warning  3122 -        Called method may not always return a value ^  (\_SB.RDGP)
+
+DSDT_patched.dsl  23047:                 Method (PS0X, 0, Serialized)
+Warning  3115 -                                    ^ Not all control paths return a value (\_SB.PCI0.I2C1.TPL0.PS0X)
+
+DSDT_patched.dsl  23074:                         Return (Package (0x00){})
+Remark   2095 -                Effective AML package length is zero ^ 
+
+DSDT_patched.dsl  23086:                         Return (Package (0x00){})
+Remark   2095 -                Effective AML package length is zero ^ 
+
+DSDT_patched.dsl  23110:                 Method (PS0X, 0, Serialized)
+Warning  3115 -                                    ^ Not all control paths return a value (\_SB.PCI0.I2C1.TPL1.PS0X)
+
+DSDT_patched.dsl  23137:                         Return (Package (0x00){})
+Remark   2095 -                Effective AML package length is zero ^ 
+
+DSDT_patched.dsl  23149:                         Return (Package (0x00){})
+Remark   2095 -                Effective AML package length is zero ^ 
+
+DSDT_patched.dsl  23173:                 Method (PS0X, 0, Serialized)
+Warning  3115 -                                    ^ Not all control paths return a value (\_SB.PCI0.I2C1.TPL2.PS0X)
+
+DSDT_patched.dsl  23200:                         Return (Package (0x00){})
+Remark   2095 -                Effective AML package length is zero ^ 
+
+DSDT_patched.dsl  23212:                         Return (Package (0x00){})
+Remark   2095 -                Effective AML package length is zero ^ 
+
+DSDT_patched.dsl  23236:                 Method (PS0X, 0, Serialized)
+Warning  3115 -                                    ^ Not all control paths return a value (\_SB.PCI0.I2C1.TPL3.PS0X)
+
+DSDT_patched.dsl  23263:                         Return (Package (0x00){})
+Remark   2095 -                Effective AML package length is zero ^ 
+
+DSDT_patched.dsl  23275:                         Return (Package (0x00){})
+Remark   2095 -                Effective AML package length is zero ^ 
+
+DSDT_patched.dsl  23299:                 Method (PS0X, 0, Serialized)
+Warning  3115 -                                    ^ Not all control paths return a value (\_SB.PCI0.I2C1.TPD0.PS0X)
+
+DSDT_patched.dsl  23326:                         Return (Package (0x00){})
+Remark   2095 -                Effective AML package length is zero ^ 
+
+DSDT_patched.dsl  23338:                         Return (Package (0x00){})
+Remark   2095 -                Effective AML package length is zero ^ 
+
+DSDT_patched.dsl  23362:                 Method (PS0X, 0, Serialized)
+Warning  3115 -                                    ^ Not all control paths return a value (\_SB.PCI0.I2C1.TPD1.PS0X)
+
+DSDT_patched.dsl  23389:                         Return (Package (0x00){})
+Remark   2095 -                Effective AML package length is zero ^ 
+
+DSDT_patched.dsl  23401:                         Return (Package (0x00){})
+Remark   2095 -                Effective AML package length is zero ^ 
+
+DSDT_patched.dsl  23425:                 Method (PS0X, 0, Serialized)
+Warning  3115 -                                    ^ Not all control paths return a value (\_SB.PCI0.I2C1.TPD2.PS0X)
+
+DSDT_patched.dsl  23452:                         Return (Package (0x00){})
+Remark   2095 -                Effective AML package length is zero ^ 
+
+DSDT_patched.dsl  23464:                         Return (Package (0x00){})
+Remark   2095 -                Effective AML package length is zero ^ 
+
+DSDT_patched.dsl  23488:                 Method (PS0X, 0, Serialized)
+Warning  3115 -                                    ^ Not all control paths return a value (\_SB.PCI0.I2C1.TPD3.PS0X)
+
+DSDT_patched.dsl  23515:                         Return (Package (0x00){})
+Remark   2095 -                Effective AML package length is zero ^ 
+
+DSDT_patched.dsl  23527:                         Return (Package (0x00){})
+Remark   2095 -                Effective AML package length is zero ^ 
+
+DSDT_patched.dsl  23551:                 Method (PS0X, 0, Serialized)
+Warning  3115 -                                    ^ Not all control paths return a value (\_SB.PCI0.I2C1.TPD7.PS0X)
+
+DSDT_patched.dsl  23578:                         Return (Package (0x00){})
+Remark   2095 -                Effective AML package length is zero ^ 
+
+DSDT_patched.dsl  23590:                         Return (Package (0x00){})
+Remark   2095 -                Effective AML package length is zero ^ 
+
+DSDT_patched.dsl  23604:                 Method (PS0X, 0, Serialized)
+Warning  3115 -                                    ^ Not all control paths return a value (\_SB.PCI0.I2C1.TPD8.PS0X)
+
+DSDT_patched.dsl  23631:                         Return (Package (0x00){})
+Remark   2095 -                Effective AML package length is zero ^ 
+
+DSDT_patched.dsl  23643:                         Return (Package (0x00){})
+Remark   2095 -                Effective AML package length is zero ^ 
+
+DSDT_patched.dsl  23690:                 OperationRegion (XHCM, SystemMemory, (MEMB & 0xFFFF0000), 0x0600)
+Remark   2173 -                                             ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.XHC.DUAM)
+
+DSDT_patched.dsl  24314:         Method (_PCT, 0, NotSerialized)  // _PCT: Performance Control
+Warning  3115 -                            ^ Not all control paths return a value (\_PR.CPU0._PCT)
+
+DSDT_patched.dsl  24314:         Method (_PCT, 0, NotSerialized)  // _PCT: Performance Control
+Warning  3107 -                            ^ Reserved method must return a value (Package required for _PCT)
+
+DSDT_patched.dsl  24682:             Return (Local0)
+Warning  3104 -                                  ^ Reserved method should not return a value (_PDC)
+
+DSDT_patched.dsl  24692:         Method (CPDC, 1, NotSerialized)
+Remark   2120 -                            ^ Control Method should be made Serialized due to creation of named objects within (\_PR.CPU0.CPDC)
+
+DSDT_patched.dsl  24704:             Return (COSC (ToUUID ("4077a616-290c-47be-9ebd-d87058713953") /* Unknown UUID */, REVS, SIZE, Local2))
+Remark   2184 -                                                            Unknown UUID string ^ 
+
+DSDT_patched.dsl  24707:         Method (COSC, 4, NotSerialized)
+Remark   2146 -                            ^ Method Argument is never used (Arg2)
+
+DSDT_patched.dsl  24707:         Method (COSC, 4, NotSerialized)
+Remark   2120 -                            ^ Control Method should be made Serialized due to creation of named objects within (\_PR.CPU0.COSC)
+
+DSDT_patched.dsl  24710:             CreateDWordField (Arg3, 0x04, CAP0)
+Remark   2089 -                             Object is not referenced ^  (Name [CAP0] is within a method [COSC])
+
+DSDT_patched.dsl  24715:             Name (UID0, ToUUID ("4077a616-290c-47be-9ebd-d87058713953") /* Unknown UUID */)
+Remark   2184 -                                                          Unknown UUID string ^ 
+
+DSDT_patched.dsl  24715:             Name (UID0, ToUUID ("4077a616-290c-47be-9ebd-d87058713953") /* Unknown UUID */)
+Remark   2173 -                              ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_PR.CPU0.COSC)
+
+DSDT_patched.dsl  24736:         Method (GCAP, 1, NotSerialized)
+Remark   2120 -                            ^ Control Method should be made Serialized due to creation of named objects within (\_PR.CPU0.GCAP)
+
+DSDT_patched.dsl  24758:                     OperationRegion (CST0, SystemMemory, DerefOf (SSDT [0x07]), DerefOf (SSDT [0x08]))
+Remark   2173 -                                                 ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_PR.CPU0.GCAP)
+
+DSDT_patched.dsl  24775:             Return (Local0)
+Warning  3104 -                                  ^ Reserved method should not return a value (_PDC)
+
+DSDT_patched.dsl  24815:         Method (APCT, 0, NotSerialized)
+Remark   2120 -                            ^ Control Method should be made Serialized due to creation of named objects within (\_PR.CPU1.APCT)
+
+DSDT_patched.dsl  24820:                 OperationRegion (CST1, SystemMemory, DerefOf (SSDT [0x0A]), DerefOf (SSDT [0x0B]))
+Remark   2173 -                                             ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_PR.CPU1.APCT)
+
+DSDT_patched.dsl  24825:         Method (APPT, 0, NotSerialized)
+Remark   2120 -                            ^ Control Method should be made Serialized due to creation of named objects within (\_PR.CPU1.APPT)
+
+DSDT_patched.dsl  24830:                 OperationRegion (IST1, SystemMemory, DerefOf (SSDT [0x04]), DerefOf (SSDT [0x05]))
+Remark   2173 -                                             ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_PR.CPU1.APPT)
+
+DSDT_patched.dsl  24842:             Return (Local0)
+Warning  3104 -                                  ^ Reserved method should not return a value (_PDC)
+
+DSDT_patched.dsl  24889:             Return (Local0)
+Warning  3104 -                                  ^ Reserved method should not return a value (_PDC)
+
+DSDT_patched.dsl  24936:             Return (Local0)
+Warning  3104 -                                  ^ Reserved method should not return a value (_PDC)
+
+DSDT_patched.dsl  24983:             Return (Local0)
+Warning  3104 -                                  ^ Reserved method should not return a value (_PDC)
+
+DSDT_patched.dsl  25030:             Return (Local0)
+Warning  3104 -                                  ^ Reserved method should not return a value (_PDC)
+
+DSDT_patched.dsl  25077:             Return (Local0)
+Warning  3104 -                                  ^ Reserved method should not return a value (_PDC)
+
+DSDT_patched.dsl  27339:                 OperationRegion (RPCY, SystemMemory, BBAR, 0x25)
+Remark   2173 -                                             ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.B0D3.ASTR)
+
+DSDT_patched.dsl  27356:             Name (CONT, 0x03E8)
+Remark   2173 -                              ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.B0D3.VSTR)
+
+DSDT_patched.dsl  27357:             Name (ADDR, 0x80000000)
+Remark   2173 -                              ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.B0D3.VSTR)
+
+DSDT_patched.dsl  27359:             OperationRegion (CCDC, SystemMemory, ADDR, 0x04)
+Remark   2173 -                                         ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.B0D3.VSTR)
+
+DSDT_patched.dsl  27377:                     OperationRegion (IPCV, SystemMemory, BBAR, 0x70)
+Remark   2173 -                                                 ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.B0D3.VSTR)
+
+DSDT_patched.dsl  27408:             Name (IDDX, 0x80000000)
+Remark   2173 -                              ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.B0D3.CXDC)
+
+DSDT_patched.dsl  27426:                 OperationRegion (IPCV, SystemMemory, BBAR, 0xBF)
+Remark   2173 -                                             ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.B0D3.ARST)
+
+DSDT_patched.dsl  27451:             Name (CONT, 0x03E8)
+Remark   2173 -                              ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.B0D3.AINI)
+
+DSDT_patched.dsl  27462:                 OperationRegion (IPCV, SystemMemory, BBAR, 0x70)
+Remark   2173 -                                             ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.B0D3.AINI)
+
+DSDT_patched.dsl  27554:                 OperationRegion (IPCV, SystemMemory, BBAR, 0x1020)
+Remark   2173 -                                             ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.B0D3.DCCC)
+
+DSDT_patched.dsl  28124:                 Sleep (ASLP)
+Remark   2159 -                                   ^ Very long Sleep, greater than 1 second
+
+DSDT_patched.dsl  28192:                 Sleep (ASLP)
+Remark   2159 -                                   ^ Very long Sleep, greater than 1 second
+
+DSDT_patched.dsl  28356:             Name (DRET, Buffer (0x04)
+Remark   2173 -                              ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.GFX0._DSM)
+
+DSDT_patched.dsl  28831:         Method (MMRB, 5, NotSerialized)
+Remark   2120 -                            ^ Control Method should be made Serialized due to creation of named objects within (\_SB.PCI0.MMRB)
+
+DSDT_patched.dsl  28838:             OperationRegion (PCI0, SystemMemory, Local7, One)
+Remark   2173 -                                         ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.MMRB)
+
+DSDT_patched.dsl  28847:         Method (MMWB, 6, NotSerialized)
+Remark   2120 -                            ^ Control Method should be made Serialized due to creation of named objects within (\_SB.PCI0.MMWB)
+
+DSDT_patched.dsl  28854:             OperationRegion (PCI0, SystemMemory, Local7, One)
+Remark   2173 -                                         ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.MMWB)
+
+DSDT_patched.dsl  28863:         Method (MMRW, 5, NotSerialized)
+Remark   2120 -                            ^ Control Method should be made Serialized due to creation of named objects within (\_SB.PCI0.MMRW)
+
+DSDT_patched.dsl  28870:             OperationRegion (PCI0, SystemMemory, Local7, 0x02)
+Remark   2173 -                                         ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.MMRW)
+
+DSDT_patched.dsl  28879:         Method (MMWW, 6, NotSerialized)
+Remark   2120 -                            ^ Control Method should be made Serialized due to creation of named objects within (\_SB.PCI0.MMWW)
+
+DSDT_patched.dsl  28886:             OperationRegion (PCI0, SystemMemory, Local7, 0x02)
+Remark   2173 -                                         ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.MMWW)
+
+DSDT_patched.dsl  28895:         Method (MMRD, 5, NotSerialized)
+Remark   2120 -                            ^ Control Method should be made Serialized due to creation of named objects within (\_SB.PCI0.MMRD)
+
+DSDT_patched.dsl  28902:             OperationRegion (PCI0, SystemMemory, Local7, 0x04)
+Remark   2173 -                                         ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.MMRD)
+
+DSDT_patched.dsl  28911:         Method (MMWD, 6, NotSerialized)
+Remark   2120 -                            ^ Control Method should be made Serialized due to creation of named objects within (\_SB.PCI0.MMWD)
+
+DSDT_patched.dsl  28918:             OperationRegion (PCI0, SystemMemory, Local7, 0x04)
+Remark   2173 -                                         ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.MMWD)
+
+DSDT_patched.dsl  28927:         Method (SCAP, 5, NotSerialized)
+Warning  3115 -                            ^ Not all control paths return a value (\_SB.PCI0.SCAP)
+
+DSDT_patched.dsl  28966:             POFF = SCAP (PEBA, Local7, EDEV, EFN0, 0x10)
+Warning  3122 -                        ^ Called method may not always return a value (\_SB.PCI0.SCAP)
+
+DSDT_patched.dsl  29140:         Method (PDUB, 2, NotSerialized)
+Warning  3115 -                            ^ Not all control paths return a value (\_SB.PCI0.PDUB)
+
+DSDT_patched.dsl  29257:         Method (BSPR, 2, NotSerialized)
+Remark   2120 -                            ^ Control Method should be made Serialized due to creation of named objects within (\_SB.PCI0.BSPR)
+
+DSDT_patched.dsl  29257:         Method (BSPR, 2, NotSerialized)
+Warning  3115 -                            ^ Not all control paths return a value (\_SB.PCI0.BSPR)
+
+DSDT_patched.dsl  29271:             OperationRegion (PCI0, SystemMemory, Local7, 0x04)
+Remark   2173 -                                         ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.BSPR)
+
+DSDT_patched.dsl  29325:         Method (AFES, 1, NotSerialized)
+Remark   2120 -                            ^ Control Method should be made Serialized due to creation of named objects within (\_SB.PCI0.AFES)
+
+DSDT_patched.dsl  29332:             OperationRegion (PCI0, SystemMemory, Local7, 0x04)
+Remark   2173 -                                         ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.AFES)
+
+DSDT_patched.dsl  29342:         Method (LNKD, 1, NotSerialized)
+Remark   2120 -                            ^ Control Method should be made Serialized due to creation of named objects within (\_SB.PCI0.LNKD)
+
+DSDT_patched.dsl  29349:             OperationRegion (PCI0, SystemMemory, Local7, 0x04)
+Remark   2173 -                                         ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.LNKD)
+
+DSDT_patched.dsl  29359:         Method (LNKS, 0, NotSerialized)
+Remark   2120 -                            ^ Control Method should be made Serialized due to creation of named objects within (\_SB.PCI0.LNKS)
+
+DSDT_patched.dsl  29366:             OperationRegion (PCI0, SystemMemory, Local7, 0x04)
+Remark   2173 -                                         ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.LNKS)
+
+DSDT_patched.dsl  29376:         Method (VCNP, 0, NotSerialized)
+Remark   2120 -                            ^ Control Method should be made Serialized due to creation of named objects within (\_SB.PCI0.VCNP)
+
+DSDT_patched.dsl  29383:             OperationRegion (PCI0, SystemMemory, Local7, 0x02)
+Remark   2173 -                                         ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.VCNP)
+
+DSDT_patched.dsl  29393:         Method (TREN, 1, NotSerialized)
+Remark   2120 -                            ^ Control Method should be made Serialized due to creation of named objects within (\_SB.PCI0.TREN)
+
+DSDT_patched.dsl  29400:             OperationRegion (PCI0, SystemMemory, Local7, 0x04)
+Remark   2173 -                                         ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.TREN)
+
+DSDT_patched.dsl  29409:         Method (MCHA, 0, NotSerialized)
+Remark   2120 -                            ^ Control Method should be made Serialized due to creation of named objects within (\_SB.PCI0.MCHA)
+
+DSDT_patched.dsl  29416:             OperationRegion (PCI0, SystemMemory, Local7, 0x08)
+Remark   2173 -                                         ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.MCHA)
+
+DSDT_patched.dsl  29426:         Method (C7AD, 1, NotSerialized)
+Remark   2120 -                            ^ Control Method should be made Serialized due to creation of named objects within (\_SB.PCI0.C7AD)
+
+DSDT_patched.dsl  29431:             OperationRegion (PCI0, SystemMemory, Local7, 0x04)
+Remark   2173 -                                         ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.C7AD)
+
+DSDT_patched.dsl  29552:             POFF = SCAP (PEBA, Local7, EDEV, EFN0, 0x10)
+Warning  3122 -                        ^ Called method may not always return a value (\_SB.PCI0.SCAP)
+
+DSDT_patched.dsl  29570:             POFF = SCAP (PEBA, Local7, EDEV, EFN0, 0x10)
+Warning  3122 -                        ^ Called method may not always return a value (\_SB.PCI0.SCAP)
+
+DSDT_patched.dsl  29620:         Method (RSPG, 1, NotSerialized)
+Warning  3115 -                            ^ Not all control paths return a value (\_SB.PCI0.RSPG)
+
+DSDT_patched.dsl  29670:         Method (SCPG, 0, NotSerialized)
+Warning  3115 -                            ^ Not all control paths return a value (\_SB.PCI0.SCPG)
+
+DSDT_patched.dsl  29704:         Method (RCPG, 0, NotSerialized)
+Warning  3115 -                            ^ Not all control paths return a value (\_SB.PCI0.RCPG)
+
+DSDT_patched.dsl  29908:         Method (RSEP, 1, NotSerialized)
+Warning  3115 -                            ^ Not all control paths return a value (\_SB.PCI0.RSEP)
+
+DSDT_patched.dsl  29957:                         Sleep (DLPW)
+Remark   2159 -    Very long Sleep, greater than 1 second ^ 
+
+DSDT_patched.dsl  29959:                         Sleep (DLHR)
+Remark   2159 -    Very long Sleep, greater than 1 second ^ 
+
+DSDT_patched.dsl  30094:                 Name (TMPI, Zero)
+Remark   2173 -                                  ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.IETM.IDSP)
+
+DSDT_patched.dsl  30148:                 Name (NUMP, Zero)
+Remark   2173 -                                  ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.IETM._OSC)
+
+DSDT_patched.dsl  30149:                 Name (UID2, Buffer (0x10)
+Remark   2173 -                                  ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.IETM._OSC)
+
+DSDT_patched.dsl  30407:                     If (Local1 = (Local0 & One))
+Warning  3144 -   Method Local is set but never used ^  (Local1)
+
+DSDT_patched.dsl  30586:             Name (CNVT, Zero)
+Remark   2173 -                              ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.B0D4.CPNU)
+
+DSDT_patched.dsl  30587:             Name (PPUU, Zero)
+Remark   2173 -                              ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.B0D4.CPNU)
+
+DSDT_patched.dsl  30588:             Name (RMDR, Zero)
+Remark   2173 -                              ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.B0D4.CPNU)
+
+DSDT_patched.dsl  30607:                 Divide (RMDR, PPUU, Local0, RMDR) /* \_SB_.PCI0.B0D4.CPNU.RMDR */
+Warning  3144 -               Method Local is set but never used ^  (Local0)
+
+DSDT_patched.dsl  31376:             ToUUID ("e145970a-e4c1-4d73-900e-c9c5a69dd067") /* Unknown UUID */
+Remark   2184 -                                              Unknown UUID string ^ 
+
+DSDT_patched.dsl  31384:             Name (AAAA, Zero)
+Remark   2173 -                              ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.B0D4.TDPL)
+
+DSDT_patched.dsl  31385:             Name (BBBB, Zero)
+Remark   2173 -                              ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.B0D4.TDPL)
+
+DSDT_patched.dsl  31386:             Name (CCCC, Zero)
+Remark   2173 -                              ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.B0D4.TDPL)
+
+DSDT_patched.dsl  31387:             Name (PPUU, Zero)
+Remark   2089 -     Object is not referenced ^  (Name [PPUU] is within a method [TDPL])
+
+DSDT_patched.dsl  31387:             Name (PPUU, Zero)
+Remark   2173 -                              ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.B0D4.TDPL)
+
+DSDT_patched.dsl  31409:             Name (TMP1, Package (0x01)
+Remark   2173 -                              ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.B0D4.TDPL)
+
+DSDT_patched.dsl  31420:             Name (TMP2, Package (0x02)
+Remark   2173 -                              ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.B0D4.TDPL)
+
+DSDT_patched.dsl  31440:             Name (TMP3, Package (0x03)
+Remark   2173 -                              ^ Creation of named objects within a method is highly inefficient, use globals or method local variables instead (\_SB.PCI0.B0D4.TDPL)
+
+DSDT_patched.dsl  31656:         Method (STDP, 1, Serialized)
+Warning  3115 -                            ^ Not all control paths return a value (\_SB.PCI0.B0D4.STDP)
+
+DSDT_patched.dsl  31705:             ToUUID ("b9455b06-7949-40c6-abf2-363a70c8706c") /* Unknown UUID */
+Remark   2184 -                                              Unknown UUID string ^ 
+
+DSDT_patched.dsl  33609:             ToUUID ("9e04115a-ae87-4d1c-9500-0f3e340bfe75") /* Unknown UUID */
+Remark   2184 -                                              Unknown UUID string ^ 
+
+DSDT_patched.dsl  33613:             ToUUID ("42a441d6-ae6a-462b-a84b-4a8ce79027d3") /* Unknown UUID */
+Remark   2184 -                                              Unknown UUID string ^ 
+
+DSDT_patched.dsl  33617:             ToUUID ("3a95c389-e4b8-4629-a526-c52c88626bae") /* Unknown UUID */
+Remark   2184 -                                              Unknown UUID string ^ 
+
+DSDT_patched.dsl  33621:             ToUUID ("97c68ae7-15fa-499c-b8c9-5da81d606e0a") /* Unknown UUID */
+Remark   2184 -                                              Unknown UUID string ^ 
+
+DSDT_patched.dsl  33625:             ToUUID ("16caf1b7-dd38-40ed-b1c1-1b8a1913d531") /* Unknown UUID */
+Remark   2184 -                                              Unknown UUID string ^ 
+
+DSDT_patched.dsl  33629:             ToUUID ("c4ce1849-243a-49f3-b8d5-f97002f38e6a") /* Unknown UUID */
+Remark   2184 -                                              Unknown UUID string ^ 
+
+
+Intel ACPI Component Architecture
+ASL+ Optimizing Compiler/Disassembler version 20250807
+Copyright (c) 2000 - 2025 Intel Corporation
+
+ASL Input:     DSDT_patched.dsl - 1004033 bytes  15059 keywords      0 source lines
+
+Compilation failed. 8 Errors, 203 Warnings, 381 Remarks
+No AML files were generated due to compiler error(s)
