@@ -1,6 +1,8 @@
 #!/bin/sh
 set -x
 
+ls -la /boot/acpi_dsdt.aml
+
 ls -la /dev/mem
 
 dd if=/dev/mem bs=4 count=1 skip=$((0xFE000000/4)) 2>/dev/null | hexdump -C
@@ -12,6 +14,8 @@ vmstat -m | head
 sysctl dev.drm
 
 mixer 
+
+sysctl hw.acpi
 
 kldstat
 

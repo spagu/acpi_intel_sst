@@ -47,6 +47,7 @@
 #include "sst_dma.h"
 #include "sst_pcm.h"
 #include "sst_jack.h"
+#include "sst_topology.h"
 
 /* ACPI IDs for Broadwell-U Audio DSP */
 #define SST_ACPI_ID_BDW		"INT3438"
@@ -101,6 +102,9 @@ struct sst_softc {
 
 	/* Jack detection */
 	struct sst_jack		jack;
+
+	/* Topology (audio pipeline) */
+	struct sst_topology	topology;
 };
 
 /*

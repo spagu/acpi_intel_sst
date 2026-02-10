@@ -109,9 +109,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Automatic speaker/headphone switching
   - Sysctl interface for status and control
   - Statistics tracking (insertion counts)
+- **Topology Loading** (`sst_topology.c`) - dynamic audio pipeline configuration
+  - `struct sst_pipeline` - audio pipeline with modules
+  - `struct sst_widget` - PCM, PGA, MUX, MIXER, DAI widgets
+  - `struct sst_route` - widget interconnections
+  - `sst_topology_init/fini()` - lifecycle management
+  - `sst_topology_load_default()` - Broadwell-U default pipelines
+  - `sst_topology_create_pipeline()` - allocate pipeline on DSP
+  - `sst_topology_start/stop_pipeline()` - pipeline control
+  - Default playback pipeline: PCM0 -> PGA0 -> SSP0 (speakers)
+  - Default capture pipeline: SSP1 -> PGA1 -> PCM1 (microphone)
+  - Max 8 pipelines, 32 widgets, 64 routes per topology
 
 ### Planned
-- Topology loading (dynamic audio pipeline)
 - ALSA compatibility layer
 
 ---

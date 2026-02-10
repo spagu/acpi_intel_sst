@@ -861,7 +861,14 @@ sst_acpi_attach(device_t dev)
 		goto fail;
 	}
 
-	/* 10. Load and boot firmware */
+	/* 10. Initialize Topology subsystem */
+	error = sst_topology_init(sc);
+	if (error) {
+		device_printf(dev, "Failed to initialize topology\n");
+		goto fail;
+	}
+
+	/* 12. Load and boot firmware */
 	error = sst_fw_load(sc);
 	if (error) {
 		device_printf(dev, "Firmware load failed: %d\n", error);
@@ -877,10 +884,19 @@ sst_acpi_attach(device_t dev)
 		} else {
 			/* Get firmware version */
 			sst_ipc_get_fw_version(sc, NULL);
+
+			/* Load default topology */
+			error = sst_topology_load_default(sc);
+			if (error) {
+				device_printf(dev,
+				    "Topology load failed: %d\n", error);
+				/* Non-fatal */
+				error = 0;
+			}
 		}
 	}
 
-	/* 11. Register PCM device with sound(4) */
+	/* 14. Register PCM device with sound(4) */
 	if (sc->fw.state == SST_FW_STATE_RUNNING) {
 		error = sst_pcm_register(sc);
 		if (error) {
@@ -891,7 +907,7 @@ sst_acpi_attach(device_t dev)
 		}
 	}
 
-	/* 12. Initialize jack detection */
+	/* 15. Initialize jack detection */
 	error = sst_jack_init(sc);
 	if (error) {
 		device_printf(dev, "Jack detection init failed: %d\n", error);
@@ -902,7 +918,7 @@ sst_acpi_attach(device_t dev)
 		sst_jack_enable(sc);
 	}
 
-	/* 13. Mark attached */
+	/* 16. Mark attached */
 	sc->attached = true;
 	sc->state = SST_STATE_ATTACHED;
 
@@ -927,6 +943,9 @@ sst_acpi_detach(device_t dev)
 
 	/* Cleanup jack detection */
 	sst_jack_fini(sc);
+
+	/* Cleanup topology */
+	sst_topology_fini(sc);
 
 	/* Cleanup PCM */
 	sst_pcm_fini(sc);

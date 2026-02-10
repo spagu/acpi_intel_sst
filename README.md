@@ -199,6 +199,7 @@ graph TB
             MAIN["acpi_intel_sst.c"]
             PCMD["sst_pcm.c"]
             JACK["sst_jack.c"]
+            TOPO["sst_topology.c"]
             SSP["sst_ssp.c"]
             DMA_DRV["sst_dma.c"]
             IPC["sst_ipc.c"]
@@ -414,7 +415,7 @@ graph LR
 
 | Feature | Status | Description |
 |---------|--------|-------------|
-| Topology Loading | ⏳ TODO | Dynamic audio pipeline |
+| Topology Loading | ✅ Done | Dynamic audio pipeline |
 | Multi-stream | ⏳ TODO | Multiple simultaneous streams |
 
 ---
@@ -975,7 +976,7 @@ Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for gui
 
 ### Areas Needing Help
 
-- 🟡 Topology loading (dynamic audio pipeline)
+- 🟢 Topology loading (implemented)
 - 🟡 Multi-stream support
 - 🟡 Testing on different Broadwell-U devices
 - 🟢 Documentation improvements

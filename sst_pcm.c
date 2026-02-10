@@ -57,6 +57,12 @@ static uint32_t sst_chan_getptr(kobj_t obj, void *data);
 static struct pcmchan_caps *sst_chan_getcaps(kobj_t obj, void *data);
 static void sst_pcm_dma_callback(void *arg);
 
+/* DSP stream allocation helpers */
+static int sst_pcm_alloc_dsp_stream(struct sst_softc *sc,
+    struct sst_pcm_channel *ch);
+static void sst_pcm_free_dsp_stream(struct sst_softc *sc,
+    struct sst_pcm_channel *ch);
+
 /*
  * Channel method definitions
  */
