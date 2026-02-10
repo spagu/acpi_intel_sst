@@ -7666,6 +7666,7 @@ DefinitionBlock ("", "DSDT", 2, "DELL  ", "CBX3   ", 0x01072009)
     {
         Device (SDMA)
         {
+            Name (_ADR, Zero)  // Placeholder - overridden by conditional scope
             Method (_STA, 0, NotSerialized)  // _STA: Status
             {
                 If ((SMD0 == 0x02))
@@ -7718,6 +7719,7 @@ DefinitionBlock ("", "DSDT", 2, "DELL  ", "CBX3   ", 0x01072009)
     {
         Device (I2C0)
         {
+            Name (_ADR, Zero)  // Placeholder - overridden by conditional scope
             Method (SSCN, 0, NotSerialized)
             {
                 Return (PKG3 (SSH0, SSL0, SSD0))
@@ -7836,6 +7838,7 @@ DefinitionBlock ("", "DSDT", 2, "DELL  ", "CBX3   ", 0x01072009)
     {
         Device (I2C1)
         {
+            Name (_ADR, Zero)  // Placeholder - overridden by conditional scope
             Method (SSCN, 0, NotSerialized)
             {
                 Return (PKG3 (SSH1, SSL1, SSD1))
@@ -7951,6 +7954,7 @@ DefinitionBlock ("", "DSDT", 2, "DELL  ", "CBX3   ", 0x01072009)
     {
         Device (SPI0)
         {
+            Name (_ADR, Zero)  // Placeholder - overridden by conditional scope
             Method (M0D3, 0, NotSerialized)
             {
                 Return (PKG1 (M0C2))
@@ -8035,6 +8039,7 @@ DefinitionBlock ("", "DSDT", 2, "DELL  ", "CBX3   ", 0x01072009)
     {
         Device (SPI1)
         {
+            Name (_ADR, Zero)  // Placeholder - overridden by conditional scope
             Method (M0D3, 0, NotSerialized)
             {
                 Return (PKG1 (M0C3))
@@ -8120,6 +8125,7 @@ DefinitionBlock ("", "DSDT", 2, "DELL  ", "CBX3   ", 0x01072009)
     {
         Device (UA00)
         {
+            Name (_ADR, Zero)  // Placeholder - overridden by conditional scope
             Method (M0D3, 0, NotSerialized)
             {
                 Return (PKG1 (M0C4))
@@ -8209,6 +8215,7 @@ DefinitionBlock ("", "DSDT", 2, "DELL  ", "CBX3   ", 0x01072009)
     {
         Device (UA01)
         {
+            Name (_ADR, Zero)  // Placeholder - overridden by conditional scope
             Method (M0D3, 0, NotSerialized)
             {
                 Return (PKG1 (M0C5))
@@ -8299,6 +8306,7 @@ DefinitionBlock ("", "DSDT", 2, "DELL  ", "CBX3   ", 0x01072009)
     {
         Device (SDHC)
         {
+            Name (_ADR, Zero)  // Placeholder - overridden by conditional scope
             Method (_PS0, 0, Serialized)  // _PS0: Power State 0
             {
                 LPD0 (SB17, SMD7)
