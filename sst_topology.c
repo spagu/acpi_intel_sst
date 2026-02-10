@@ -16,6 +16,8 @@
 
 #include <machine/bus.h>
 
+#include <dev/sound/pcm/sound.h>
+
 #include "acpi_intel_sst.h"
 #include "sst_topology.h"
 #include "sst_ipc.h"
