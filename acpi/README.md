@@ -9,6 +9,7 @@ This folder contains ACPI DSDT files for the Dell XPS 13 9343, including patches
 | `DSDT.dat` | Original DSDT binary from Dell XPS 13 9343 BIOS |
 | `DSDT.dsl` | Decompiled original DSDT (ASL source) |
 | `DSDT_patched.dsl` | **Patched DSDT to disable ADSP (SST) device** |
+| `SSDT-ADSP-Disable.dsl` | **Simple SSDT overlay** (alternative, may not work) |
 
 ## Background
 
@@ -50,6 +51,15 @@ Method (_STA, 0, NotSerialized)
 }
 ```
 
+## Fixes Applied to DSDT_patched.dsl
+
+The patched DSDT includes fixes for iasl disassembly issues:
+
+1. **External method declarations** - Fixed `ECRD` and `MDBG` from `IntObj` to `MethodObj`
+2. **Broken method calls** - Fixed `MDBG(Arg0)` and `ECRD(RefOf(...))` calls
+3. **Orphan packages** - Wrapped 16 orphan `Package` declarations in `Name(PPXB, ...)`
+4. **ADSP._STA patch** - Returns Zero to disable SST device
+
 ## Installation on FreeBSD
 
 ### Step 1: Compile the patched DSDT
@@ -60,9 +70,16 @@ iasl DSDT_patched.dsl
 # Creates: DSDT_patched.aml
 ```
 
-If compilation fails with external method errors, you may need to include SSDT tables:
+If compilation still fails, you may need the SSDT tables from your system:
 ```bash
-iasl -e SSDT*.dat -d DSDT.dat
+# Extract all ACPI tables
+acpidump -dt > acpi_tables.txt
+acpidump -t -o SSDT1.dat SSDT1
+acpidump -t -o SSDT2.dat SSDT2
+# ... repeat for all SSDTs
+
+# Recompile with SSDTs
+iasl -e SSDT*.dat DSDT_patched.dsl
 ```
 
 ### Step 2: Install the compiled AML

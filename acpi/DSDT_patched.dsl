@@ -87,7 +87,7 @@ DefinitionBlock ("", "DSDT", 2, "DELL  ", "CBX3   ", 0x01072009)
     External (_SB_.PCI0.I2C0.SHUB.PS0X, MethodObj)    // Warning: Unknown method, guessing 0 arguments
     External (_SB_.PCI0.I2C0.SHUB.PS3X, MethodObj)    // Warning: Unknown method, guessing 0 arguments
     External (_SB_.PCI0.LPCB.H_EC.ECMD, MethodObj)    // Warning: Unknown method, guessing 1 arguments
-    External (_SB_.PCI0.LPCB.H_EC.ECRD, IntObj)
+    External (_SB_.PCI0.LPCB.H_EC.ECRD, MethodObj, 1)    // Fixed: was IntObj, takes 1 arg
     External (_SB_.PCI0.LPCB.H_EC.ECWT, MethodObj)    // Warning: Unknown method, guessing 2 arguments
     External (_SB_.PCI0.LPCB.H_EC.PECH, UnknownObj)
     External (_SB_.PCI0.LPCB.H_EC.PECL, UnknownObj)
@@ -100,7 +100,7 @@ DefinitionBlock ("", "DSDT", 2, "DELL  ", "CBX3   ", 0x01072009)
     External (_SB_.TPM_.PTS_, MethodObj)    // Warning: Unknown method, guessing 1 arguments
     External (HNOT, MethodObj)    // Warning: Unknown method, guessing 1 arguments
     External (INIR, MethodObj)    // Warning: Unknown method, guessing 0 arguments
-    External (MDBG, IntObj)
+    External (MDBG, MethodObj, 1)    // Fixed: was IntObj, takes 1 arg
     External (MPMF, UnknownObj)
     External (NHDA, UnknownObj)
     External (PS0X, MethodObj)    // Warning: Unknown method, guessing 0 arguments
@@ -11505,8 +11505,7 @@ DefinitionBlock ("", "DSDT", 2, "DELL  ", "CBX3   ", 0x01072009)
     {
         If (CondRefOf (MDBG))
         {
-            Return (MDBG) /* External reference */
-            Arg0
+            Return (MDBG (Arg0))  /* Fixed: was broken method call */
         }
 
         Return (Zero)
@@ -24137,8 +24136,7 @@ DefinitionBlock ("", "DSDT", 2, "DELL  ", "CBX3   ", 0x01072009)
 
                 If (ECON)
                 {
-                    RefOf (\_SB.PCI0.LPCB.H_EC.PLMX) = \_SB.PCI0.LPCB.H_EC.ECRD /* External reference */
-                    Local0
+                    Local0 = \_SB.PCI0.LPCB.H_EC.ECRD (RefOf (\_SB.PCI0.LPCB.H_EC.PLMX))  /* Fixed */
                     Local0 = (0x0AAC + (Local0 * 0x0A))
                     PTMP = Local0
                     Return (Local0)
@@ -24215,11 +24213,9 @@ DefinitionBlock ("", "DSDT", 2, "DELL  ", "CBX3   ", 0x01072009)
 
                 If (ECON)
                 {
-                    RefOf (\_SB.PCI0.LPCB.H_EC.PECH) = \_SB.PCI0.LPCB.H_EC.ECRD /* External reference */
-                    Local0
+                    Local0 = \_SB.PCI0.LPCB.H_EC.ECRD (RefOf (\_SB.PCI0.LPCB.H_EC.PECH))  /* Fixed */
                     Local0 *= 0x0A
-                    RefOf (\_SB.PCI0.LPCB.H_EC.PECL) = \_SB.PCI0.LPCB.H_EC.ECRD /* External reference */
-                    Local1
+                    Local1 = \_SB.PCI0.LPCB.H_EC.ECRD (RefOf (\_SB.PCI0.LPCB.H_EC.PECL))  /* Fixed */
                     Local1 >>= 0x02
                     Local1 = ((Local1 * 0x0A) / 0x40)
                     Local0 += Local1
@@ -24496,165 +24492,26 @@ DefinitionBlock ("", "DSDT", 2, "DELL  ", "CBX3   ", 0x01072009)
                 0x00000500
             }
         })
-        Package (0x06)
+        /* Fixed: Wrapped orphan packages in Name() declaration */
+        Name (PPXB, Package (0x10)
         {
-            0x80000000, 
-            0x80000000, 
-            0x80000000, 
-            0x80000000, 
-            0x80000000, 
-            0x80000000
-        }
-
-        Package (0x06)
-        {
-            0x80000000, 
-            0x80000000, 
-            0x80000000, 
-            0x80000000, 
-            0x80000000, 
-            0x80000000
-        }
-
-        Package (0x06)
-        {
-            0x80000000, 
-            0x80000000, 
-            0x80000000, 
-            0x80000000, 
-            0x80000000, 
-            0x80000000
-        }
-
-        Package (0x06)
-        {
-            0x80000000, 
-            0x80000000, 
-            0x80000000, 
-            0x80000000, 
-            0x80000000, 
-            0x80000000
-        }
-
-        Package (0x06)
-        {
-            0x80000000, 
-            0x80000000, 
-            0x80000000, 
-            0x80000000, 
-            0x80000000, 
-            0x80000000
-        }
-
-        Package (0x06)
-        {
-            0x80000000, 
-            0x80000000, 
-            0x80000000, 
-            0x80000000, 
-            0x80000000, 
-            0x80000000
-        }
-
-        Package (0x06)
-        {
-            0x80000000, 
-            0x80000000, 
-            0x80000000, 
-            0x80000000, 
-            0x80000000, 
-            0x80000000
-        }
-
-        Package (0x06)
-        {
-            0x80000000, 
-            0x80000000, 
-            0x80000000, 
-            0x80000000, 
-            0x80000000, 
-            0x80000000
-        }
-
-        Package (0x06)
-        {
-            0x80000000, 
-            0x80000000, 
-            0x80000000, 
-            0x80000000, 
-            0x80000000, 
-            0x80000000
-        }
-
-        Package (0x06)
-        {
-            0x80000000, 
-            0x80000000, 
-            0x80000000, 
-            0x80000000, 
-            0x80000000, 
-            0x80000000
-        }
-
-        Package (0x06)
-        {
-            0x80000000, 
-            0x80000000, 
-            0x80000000, 
-            0x80000000, 
-            0x80000000, 
-            0x80000000
-        }
-
-        Package (0x06)
-        {
-            0x80000000, 
-            0x80000000, 
-            0x80000000, 
-            0x80000000, 
-            0x80000000, 
-            0x80000000
-        }
-
-        Package (0x06)
-        {
-            0x80000000, 
-            0x80000000, 
-            0x80000000, 
-            0x80000000, 
-            0x80000000, 
-            0x80000000
-        }
-
-        Package (0x06)
-        {
-            0x80000000, 
-            0x80000000, 
-            0x80000000, 
-            0x80000000, 
-            0x80000000, 
-            0x80000000
-        }
-
-        Package (0x06)
-        {
-            0x80000000, 
-            0x80000000, 
-            0x80000000, 
-            0x80000000, 
-            0x80000000, 
-            0x80000000
-        }
-
-        Package (0x06)
-        {
-            0x80000000, 
-            0x80000000, 
-            0x80000000, 
-            0x80000000, 
-            0x80000000, 
-            0x80000000
-        }
+            Package (0x06) { 0x80000000, 0x80000000, 0x80000000, 0x80000000, 0x80000000, 0x80000000 },
+            Package (0x06) { 0x80000000, 0x80000000, 0x80000000, 0x80000000, 0x80000000, 0x80000000 },
+            Package (0x06) { 0x80000000, 0x80000000, 0x80000000, 0x80000000, 0x80000000, 0x80000000 },
+            Package (0x06) { 0x80000000, 0x80000000, 0x80000000, 0x80000000, 0x80000000, 0x80000000 },
+            Package (0x06) { 0x80000000, 0x80000000, 0x80000000, 0x80000000, 0x80000000, 0x80000000 },
+            Package (0x06) { 0x80000000, 0x80000000, 0x80000000, 0x80000000, 0x80000000, 0x80000000 },
+            Package (0x06) { 0x80000000, 0x80000000, 0x80000000, 0x80000000, 0x80000000, 0x80000000 },
+            Package (0x06) { 0x80000000, 0x80000000, 0x80000000, 0x80000000, 0x80000000, 0x80000000 },
+            Package (0x06) { 0x80000000, 0x80000000, 0x80000000, 0x80000000, 0x80000000, 0x80000000 },
+            Package (0x06) { 0x80000000, 0x80000000, 0x80000000, 0x80000000, 0x80000000, 0x80000000 },
+            Package (0x06) { 0x80000000, 0x80000000, 0x80000000, 0x80000000, 0x80000000, 0x80000000 },
+            Package (0x06) { 0x80000000, 0x80000000, 0x80000000, 0x80000000, 0x80000000, 0x80000000 },
+            Package (0x06) { 0x80000000, 0x80000000, 0x80000000, 0x80000000, 0x80000000, 0x80000000 },
+            Package (0x06) { 0x80000000, 0x80000000, 0x80000000, 0x80000000, 0x80000000, 0x80000000 },
+            Package (0x06) { 0x80000000, 0x80000000, 0x80000000, 0x80000000, 0x80000000, 0x80000000 },
+            Package (0x06) { 0x80000000, 0x80000000, 0x80000000, 0x80000000, 0x80000000, 0x80000000 }
+        })
 
         Name (PSDF, Zero)
         Method (_PSD, 0, NotSerialized)  // _PSD: Power State Dependencies
