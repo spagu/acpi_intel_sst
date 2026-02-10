@@ -125,6 +125,54 @@
 #define SST_SHIM_IPCLPESC	0x70	/* IPC LPESC */
 #define SST_SHIM_CLKCTL		0x78	/* Clock Control */
 #define SST_SHIM_CSR2		0x80	/* Control/Status Register 2 */
+#define SST_SHIM_LTRC		0xE0	/* Low Trunk Clock */
+#define SST_SHIM_HMDC		0xE8	/* Host Memory DMA Control */
+
+/*
+ * Additional PCI Extended Config registers (via BAR1)
+ * Based on Linux catpt driver registers.h
+ */
+#define SST_PCI_CS1		0x00	/* PCI Config Space 1 (mirrors VID/DID) */
+#define SST_PCI_IMC		0xE4	/* Interrupt Mask Clear */
+#define SST_PCI_IMD		0xEC	/* Interrupt Mask Set */
+#define SST_PCI_IPCC		0xE0	/* IPC Clear */
+#define SST_PCI_IPCD_REG	0xE8	/* IPC Set (note: conflicts with HMDC) */
+
+/*
+ * IMC/IMD bits (via BAR1)
+ */
+#define SST_IMC_IPCDB		(1 << 0)	/* IPC Doorbell */
+#define SST_IMC_IPCCD		(1 << 1)	/* IPC Completion */
+
+/*
+ * CS1 bits (via BAR1)
+ */
+#define SST_CS1_SBCS_MASK	(0x3 << 2)	/* SSP/SRAM Bank Clock Select */
+#define SST_CS1_SBCS_24MHZ	(0x2 << 2)	/* 24MHz clock */
+
+/*
+ * HMDC bits - Host Memory DMA Control
+ */
+#define SST_HMDC_HDDA_E0	(1 << 0)	/* Host DMA DMA Access Enable 0 */
+#define SST_HMDC_HDDA_E1	(1 << 1)	/* Host DMA DMA Access Enable 1 */
+#define SST_HMDC_HDDA_E2	(1 << 2)	/* Host DMA DMA Access Enable 2 */
+#define SST_HMDC_HDDA_E3	(1 << 3)	/* Host DMA DMA Access Enable 3 */
+#define SST_HMDC_HDDA_ALL	0x0F		/* All DMA access enabled */
+
+/*
+ * LTRC bits - Low Trunk Clock
+ */
+#define SST_LTRC_VAL		0x3003		/* Default LTRC value */
+
+/*
+ * Default register values from Linux catpt driver
+ */
+#define SST_IMD_DEFAULT		0x7FFF0003	/* Default IMD value */
+#define SST_SSC0_DEFAULT	0x00000000	/* Default SSP Control 0 */
+#define SST_SSC1_DEFAULT	0x00000000	/* Default SSP Control 1 */
+#define SST_SSCFS_DEFAULT	0x00200000	/* Default SSCFS */
+#define SST_SSCFS_38_4KHZ	0x00200000	/* 38.4 kHz reference */
+#define SST_CLKCTL_DEFAULT	0x02000000	/* Default CLKCTL (SMOS=2) */
 
 /*
  * CSR Bits

@@ -606,6 +606,57 @@ sst_acpi_attach(device_t dev)
 	}
 
 	/*
+	 * Step 8: Dump additional PCI extended config registers
+	 * These registers control IPC and DMA access
+	 */
+	{
+		device_printf(dev, "Step 8: Extended PCI config dump...\n");
+		device_printf(dev, "  IMC (0xE4): 0x%08x\n",
+		    bus_read_4(sc->shim_res, SST_PCI_IMC));
+		device_printf(dev, "  IMD (0xEC): 0x%08x\n",
+		    bus_read_4(sc->shim_res, SST_PCI_IMD));
+		device_printf(dev, "  IPCC (0xE0): 0x%08x\n",
+		    bus_read_4(sc->shim_res, SST_PCI_IPCC));
+		device_printf(dev, "  IPCD (0xE8): 0x%08x\n",
+		    bus_read_4(sc->shim_res, SST_PCI_IPCD_REG));
+	}
+
+	/*
+	 * Step 9: Clear Interrupt Masks via IMC register
+	 * This enables IPC doorbell and completion interrupts
+	 */
+	{
+		uint32_t imc;
+
+		device_printf(dev, "Step 9: Clearing interrupt masks...\n");
+		imc = bus_read_4(sc->shim_res, SST_PCI_IMC);
+		device_printf(dev, "  IMC before: 0x%08x\n", imc);
+
+		/* Write to IMC to clear doorbell and completion bits */
+		bus_write_4(sc->shim_res, SST_PCI_IMC,
+		    SST_IMC_IPCDB | SST_IMC_IPCCD);
+		DELAY(1000);
+
+		imc = bus_read_4(sc->shim_res, SST_PCI_IMC);
+		device_printf(dev, "  IMC after: 0x%08x\n", imc);
+	}
+
+	/*
+	 * Step 10: Set default IMD (Interrupt Mask Set) register
+	 */
+	{
+		device_printf(dev, "Step 10: Setting IMD default...\n");
+		device_printf(dev, "  IMD before: 0x%08x\n",
+		    bus_read_4(sc->shim_res, SST_PCI_IMD));
+
+		bus_write_4(sc->shim_res, SST_PCI_IMD, SST_IMD_DEFAULT);
+		DELAY(1000);
+
+		device_printf(dev, "  IMD after: 0x%08x\n",
+		    bus_read_4(sc->shim_res, SST_PCI_IMD));
+	}
+
+	/*
 	 * 2.1 Verify BAR1 is PCI config mirror and read diagnostic info
 	 * BAR1 at 0xfe100000 can be used to access PCI config space
 	 * Power-up was already done above with correct WPT sequence

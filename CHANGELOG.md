@@ -15,6 +15,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - This was causing BAR0 memory to return 0xFFFFFFFF
 
 ### Added
+- **Extended PCI config register support** - additional registers from Linux catpt driver
+  - IMC (0xE4): Interrupt Mask Clear register
+  - IMD (0xEC): Interrupt Mask Set register (default: 0x7FFF0003)
+  - IPCC (0xE0): IPC Clear register
+  - IPCD (0xE8): IPC Set register
+  - HMDC: Host Memory DMA Control register
+  - LTRC: Low Trunk Clock register
 - **PCH RCBA Function Disable check** - checks FD2 register at RCBA+0x3428 for ADSP disable bit
   - If ADSPD (bit 1) is set in FD2, ADSP is disabled at PCH level
   - Automatically attempts to clear the disable bit if detected
