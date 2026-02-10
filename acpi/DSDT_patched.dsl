@@ -100,7 +100,7 @@ DefinitionBlock ("", "DSDT", 2, "DELL  ", "CBX3   ", 0x01072009)
     External (_SB_.TPM_.PTS_, MethodObj)    // Warning: Unknown method, guessing 1 arguments
     External (HNOT, MethodObj)    // Warning: Unknown method, guessing 1 arguments
     External (INIR, MethodObj)    // Warning: Unknown method, guessing 0 arguments
-    External (MDBG, MethodObj)    // Fixed: was IntObj
+    /* External (MDBG, MethodObj) -- Removed: ADBG method simplified */
     External (MPMF, UnknownObj)
     External (NHDA, UnknownObj)
     External (PS0X, MethodObj)    // Warning: Unknown method, guessing 0 arguments
@@ -11501,13 +11501,13 @@ DefinitionBlock ("", "DSDT", 2, "DELL  ", "CBX3   ", 0x01072009)
         P80H = P80D /* \P80D */
     }
 
+    /*
+     * ADBG - ACPI Debug Method
+     * Simplified: Always returns Zero since MDBG external is in SSDT
+     * and may not be available. This is a debug-only method.
+     */
     Method (ADBG, 1, Serialized)
     {
-        If (CondRefOf (MDBG))
-        {
-            Return (MDBG (Arg0))  /* Fixed: was broken method call */
-        }
-
         Return (Zero)
     }
 
