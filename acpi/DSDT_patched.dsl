@@ -7666,7 +7666,7 @@ DefinitionBlock ("", "DSDT", 2, "DELL  ", "CBX3   ", 0x01072009)
     {
         Device (SDMA)
         {
-            Name (_ADR, Zero)  // Placeholder - overridden by conditional scope
+            Name (_ADR, 0x00150000)  // _ADR: Address (LPSS DMA)
             Method (_STA, 0, NotSerialized)  // _STA: Status
             {
                 If ((SMD0 == 0x02))
@@ -7707,19 +7707,13 @@ DefinitionBlock ("", "DSDT", 2, "DELL  ", "CBX3   ", 0x01072009)
         }
     }
 
-    If ((SMD0 == 0x02))
-    {
-        Scope (_SB.PCI0.SDMA)
-        {
-            Name (_ADR, 0x00150000)  // _ADR: Address
-        }
-    }
+    /* Removed conditional _ADR for SDMA - now in Device definition */
 
     Scope (_SB.PCI0)
     {
         Device (I2C0)
         {
-            Name (_ADR, Zero)  // Placeholder - overridden by conditional scope
+            Name (_ADR, 0x00150001)  // _ADR: Address (LPSS I2C0)
             Method (SSCN, 0, NotSerialized)
             {
                 Return (PKG3 (SSH0, SSL0, SSD0))
@@ -7826,19 +7820,13 @@ DefinitionBlock ("", "DSDT", 2, "DELL  ", "CBX3   ", 0x01072009)
         }
     }
 
-    If ((SMD1 == 0x02))
-    {
-        Scope (_SB.PCI0.I2C0)
-        {
-            Name (_ADR, 0x00150001)  // _ADR: Address
-        }
-    }
+    /* Removed conditional _ADR for I2C0 - now in Device definition */
 
     Scope (_SB.PCI0)
     {
         Device (I2C1)
         {
-            Name (_ADR, Zero)  // Placeholder - overridden by conditional scope
+            Name (_ADR, 0x00150002)  // _ADR: Address (LPSS I2C1)
             Method (SSCN, 0, NotSerialized)
             {
                 Return (PKG3 (SSH1, SSL1, SSD1))
@@ -7942,19 +7930,13 @@ DefinitionBlock ("", "DSDT", 2, "DELL  ", "CBX3   ", 0x01072009)
         }
     }
 
-    If ((SMD2 == 0x02))
-    {
-        Scope (_SB.PCI0.I2C1)
-        {
-            Name (_ADR, 0x00150002)  // _ADR: Address
-        }
-    }
+    /* Removed conditional _ADR for I2C1 - now in Device definition */
 
     Scope (_SB.PCI0)
     {
         Device (SPI0)
         {
-            Name (_ADR, Zero)  // Placeholder - overridden by conditional scope
+            Name (_ADR, 0x00150003)  // _ADR: Address (LPSS SPI0)
             Method (M0D3, 0, NotSerialized)
             {
                 Return (PKG1 (M0C2))
@@ -8027,19 +8009,13 @@ DefinitionBlock ("", "DSDT", 2, "DELL  ", "CBX3   ", 0x01072009)
         }
     }
 
-    If ((SMD3 == 0x02))
-    {
-        Scope (_SB.PCI0.SPI0)
-        {
-            Name (_ADR, 0x00150003)  // _ADR: Address
-        }
-    }
+    /* Removed conditional _ADR for SPI0 - now in Device definition */
 
     Scope (_SB.PCI0)
     {
         Device (SPI1)
         {
-            Name (_ADR, Zero)  // Placeholder - overridden by conditional scope
+            Name (_ADR, 0x00150004)  // _ADR: Address (LPSS SPI1)
             Method (M0D3, 0, NotSerialized)
             {
                 Return (PKG1 (M0C3))
@@ -8113,19 +8089,13 @@ DefinitionBlock ("", "DSDT", 2, "DELL  ", "CBX3   ", 0x01072009)
         }
     }
 
-    If ((SMD4 == 0x02))
-    {
-        Scope (_SB.PCI0.SPI1)
-        {
-            Name (_ADR, 0x00150004)  // _ADR: Address
-        }
-    }
+    /* Removed conditional _ADR for SPI1 - now in Device definition */
 
     Scope (_SB.PCI0)
     {
         Device (UA00)
         {
-            Name (_ADR, Zero)  // Placeholder - overridden by conditional scope
+            Name (_ADR, 0x00150005)  // _ADR: Address (LPSS UART0)
             Method (M0D3, 0, NotSerialized)
             {
                 Return (PKG1 (M0C4))
@@ -8203,19 +8173,13 @@ DefinitionBlock ("", "DSDT", 2, "DELL  ", "CBX3   ", 0x01072009)
         }
     }
 
-    If ((SMD5 == 0x02))
-    {
-        Scope (_SB.PCI0.UA00)
-        {
-            Name (_ADR, 0x00150005)  // _ADR: Address
-        }
-    }
+    /* Removed conditional _ADR for UA00 - now in Device definition */
 
     Scope (_SB.PCI0)
     {
         Device (UA01)
         {
-            Name (_ADR, Zero)  // Placeholder - overridden by conditional scope
+            Name (_ADR, 0x00150006)  // _ADR: Address (LPSS UART1)
             Method (M0D3, 0, NotSerialized)
             {
                 Return (PKG1 (M0C5))
@@ -8294,19 +8258,13 @@ DefinitionBlock ("", "DSDT", 2, "DELL  ", "CBX3   ", 0x01072009)
         }
     }
 
-    If ((SMD6 == 0x02))
-    {
-        Scope (_SB.PCI0.UA01)
-        {
-            Name (_ADR, 0x00150006)  // _ADR: Address
-        }
-    }
+    /* Removed conditional _ADR for UA01 - now in Device definition */
 
     Scope (_SB.PCI0)
     {
         Device (SDHC)
         {
-            Name (_ADR, Zero)  // Placeholder - overridden by conditional scope
+            Name (_ADR, 0x00170000)  // _ADR: Address (SD Host Controller)
             Method (_PS0, 0, Serialized)  // _PS0: Power State 0
             {
                 LPD0 (SB17, SMD7)
@@ -8360,13 +8318,7 @@ DefinitionBlock ("", "DSDT", 2, "DELL  ", "CBX3   ", 0x01072009)
         }
     }
 
-    If ((SMD7 == 0x02))
-    {
-        Scope (_SB.PCI0.SDHC)
-        {
-            Name (_ADR, 0x00170000)  // _ADR: Address
-        }
-    }
+    /* Removed conditional _ADR for SDHC - now in Device definition */
 
     Scope (_SB.PCI0)
     {
