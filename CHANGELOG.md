@@ -7,7 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Critical: WPT (Broadwell-U) power-up sequence** - VDRTCTL0 register bits were using LPT (Haswell) positions
+  - WPT uses bits 0-1 for D3PGD/D3SRAMPGD (not bits 8/16 like LPT)
+  - WPT uses bits 2-11 for ISRAMPGE, bits 12-19 for DSRAMPGE
+  - WPT places APLLSE at VDRTCTL2 bit 31 (not VDRTCTL0 bit 0 like LPT)
+  - This was causing BAR0 memory to return 0xFFFFFFFF
+
 ### Added
+- **PCH RCBA Function Disable check** - checks FD2 register at RCBA+0x3428 for ADSP disable bit
+  - If ADSPD (bit 1) is set in FD2, ADSP is disabled at PCH level
+  - Automatically attempts to clear the disable bit if detected
+- **WPT-specific register definitions** in `sst_regs.h`
+  - `SST_WPT_VDRTCTL0_*` defines for Wildcat Point (Broadwell-U)
+  - `SST_LPT_VDRTCTL0_*` defines for Lynx Point (Haswell)
+  - PMCS power management control/status register defines
+  - LPSS private register definitions
 - **Firmware documentation** - comprehensive guide for obtaining Intel SST firmware
   - Firmware location: `/boot/firmware/intel/IntcSST2.bin`
   - Direct download from Debian package on FreeBSD

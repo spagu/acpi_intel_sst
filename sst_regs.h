@@ -41,19 +41,60 @@
 
 /*
  * VDRTCTL0 bits - from Linux catpt driver
- * IMPORTANT: DSRAMPGE bits control power gating:
+ * IMPORTANT: SRAM power gating bits control:
  *   - Set bits = ENABLE power gating = power OFF SRAM
  *   - Clear bits = DISABLE power gating = power ON SRAM
- * To enable SRAM, you must CLEAR the DSRAMPGE bits!
+ * To enable SRAM, you must CLEAR the xSRAMPGE bits!
+ *
+ * Register layouts differ between LPT (Haswell) and WPT (Broadwell):
  */
-#define SST_VDRTCTL0_DSRAMPGE_MASK	0xFF		/* Bits 0-7: SRAM Power Gate Enable */
-#define SST_VDRTCTL0_D3SRAMPGD		(1 << 8)	/* Bit 8: D3 SRAM Power Gate Disable */
-#define SST_VDRTCTL0_D3PGD		(1 << 16)	/* Bit 16: D3 Power Gate Disable */
 
-/* VDRTCTL2 bits */
+/* WPT (Wildcat Point = Broadwell-U) VDRTCTL0 bit definitions */
+#define SST_WPT_VDRTCTL0_D3PGD		(1 << 0)	/* Bit 0: D3 Power Gate Disable */
+#define SST_WPT_VDRTCTL0_D3SRAMPGD	(1 << 1)	/* Bit 1: D3 SRAM Power Gate Disable */
+#define SST_WPT_VDRTCTL0_ISRAMPGE_MASK	0xFFC		/* Bits 2-11: IRAM Power Gate Enable (10 blocks) */
+#define SST_WPT_VDRTCTL0_ISRAMPGE_SHIFT	2
+#define SST_WPT_VDRTCTL0_DSRAMPGE_MASK	0xFF000		/* Bits 12-19: DRAM Power Gate Enable (8 blocks) */
+#define SST_WPT_VDRTCTL0_DSRAMPGE_SHIFT	12
+
+/* LPT (Lynx Point = Haswell) VDRTCTL0 bit definitions */
+#define SST_LPT_VDRTCTL0_APLLSE		(1 << 0)	/* Bit 0: Audio PLL Shutdown Enable */
+#define SST_LPT_VDRTCTL0_D3PGD		(1 << 1)	/* Bit 1: D3 Power Gate Disable */
+#define SST_LPT_VDRTCTL0_D3SRAMPGD	(1 << 2)	/* Bit 2: D3 SRAM Power Gate Disable */
+#define SST_LPT_VDRTCTL0_ISRAMPGE_MASK	0x3C0		/* Bits 6-9: IRAM Power Gate Enable */
+#define SST_LPT_VDRTCTL0_ISRAMPGE_SHIFT	6
+#define SST_LPT_VDRTCTL0_DSRAMPGE_MASK	0xFF0000	/* Bits 16-23: DRAM Power Gate Enable */
+#define SST_LPT_VDRTCTL0_DSRAMPGE_SHIFT	16
+
+/* Legacy aliases (use WPT for Broadwell-U) */
+#define SST_VDRTCTL0_DSRAMPGE_MASK	SST_WPT_VDRTCTL0_DSRAMPGE_MASK
+#define SST_VDRTCTL0_D3SRAMPGD		SST_WPT_VDRTCTL0_D3SRAMPGD
+#define SST_VDRTCTL0_D3PGD		SST_WPT_VDRTCTL0_D3PGD
+
+/* VDRTCTL2 bits (same for both LPT and WPT) */
 #define SST_VDRTCTL2_DCLCGE		(1 << 1)	/* Dynamic Clock Gating Enable */
 #define SST_VDRTCTL2_DTCGE		(1 << 10)	/* Trunk Clock Gating Enable */
-#define SST_VDRTCTL2_APLLSE_MASK	(1 << 31)	/* Audio PLL Shutdown Enable */
+#define SST_VDRTCTL2_CGEALL		0xF7F		/* All Clock Gating Enable mask */
+/* APLLSE location differs: LPT=VDRTCTL0 bit0, WPT=VDRTCTL2 bit31 */
+#define SST_VDRTCTL2_APLLSE_MASK	(1U << 31)	/* Audio PLL Shutdown Enable (WPT only) */
+
+/*
+ * LPSS Private Registers (at BAR0 + 0x800 for Lynxpoint/Broadwell)
+ * These control LPSS device power state
+ */
+#define SST_LPSS_PRIV_OFFSET		0x800		/* LPSS private register offset */
+#define SST_LPSS_PRIV_RESETS		0x04		/* LPSS Resets */
+#define SST_LPSS_PRIV_RESETS_FUNC	(1 << 0)	/* Function Reset */
+#define SST_LPSS_PRIV_RESETS_IDMA	(1 << 2)	/* iDMA Reset */
+
+/*
+ * PMCS - PCI Power Management Control/Status
+ * Located at PM capability offset + 4
+ */
+#define SST_PCI_PMCS			0x84		/* PM Control/Status (PM cap at 0x80) */
+#define SST_PMCS_PS_MASK		0x03		/* Power State Mask */
+#define SST_PMCS_PS_D0			0x00		/* D0 Power State */
+#define SST_PMCS_PS_D3			0x03		/* D3 Power State */
 #define SST_SHIM_SIZE		0x1000		/* 4KB */
 /*
  * Mailbox offsets (from DSP perspective)

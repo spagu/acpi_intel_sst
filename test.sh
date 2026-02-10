@@ -20,3 +20,5 @@ pciconf -lv | grep -i gpio
 cat /boot/firmware/intel/IntcSST2.bin | hexdump -C | head
 
 cat /dev/sndstat
+
+acpidump -dt

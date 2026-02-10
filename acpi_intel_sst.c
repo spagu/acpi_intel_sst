@@ -23,6 +23,7 @@
 #include <machine/bus.h>
 #include <machine/resource.h>
 #include <machine/cpufunc.h>	/* inl/outl for GPIO access */
+#include <x86/bus.h>		/* X86_BUS_SPACE_MEM */
 
 #include <contrib/dev/acpica/include/acpi.h>
 #include <dev/acpica/acpivar.h>
@@ -326,7 +327,89 @@ sst_acpi_attach(device_t dev)
 	}
 
 	/*
-	 * 1.5 Direct GPIO control for audio power
+	 * 1.5 Check PCH RCBA for Function Disable bits
+	 * RCBA (Root Complex Base Address) contains Function Disable registers
+	 * FD2 at RCBA+0x3428 may have ADSP disabled at PCH level
+	 * RCBA is at LPC bridge (0:31:0) config offset 0xF0
+	 */
+	{
+		uint32_t rcba_reg, rcba_base;
+		uint32_t fd2;
+		bus_space_tag_t mem_tag;
+		bus_space_handle_t rcba_handle;
+		int map_err;
+
+		/* Read RCBA from LPC bridge config space */
+		rcba_reg = pci_cfgregread(0, 0, 0x1F, 0, 0xF0, 4);
+		rcba_base = rcba_reg & 0xFFFFC000;  /* Bits 14-31 */
+
+		device_printf(dev, "PCH RCBA Check:\n");
+		device_printf(dev, "  RCBA reg (0xF0): 0x%08x\n", rcba_reg);
+		device_printf(dev, "  RCBA base: 0x%08x\n", rcba_base);
+		device_printf(dev, "  RCBA enabled: %s\n",
+		    (rcba_reg & 1) ? "yes" : "no");
+
+		if (rcba_base != 0 && rcba_base != 0xFFFFC000 &&
+		    (rcba_reg & 1)) {
+			/*
+			 * Map RCBA to read/write FD2
+			 * FD2 (Function Disable 2) is at offset 0x3428
+			 * ADSPD bit is bit 1 in FD2
+			 */
+			mem_tag = X86_BUS_SPACE_MEM;
+			map_err = bus_space_map(mem_tag, rcba_base, 0x4000,
+			    0, &rcba_handle);
+
+			if (map_err == 0) {
+				uint32_t fd1;
+
+				/* Read FD1 at offset 0x3418 */
+				fd1 = bus_space_read_4(mem_tag, rcba_handle,
+				    0x3418);
+				device_printf(dev, "  FD1 (0x3418): 0x%08x\n",
+				    fd1);
+
+				/* Read FD2 at offset 0x3428 */
+				fd2 = bus_space_read_4(mem_tag, rcba_handle,
+				    0x3428);
+				device_printf(dev, "  FD2 (0x3428): 0x%08x\n",
+				    fd2);
+
+				/*
+				 * Check if ADSPD (Audio DSP Disable) bit 1 is set
+				 * If set, the ADSP is disabled at PCH level
+				 */
+				if (fd2 & (1 << 1)) {
+					device_printf(dev,
+					    "WARNING: ADSP is DISABLED in PCH FD2!\n");
+					device_printf(dev,
+					    "  Attempting to enable ADSP...\n");
+
+					/* Clear ADSPD bit to enable ADSP */
+					fd2 &= ~(1 << 1);
+					bus_space_write_4(mem_tag, rcba_handle,
+					    0x3428, fd2);
+					DELAY(100000);  /* 100ms */
+
+					fd2 = bus_space_read_4(mem_tag,
+					    rcba_handle, 0x3428);
+					device_printf(dev,
+					    "  FD2 after: 0x%08x\n", fd2);
+				} else {
+					device_printf(dev,
+					    "  ADSP is enabled in FD2\n");
+				}
+
+				bus_space_unmap(mem_tag, rcba_handle, 0x4000);
+			} else {
+				device_printf(dev,
+				    "  Failed to map RCBA: %d\n", map_err);
+			}
+		}
+	}
+
+	/*
+	 * 1.6 Direct GPIO control for audio power
 	 * ACPI PAUD power resource uses GPIO 0x4C to control audio power
 	 * GPIO base is at LPC bridge (0:0x1F:0) config offset 0x48, bits 7-15
 	 * GPIO register = GPIO_BASE + 0x100 + (pin * 8)
@@ -408,150 +491,129 @@ sst_acpi_attach(device_t dev)
 	}
 
 	/*
-	 * Try direct PCI config access using pci_cfgregread/write
-	 * The SST device on Broadwell-U is typically at Bus 0, Device 0x13, Func 0
-	 * Since the device is ACPI-claimed, it won't show up in normal PCI scan
-	 * but we can still access it via direct config mechanism
+	 * WPT (Wildcat Point = Broadwell-U) Power-Up Sequence
+	 * Based on Linux catpt driver dsp.c:catpt_dsp_power_up()
+	 *
+	 * CRITICAL: WPT has DIFFERENT bit positions than LPT (Haswell)!
+	 * WPT VDRTCTL0:
+	 *   Bit 0:  D3PGD (D3 Power Gate Disable)
+	 *   Bit 1:  D3SRAMPGD (D3 SRAM Power Gate Disable)
+	 *   Bits 2-11: ISRAMPGE (Instruction SRAM Power Gate Enable)
+	 *   Bits 12-19: DSRAMPGE (Data SRAM Power Gate Enable)
+	 * WPT VDRTCTL2:
+	 *   Bit 1:  DCLCGE (Dynamic Clock Gating Enable)
+	 *   Bit 10: DTCGE (Trunk Clock Gating Enable)
+	 *   Bit 31: APLLSE (Audio PLL Shutdown Enable)
 	 */
 	{
-		int domain = 0;
-		int bus = 0;
-		int slot = 0x13;	/* Known BDF for Broadwell SST */
-		int func = 0;
-		uint32_t vid_did, cmd, vdrtctl0, vdrtctl2;
+		uint32_t vdrtctl0, vdrtctl2, pmcs;
 
-		device_printf(dev, "Trying direct PCI config at 0:%d:%d...\n",
-		    slot, func);
-
-		vid_did = pci_cfgregread(domain, bus, slot, func, 0, 4);
-		device_printf(dev, "  VID/DID @ 0:0x13:0: 0x%08x\n", vid_did);
+		device_printf(dev, "=== WPT (Broadwell) Power-Up Sequence ===\n");
 
 		/*
-		 * Also try scanning all devices on bus 0 to find it
+		 * Step 1: Disable clock gating FIRST
+		 * Must disable before any other power operations
 		 */
-		if (vid_did != 0x9CB68086) {
-			int s, f;
-			device_printf(dev, "Scanning all bus 0 devices...\n");
-			for (s = 0; s < 32; s++) {
-				for (f = 0; f < 8; f++) {
-					vid_did = pci_cfgregread(domain, bus,
-					    s, f, 0, 4);
-					if (vid_did != 0xFFFFFFFF &&
-					    vid_did != 0x00000000) {
-						device_printf(dev,
-						    "  0:0x%02x:%d = 0x%08x\n",
-						    s, f, vid_did);
-						if (vid_did == 0x9CB68086) {
-							slot = s;
-							func = f;
-							device_printf(dev,
-							    "  Found SST!\n");
-						}
-					}
-				}
-			}
-		}
+		vdrtctl2 = bus_read_4(sc->shim_res, SST_PCI_VDRTCTL2);
+		device_printf(dev, "Step 1: VDRTCTL2 before: 0x%08x\n", vdrtctl2);
 
-		/*
-		 * Even if not found in scan, try the known address
-		 * The device might be hidden but still respond
-		 */
-		if (vid_did != 0x9CB68086) {
-			device_printf(dev, "Device not responding at known "
-			    "BDF, trying anyway...\n");
-			slot = 0x13;
-			func = 0;
-		}
-
-		/* Read current config state */
-		cmd = pci_cfgregread(domain, bus, slot, func, 0x04, 4);
-		vdrtctl0 = pci_cfgregread(domain, bus, slot, func, 0xA0, 4);
-		vdrtctl2 = pci_cfgregread(domain, bus, slot, func, 0xA8, 4);
-
-		device_printf(dev, "Direct PCI Config at 0:%d:%d:\n", slot, func);
-		device_printf(dev, "  CMD/STS:  0x%08x\n", cmd);
-		device_printf(dev, "  VDRTCTL0: 0x%08x\n", vdrtctl0);
-		device_printf(dev, "  VDRTCTL2: 0x%08x\n", vdrtctl2);
-
-		/*
-		 * Try to write PCI config to enable device
-		 * This uses CF8/CFC I/O port mechanism which
-		 * might work even for ACPI-hidden devices
-		 */
-		device_printf(dev, "Writing PCI config via CF8/CFC...\n");
-
-		/* Enable Memory + Bus Master */
-		cmd = 0x0006;
-		pci_cfgregwrite(domain, bus, slot, func, 0x04, cmd, 2);
-		DELAY(10000);
-
-		cmd = pci_cfgregread(domain, bus, slot, func, 0x04, 2);
-		device_printf(dev, "  CMD after write: 0x%04x\n", cmd);
-
-		/*
-		 * Full power-up sequence for Intel SST:
-		 * 1. Disable D3 power gating (VDRTCTL0 bits 8, 16)
-		 * 2. Clear SRAM power gate (VDRTCTL0 bits 0-7)
-		 * 3. Disable clock gating (VDRTCTL2)
-		 * 4. Wait for power-up
-		 */
-
-		/* Step 1: Read current VDRTCTL0 */
-		vdrtctl0 = pci_cfgregread(domain, bus, slot, func, 0xA0, 4);
-		device_printf(dev, "  VDRTCTL0 before: 0x%08x\n", vdrtctl0);
-
-		/* Step 2: Set D3SRAMPGD (bit 8) and D3PGD (bit 16) */
-		vdrtctl0 |= (1 << 8);   /* D3SRAMPGD */
-		vdrtctl0 |= (1 << 16);  /* D3PGD */
-		pci_cfgregwrite(domain, bus, slot, func, 0xA0, vdrtctl0, 4);
+		/* Clear DCLCGE (bit 1) to disable dynamic clock gating */
+		vdrtctl2 &= ~SST_VDRTCTL2_DCLCGE;
+		bus_write_4(sc->shim_res, SST_PCI_VDRTCTL2, vdrtctl2);
 		DELAY(50000);  /* 50ms */
 
-		/* Step 3: Clear DSRAMPGE bits 0-7 (power ON SRAM) */
-		vdrtctl0 = pci_cfgregread(domain, bus, slot, func, 0xA0, 4);
-		vdrtctl0 &= ~0xFF;
-		pci_cfgregwrite(domain, bus, slot, func, 0xA0, vdrtctl0, 4);
+		/*
+		 * Step 2: Set D0 power state via PMCS
+		 */
+		pmcs = bus_read_4(sc->shim_res, SST_PCI_PMCS);
+		device_printf(dev, "Step 2: PMCS before: 0x%08x (D%d)\n",
+		    pmcs, pmcs & SST_PMCS_PS_MASK);
+
+		if ((pmcs & SST_PMCS_PS_MASK) != SST_PMCS_PS_D0) {
+			pmcs = (pmcs & ~SST_PMCS_PS_MASK) | SST_PMCS_PS_D0;
+			bus_write_4(sc->shim_res, SST_PCI_PMCS, pmcs);
+			DELAY(100000);  /* 100ms for D3->D0 transition */
+			pmcs = bus_read_4(sc->shim_res, SST_PCI_PMCS);
+			device_printf(dev, "  PMCS after: 0x%08x (D%d)\n",
+			    pmcs, pmcs & SST_PMCS_PS_MASK);
+		}
+
+		/*
+		 * Step 3: Disable D3 power gating (WPT bits 0-1)
+		 */
+		vdrtctl0 = bus_read_4(sc->shim_res, SST_PCI_VDRTCTL0);
+		device_printf(dev, "Step 3: VDRTCTL0 before: 0x%08x\n", vdrtctl0);
+
+		/* Set D3PGD (bit 0) and D3SRAMPGD (bit 1) to disable D3 power gating */
+		vdrtctl0 |= SST_WPT_VDRTCTL0_D3PGD;      /* Bit 0 */
+		vdrtctl0 |= SST_WPT_VDRTCTL0_D3SRAMPGD;  /* Bit 1 */
+		bus_write_4(sc->shim_res, SST_PCI_VDRTCTL0, vdrtctl0);
+		DELAY(50000);  /* 50ms */
+
+		/*
+		 * Step 4: Power on ALL SRAM banks
+		 * CLEAR ISRAMPGE (bits 2-11) and DSRAMPGE (bits 12-19)
+		 * Setting these bits = power gate ENABLED = SRAM OFF
+		 * Clearing these bits = power gate DISABLED = SRAM ON
+		 */
+		vdrtctl0 = bus_read_4(sc->shim_res, SST_PCI_VDRTCTL0);
+		vdrtctl0 &= ~SST_WPT_VDRTCTL0_ISRAMPGE_MASK;  /* Clear bits 2-11 */
+		vdrtctl0 &= ~SST_WPT_VDRTCTL0_DSRAMPGE_MASK;  /* Clear bits 12-19 */
+		bus_write_4(sc->shim_res, SST_PCI_VDRTCTL0, vdrtctl0);
+		DELAY(60);  /* 60us per catpt driver */
+
+		vdrtctl0 = bus_read_4(sc->shim_res, SST_PCI_VDRTCTL0);
+		device_printf(dev, "Step 4: VDRTCTL0 after SRAM on: 0x%08x\n",
+		    vdrtctl0);
+
+		/*
+		 * Step 5: Enable Audio PLL (WPT: clear APLLSE bit 31 in VDRTCTL2)
+		 */
+		vdrtctl2 = bus_read_4(sc->shim_res, SST_PCI_VDRTCTL2);
+		device_printf(dev, "Step 5: VDRTCTL2 before PLL: 0x%08x\n", vdrtctl2);
+
+		if (vdrtctl2 & SST_VDRTCTL2_APLLSE_MASK) {
+			vdrtctl2 &= ~SST_VDRTCTL2_APLLSE_MASK;  /* Clear bit 31 */
+			bus_write_4(sc->shim_res, SST_PCI_VDRTCTL2, vdrtctl2);
+			DELAY(100000);  /* 100ms for PLL lock */
+		}
+
+		/*
+		 * Step 6: Also clear DTCGE (bit 10) for trunk clock
+		 */
+		vdrtctl2 = bus_read_4(sc->shim_res, SST_PCI_VDRTCTL2);
+		vdrtctl2 &= ~SST_VDRTCTL2_DTCGE;
+		bus_write_4(sc->shim_res, SST_PCI_VDRTCTL2, vdrtctl2);
 		DELAY(50000);
 
-		vdrtctl0 = pci_cfgregread(domain, bus, slot, func, 0xA0, 4);
-		device_printf(dev, "  VDRTCTL0 after:  0x%08x\n", vdrtctl0);
+		vdrtctl2 = bus_read_4(sc->shim_res, SST_PCI_VDRTCTL2);
+		device_printf(dev, "Step 6: VDRTCTL2 after: 0x%08x\n", vdrtctl2);
 
-		/* Step 4: Disable clock gating via VDRTCTL2 */
-		vdrtctl2 = pci_cfgregread(domain, bus, slot, func, 0xA8, 4);
-		device_printf(dev, "  VDRTCTL2 before: 0x%08x\n", vdrtctl2);
+		/*
+		 * Step 7: Re-enable clock gating (per catpt driver)
+		 */
+		vdrtctl2 |= SST_VDRTCTL2_DCLCGE;
+		bus_write_4(sc->shim_res, SST_PCI_VDRTCTL2, vdrtctl2);
 
-		/* Clear DCLCGE (bit 1) and DTCGE (bit 10) */
-		vdrtctl2 &= ~(1 << 1);   /* DCLCGE */
-		vdrtctl2 &= ~(1 << 10);  /* DTCGE */
-		/* Clear APLLSE (bit 31) to enable Audio PLL */
-		vdrtctl2 &= ~(1U << 31);
-
-		pci_cfgregwrite(domain, bus, slot, func, 0xA8, vdrtctl2, 4);
-		DELAY(100000);  /* 100ms for PLL lock */
-
-		vdrtctl2 = pci_cfgregread(domain, bus, slot, func, 0xA8, 4);
-		device_printf(dev, "  VDRTCTL2 after:  0x%08x\n", vdrtctl2);
-
-		/* Final state */
-		device_printf(dev, "Final PCI config state:\n");
-		device_printf(dev, "  CMD:      0x%08x\n",
-		    pci_cfgregread(domain, bus, slot, func, 0x04, 4));
+		/* Final state dump */
+		device_printf(dev, "=== Power-Up Complete ===\n");
 		device_printf(dev, "  VDRTCTL0: 0x%08x\n",
-		    pci_cfgregread(domain, bus, slot, func, 0xA0, 4));
+		    bus_read_4(sc->shim_res, SST_PCI_VDRTCTL0));
 		device_printf(dev, "  VDRTCTL2: 0x%08x\n",
-		    pci_cfgregread(domain, bus, slot, func, 0xA8, 4));
+		    bus_read_4(sc->shim_res, SST_PCI_VDRTCTL2));
+		device_printf(dev, "  PMCS:     0x%08x\n",
+		    bus_read_4(sc->shim_res, SST_PCI_PMCS));
 	}
 
 	/*
-	 * 2.1 Access PCI config space via BAR1 (memory-mapped PCI config)
-	 * BAR1 at 0xfe100000 is a mirror of the PCI configuration space.
-	 * pci_read_config() doesn't work for ACPI devices.
+	 * 2.1 Verify BAR1 is PCI config mirror and read diagnostic info
+	 * BAR1 at 0xfe100000 can be used to access PCI config space
+	 * Power-up was already done above with correct WPT sequence
 	 */
 	{
-		uint32_t cmd, vdrtctl0, pmcsr;
-		uint8_t cap_ptr;
-		int pm_offset = 0;
+		uint32_t cmd;
 
-		/* Dump PCI config space via BAR1 (shim_res) */
+		/* Dump PCI config space via BAR1 (shim_res) for diagnostics */
 		device_printf(dev, "PCI Config Space (via BAR1 mirror):\n");
 		device_printf(dev, "  DevID/VenID: 0x%08x\n",
 		    bus_read_4(sc->shim_res, 0x00));
@@ -563,217 +625,23 @@ sst_acpi_attach(device_t dev)
 		    bus_read_4(sc->shim_res, 0x10));
 		device_printf(dev, "  PCI BAR1:    0x%08x\n",
 		    bus_read_4(sc->shim_res, 0x14));
-		device_printf(dev, "  PCI BAR2:    0x%08x\n",
-		    bus_read_4(sc->shim_res, 0x18));
-		device_printf(dev, "  PCI BAR3:    0x%08x\n",
-		    bus_read_4(sc->shim_res, 0x1C));
-		device_printf(dev, "  PCI BAR4:    0x%08x\n",
-		    bus_read_4(sc->shim_res, 0x20));
-		device_printf(dev, "  PCI BAR5:    0x%08x\n",
-		    bus_read_4(sc->shim_res, 0x24));
-
-		/* Check LPE SHIM registers (if BAR1 is really SHIM) */
-		device_printf(dev, "Checking if BAR1 is LPE SHIM:\n");
-		device_printf(dev, "  CS1 (0x00):     0x%08x\n",
-		    bus_read_4(sc->shim_res, 0x00));
-		device_printf(dev, "  ISRX (0x18):    0x%08x\n",
-		    bus_read_4(sc->shim_res, 0x18));
-		device_printf(dev, "  ISRD (0x20):    0x%08x\n",
-		    bus_read_4(sc->shim_res, 0x20));
-		device_printf(dev, "  IMRX (0x28):    0x%08x\n",
-		    bus_read_4(sc->shim_res, 0x28));
-		device_printf(dev, "  IPCX (0x38):    0x%08x\n",
-		    bus_read_4(sc->shim_res, 0x38));
-		device_printf(dev, "  CLKCTL (0x78):  0x%08x\n",
-		    bus_read_4(sc->shim_res, 0x78));
-		device_printf(dev, "  CS2 (0x80):     0x%08x\n",
-		    bus_read_4(sc->shim_res, 0x80));
-
-		/* Find PM capability */
-		cap_ptr = bus_read_1(sc->shim_res, 0x34);
-		device_printf(dev, "  Cap Ptr:     0x%02x\n", cap_ptr);
-
-		while (cap_ptr >= 0x40 && cap_ptr != 0xFF) {
-			uint8_t cap_id = bus_read_1(sc->shim_res, cap_ptr);
-			device_printf(dev, "  Cap@0x%02x: ID=0x%02x\n",
-			    cap_ptr, cap_id);
-			if (cap_id == 0x01) {
-				pm_offset = cap_ptr;
-				break;
-			}
-			cap_ptr = bus_read_1(sc->shim_res, cap_ptr + 1);
-		}
-
-		if (pm_offset > 0) {
-			/* Read PMCSR (PM Control/Status) at offset +4 */
-			pmcsr = bus_read_4(sc->shim_res, pm_offset + 4);
-			device_printf(dev, "  PMCSR:       0x%08x (D%d)\n",
-			    pmcsr, pmcsr & 0x03);
-
-			/* Set power state to D0 if not already */
-			if ((pmcsr & 0x03) != 0) {
-				device_printf(dev,
-				    "Setting power state to D0...\n");
-				pmcsr &= ~0x03;  /* Clear D-state bits */
-				bus_write_4(sc->shim_res, pm_offset + 4, pmcsr);
-
-				/*
-				 * Wait 100ms for D3cold->D0 transition
-				 * PCI spec requires at least 10ms
-				 */
-				DELAY(100000);
-
-				pmcsr = bus_read_4(sc->shim_res, pm_offset + 4);
-				device_printf(dev,
-				    "  PMCSR after: 0x%08x (D%d)\n",
-				    pmcsr, pmcsr & 0x03);
-			}
-		}
-
-		/*
-		 * After D3->D0 transition, re-enable memory space
-		 * and bus mastering (may have been disabled in D3)
-		 * Use 16-bit write to Command register (offset 0x04)
-		 */
-		cmd = bus_read_4(sc->shim_res, 0x04);
-		device_printf(dev, "  Cmd after D0: 0x%08x\n", cmd);
 
 		/* Force enable Memory Space (bit 1) and Bus Master (bit 2) */
 		{
 			uint16_t cmd16 = bus_read_2(sc->shim_res, 0x04);
-			device_printf(dev, "  Cmd16 before: 0x%04x\n", cmd16);
-
 			if ((cmd16 & 0x06) != 0x06) {
-				cmd16 |= 0x06;  /* Memory Space + Bus Master */
+				device_printf(dev, "Enabling Memory + BusMaster...\n");
+				cmd16 |= 0x06;
 				bus_write_2(sc->shim_res, 0x04, cmd16);
-				DELAY(10000);  /* 10ms */
-
-				cmd16 = bus_read_2(sc->shim_res, 0x04);
-				device_printf(dev, "  Cmd16 after:  0x%04x\n",
-				    cmd16);
-			}
-
-			/* Verify full 32-bit read */
-			cmd = bus_read_4(sc->shim_res, 0x04);
-			device_printf(dev, "  Cmd enabled: 0x%08x\n", cmd);
-		}
-
-		/*
-		 * Now disable Intel-specific power gating via VDRTCTL0
-		 * This is at offset 0xA0 in PCI config space
-		 */
-		vdrtctl0 = bus_read_4(sc->shim_res, SST_PCI_VDRTCTL0);
-		device_printf(dev, "  VDRTCTL0:    0x%08x\n", vdrtctl0);
-
-		/*
-		 * Disable D3 power gating (catpt driver sequence):
-		 * Step 1: Set D3SRAMPGD bit 8 (disable D3 SRAM power gate)
-		 *         Set D3PGD bit 16 (disable D3 power gate)
-		 */
-		vdrtctl0 |= SST_VDRTCTL0_D3SRAMPGD;      /* Bit 8 */
-		vdrtctl0 |= SST_VDRTCTL0_D3PGD;          /* Bit 16 */
-		bus_write_4(sc->shim_res, SST_PCI_VDRTCTL0, vdrtctl0);
-		DELAY(10000);  /* 10ms */
-
-		/*
-		 * Step 2: CLEAR DSRAMPGE bits 0-7 to power up SRAM
-		 * DSRAMPGE = SRAM Power Gate Enable
-		 * Setting these bits ENABLES gating (powers OFF SRAM)
-		 * Clearing these bits DISABLES gating (powers ON SRAM)
-		 */
-		vdrtctl0 = bus_read_4(sc->shim_res, SST_PCI_VDRTCTL0);
-		vdrtctl0 &= ~SST_VDRTCTL0_DSRAMPGE_MASK;  /* Clear bits 0-7 */
-		bus_write_4(sc->shim_res, SST_PCI_VDRTCTL0, vdrtctl0);
-		device_printf(dev, "  VDRTCTL0 step2: 0x%08x\n", vdrtctl0);
-
-		/* Wait for DSP power up */
-		DELAY(100000);  /* 100ms */
-
-		/* Read power control after */
-		vdrtctl0 = bus_read_4(sc->shim_res, SST_PCI_VDRTCTL0);
-		device_printf(dev, "  VDRTCTL0 after: 0x%08x\n", vdrtctl0);
-
-		/* Read VDRTCTL2 for clock gating status */
-		{
-			uint32_t vdrtctl2 = bus_read_4(sc->shim_res,
-			    SST_PCI_VDRTCTL2);
-			device_printf(dev, "  VDRTCTL2:    0x%08x\n", vdrtctl2);
-
-			/*
-			 * Try disabling clock gating:
-			 * - Clear bit 1 (DCLCGE - Dynamic Clock Gating)
-			 * - Clear bit 10 (DTCGE - Trunk Clock Gating)
-			 */
-			if (vdrtctl2 & (SST_VDRTCTL2_DCLCGE |
-			    SST_VDRTCTL2_DTCGE)) {
-				device_printf(dev,
-				    "Disabling clock gating...\n");
-				vdrtctl2 &= ~SST_VDRTCTL2_DCLCGE;
-				vdrtctl2 &= ~SST_VDRTCTL2_DTCGE;
-				bus_write_4(sc->shim_res, SST_PCI_VDRTCTL2,
-				    vdrtctl2);
 				DELAY(10000);
-				device_printf(dev, "  VDRTCTL2 after: 0x%08x\n",
-				    bus_read_4(sc->shim_res, SST_PCI_VDRTCTL2));
+				device_printf(dev, "  Cmd after:  0x%04x\n",
+				    bus_read_2(sc->shim_res, 0x04));
 			}
 		}
 
-		/*
-		 * Enable Audio PLL and clocks
-		 * CLKCTL is at offset 0x78 in PCI config space (via BAR1)
-		 * The DSP requires clocks to be running before memory access
-		 */
-		{
-			uint32_t clkctl = bus_read_4(sc->shim_res, 0x78);
-			device_printf(dev, "  CLKCTL before: 0x%08x\n", clkctl);
-
-			/*
-			 * Set clock control:
-			 * Bit 18 (DCPLCG): Disable Clock Power Gating
-			 * Bits 24-25 (SMOS): Set to 0x3 for max frequency
-			 */
-			clkctl |= SST_CLKCTL_DCPLCG;  /* Bit 18 */
-			clkctl &= ~SST_CLKCTL_SMOS_MASK;
-			clkctl |= (0x3 << SST_CLKCTL_SMOS_SHIFT);
-
-			bus_write_4(sc->shim_res, 0x78, clkctl);
-			DELAY(10000);  /* 10ms */
-
-			clkctl = bus_read_4(sc->shim_res, 0x78);
-			device_printf(dev, "  CLKCTL after:  0x%08x\n", clkctl);
-		}
-
-		/*
-		 * Also check/set VDRTCTL2 bit 31 (APLLSE - Audio PLL Shutdown)
-		 * Clearing this bit enables the Audio PLL
-		 */
-		{
-			uint32_t vdrtctl2 = bus_read_4(sc->shim_res,
-			    SST_PCI_VDRTCTL2);
-			if (vdrtctl2 & SST_VDRTCTL2_APLLSE_MASK) {
-				device_printf(dev,
-				    "Enabling Audio PLL (clearing APLLSE)...\n");
-				vdrtctl2 &= ~SST_VDRTCTL2_APLLSE_MASK;
-				bus_write_4(sc->shim_res, SST_PCI_VDRTCTL2,
-				    vdrtctl2);
-				DELAY(50000);  /* 50ms for PLL lock */
-				device_printf(dev, "  VDRTCTL2 now: 0x%08x\n",
-				    bus_read_4(sc->shim_res, SST_PCI_VDRTCTL2));
-			}
-		}
-
-		/* Wait for everything to stabilize */
-		DELAY(100000);  /* 100ms */
-
-		/* Final command register check */
-		cmd = bus_read_4(sc->shim_res, 0x04);
-		device_printf(dev, "  Final Cmd:   0x%08x\n", cmd);
-
-		/* Verify BARs are valid */
+		/* Final BAR verification */
 		device_printf(dev, "  Final BAR0:  0x%08x\n",
 		    bus_read_4(sc->shim_res, 0x10));
-		device_printf(dev, "  Final BAR1:  0x%08x\n",
-		    bus_read_4(sc->shim_res, 0x14));
 	}
 
 	/*
