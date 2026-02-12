@@ -2689,39 +2689,10 @@ sst_pci_attach(device_t dev)
 		}
 	}
 
-	/* Force BARs to known-good addresses (0xFE000000)
-	 * The hardware or firmware might rely on these specific addresses
-	 * due to some internal decoding logic not exposed via standard PCI.
-	 */
-	{
-		device_printf(dev, "Forcing BARs to 0xFE000000/0xFE100000...\n");
-		
-		/* Disable MEM/BM decoding during update */
-		pci_write_config(dev, PCIR_COMMAND, 0, 2);
-		
-		/* Write BAR addresses */
-		pci_write_config(dev, PCIR_BAR(0), 0xFE000000, 4);
-		pci_write_config(dev, PCIR_BAR(1), 0xFE100000, 4);
-		
-		/* Re-enable MEM/BM */
-		pci_write_config(dev, PCIR_COMMAND, 
-		    PCIM_CMD_MEMEN | PCIM_CMD_BUSMASTEREN, 2);
-		
-		device_printf(dev, "BAR0 now: 0x%08x\n", pci_read_config(dev, PCIR_BAR(0), 4));
-	}
-
-	/* Allocate BAR0 (DSP Memory) at FIXED address */
+	/* Allocate BAR0 (DSP Memory) */
 	sc->mem_rid = PCIR_BAR(0);
-	sc->mem_res = bus_alloc_resource(dev, SYS_RES_MEMORY, &sc->mem_rid,
-	    0xFE000000, 0xFE0fffff, 0x100000, RF_ACTIVE); // Force specific range
-	
-	if (sc->mem_res == NULL) {
-		/* Fallback to any */
-		device_printf(dev, "Failed to alloc fixed BAR0, trying any...\n");
-		sc->mem_res = bus_alloc_resource_any(dev, SYS_RES_MEMORY,
-		    &sc->mem_rid, RF_ACTIVE);
-	}
-	
+	sc->mem_res = bus_alloc_resource_any(dev, SYS_RES_MEMORY,
+	    &sc->mem_rid, RF_ACTIVE);
 	if (sc->mem_res == NULL) {
 		device_printf(dev, "Failed to allocate BAR0 resource via PCI\n");
 		error = ENXIO;
@@ -2730,17 +2701,10 @@ sst_pci_attach(device_t dev)
 	device_printf(dev, "BAR0: 0x%lx (size: 0x%lx)\n",
 	    rman_get_start(sc->mem_res), rman_get_size(sc->mem_res));
 
-	/* Allocate BAR1 (PCI Config Mirror / Private) at FIXED address */
+	/* Allocate BAR1 (PCI Config Mirror / Private) */
 	sc->shim_rid = PCIR_BAR(1);
-	sc->shim_res = bus_alloc_resource(dev, SYS_RES_MEMORY, &sc->shim_rid,
-	    0xFE100000, 0xFE100fff, 0x1000, RF_ACTIVE); // Force specific range
-
-	if (sc->shim_res == NULL) {
-		device_printf(dev, "Failed to alloc fixed BAR1, trying any...\n");
-		sc->shim_res = bus_alloc_resource_any(dev, SYS_RES_MEMORY,
-		    &sc->shim_rid, RF_ACTIVE);
-	}
-
+	sc->shim_res = bus_alloc_resource_any(dev, SYS_RES_MEMORY,
+	    &sc->shim_rid, RF_ACTIVE);
 	if (sc->shim_res == NULL) {
 		device_printf(dev, "Failed to allocate BAR1 resource via PCI\n");
 		error = ENXIO;
@@ -2749,6 +2713,20 @@ sst_pci_attach(device_t dev)
 	device_printf(dev, "BAR1: 0x%lx (size: 0x%lx)\n",
 	    rman_get_start(sc->shim_res), rman_get_size(sc->shim_res));
 
+	/* DIAGNOSTIC: Scan BAR1 (LPSS Private) to find probable REMAP register
+	 * We look for registers that might control address decoding.
+	 */
+	device_printf(dev, "Scanning BAR1 (LPSS Private) for config registers:\n");
+	for (int offset = 0; offset < 0x200; offset += 16) {
+		device_printf(dev, "  [%03x]: %08x %08x %08x %08x\n",
+		    offset,
+		    bus_read_4(sc->shim_res, offset),
+		    bus_read_4(sc->shim_res, offset + 4),
+		    bus_read_4(sc->shim_res, offset + 8),
+		    bus_read_4(sc->shim_res, offset + 12));
+	}
+
+#if 0
 	/* CRITICAL FIX: Write BAR0 address to LPSS REMAP_ADDR (0x810) */
 	{
 		uint32_t bar0_addr = rman_get_start(sc->mem_res);
@@ -2757,6 +2735,7 @@ sst_pci_attach(device_t dev)
 		bus_write_4(sc->shim_res, 0x814, 0); 
 		DELAY(1000);
 	}
+#endif
 
 	/* WPT Power-Up Sequence */
 	sst_wpt_power_up(sc);
