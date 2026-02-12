@@ -226,11 +226,31 @@ sst_fw_parse(struct sst_softc *sc)
 	 * Check firmware format:
 	 * - Format < 256: Uses $MOD module headers
 	 * - Format >= 256: Raw binary (Haswell/Broadwell Windows driver FW)
+	 *
+	 * Some firmwares (like IntcSST2.bin) have format < 256 but use $SST
+	 * signatures for modules instead of $MOD. Fall back to raw loading.
 	 */
 	if (hdr->file_format >= 256) {
 		device_printf(sc->dev, "Using raw binary format (v%u)\n",
 			      hdr->file_format);
 		return sst_fw_load_raw(sc, ptr, remaining);
+	}
+
+	/* Check if first module has $MOD or $SST signature */
+	if (remaining >= 4) {
+		if (memcmp(ptr, SST_MOD_SIGNATURE, 4) != 0) {
+			/* Not $MOD - check if it's $SST (nested header) */
+			if (memcmp(ptr, SST_FW_SIGNATURE, 4) == 0) {
+				device_printf(sc->dev,
+				    "Firmware has nested $SST headers, using raw format\n");
+				return sst_fw_load_raw(sc, ptr, remaining);
+			}
+			/* Unknown signature - try raw anyway */
+			device_printf(sc->dev,
+			    "Unknown module signature: %.4s, trying raw format\n",
+			    (const char *)ptr);
+			return sst_fw_load_raw(sc, ptr, remaining);
+		}
 	}
 
 	/* Standard format with $MOD modules */

@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.24.1] - 2026-02-12
+
+### Fixed: Firmware Format Detection
+
+- **Fixed**: Firmware parser now handles IntcSST2.bin with `$SST` module signatures
+  - IntcSST2.bin has format=254 (< 256) but uses `$SST` for modules instead of `$MOD`
+  - Parser now detects nested `$SST` headers and falls back to raw binary loading
+  - Raw binary loading splits firmware: first half to IRAM, second half to DRAM
+
+---
+
 ## [0.24.0] - 2026-02-12
 
 ### Full DSP Initialization in PCI Mode
