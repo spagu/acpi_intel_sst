@@ -45,8 +45,9 @@
 /* Intel SST PCI IDs */
 #define PCI_VENDOR_INTEL	0x8086
 #define PCI_DEVICE_SST_BDW	0x9CB6
+#define PCI_DEVICE_SST_HSW	0x9C76 /* Haswell pending testing */
 
-#define SST_DRV_VERSION "0.8.0"
+#define SST_DRV_VERSION "0.9.0-PCI"
 
 /* Forward declarations */
 static int sst_acpi_probe(device_t dev);
@@ -54,6 +55,9 @@ static int sst_acpi_attach(device_t dev);
 static int sst_acpi_detach(device_t dev);
 static int sst_acpi_suspend(device_t dev);
 static int sst_acpi_resume(device_t dev);
+static int sst_pci_probe(device_t dev);
+static int sst_pci_attach(device_t dev);
+static int sst_pci_detach(device_t dev);
 static void sst_intr(void *arg);
 static void sst_reset(struct sst_softc *sc);
 static void sst_init(struct sst_softc *sc);
@@ -1817,6 +1821,17 @@ sst_acpi_probe(device_t dev)
 	return (rv);
 }
 
+static int
+sst_pci_probe(device_t dev)
+{
+	if (pci_get_vendor(dev) == PCI_VENDOR_INTEL &&
+	    pci_get_device(dev) == PCI_DEVICE_SST_BDW) {
+		device_set_desc(dev, "Intel Broadwell-U Audio DSP (PCI Mode)");
+		return (BUS_PROBE_DEFAULT);
+	}
+	return (ENXIO);
+}
+
 /* ================================================================
  * ACPI Attach - Main Driver Entry Point
  * ================================================================ */
@@ -2630,6 +2645,132 @@ fail:
 }
 
 /* ================================================================
+ * PCI Attach - Standard PCI Driver Entry Point
+ * Used when the device is visible on PCI bus (unhidden)
+ * ================================================================ */
+
+static int
+sst_pci_attach(device_t dev)
+{
+	struct sst_softc *sc;
+	uint32_t csr;
+	int error = 0;
+	bool bar0_ok;
+
+	sc = device_get_softc(dev);
+	sc->dev = dev;
+	sc->handle = NULL; /* Not using ACPI handle directly in PCI mode */
+	sc->mem_res = NULL;
+	sc->shim_res = NULL;
+	sc->irq_res = NULL;
+	sc->irq_cookie = NULL;
+	sc->attached = false;
+	sc->state = SST_STATE_NONE;
+
+	mtx_init(&sc->sc_mtx, "sst_sc", NULL, MTX_DEF);
+
+	device_printf(dev, "Intel SST Driver v%s (PCI Attach)\n", SST_DRV_VERSION);
+
+	/* Enable bus master */
+	pci_enable_busmaster(dev);
+
+	/* Allocate BAR0 (DSP Memory) */
+	sc->mem_rid = PCIR_BAR(0);
+	sc->mem_res = bus_alloc_resource_any(dev, SYS_RES_MEMORY,
+	    &sc->mem_rid, RF_ACTIVE);
+	if (sc->mem_res == NULL) {
+		device_printf(dev, "Failed to allocate BAR0 resource via PCI\n");
+		error = ENXIO;
+		goto fail;
+	}
+	device_printf(dev, "BAR0: 0x%lx (size: 0x%lx)\n",
+	    rman_get_start(sc->mem_res), rman_get_size(sc->mem_res));
+
+	/* Allocate BAR1 (PCI Config Mirror / Private) */
+	sc->shim_rid = PCIR_BAR(1);
+	sc->shim_res = bus_alloc_resource_any(dev, SYS_RES_MEMORY,
+	    &sc->shim_rid, RF_ACTIVE);
+	if (sc->shim_res == NULL) {
+		device_printf(dev, "Failed to allocate BAR1 resource via PCI\n");
+		error = ENXIO;
+		goto fail;
+	}
+	device_printf(dev, "BAR1: 0x%lx (size: 0x%lx)\n",
+	    rman_get_start(sc->shim_res), rman_get_size(sc->shim_res));
+
+	/* WPT Power-Up Sequence */
+	sst_wpt_power_up(sc);
+
+	/* Test BAR0 */
+	bar0_ok = sst_test_bar0(sc);
+	device_printf(dev, "BAR0 test: %s\n",
+	    bar0_ok ? "ACCESSIBLE" : "DEAD (0xFFFFFFFF)");
+
+	/* Allocate IRQ */
+	sc->irq_rid = 0;
+	sc->irq_res = bus_alloc_resource_any(dev, SYS_RES_IRQ,
+	    &sc->irq_rid, RF_SHAREABLE | RF_ACTIVE);
+	if (sc->irq_res == NULL) {
+		device_printf(dev, "Failed to allocate IRQ\n");
+		/* Don't fail yet, maybe we can run without IRQ for init test */
+	} else {
+		device_printf(dev, "IRQ assigned\n");
+	}
+
+	if (bar0_ok) {
+		/* Probe DSP memory regions */
+		device_printf(dev, "DSP Memory Layout (PCI):\n");
+		device_printf(dev, "  IRAM  (0x%05x): 0x%08x\n",
+		    SST_IRAM_OFFSET,
+		    bus_read_4(sc->mem_res, SST_IRAM_OFFSET));
+		device_printf(dev, "  DRAM  (0x%05x): 0x%08x\n",
+		    SST_DRAM_OFFSET,
+		    bus_read_4(sc->mem_res, SST_DRAM_OFFSET));
+		device_printf(dev, "  SHIM  (0x%05x): 0x%08x\n",
+		    SST_SHIM_OFFSET,
+		    bus_read_4(sc->mem_res, SST_SHIM_OFFSET));
+
+		/* Init DSP */
+		sst_init(sc);
+		sc->attached = true;
+	} else {
+		device_printf(dev, "PCI Attach: BAR0 still dead. Hardware is tough.\n");
+		/* Don't fail, keepattached to allow inspection */
+		sc->attached = true;
+	}
+
+	return (0);
+
+fail:
+	if (sc->irq_res)
+		bus_release_resource(dev, SYS_RES_IRQ, sc->irq_rid, sc->irq_res);
+	if (sc->shim_res)
+		bus_release_resource(dev, SYS_RES_MEMORY, sc->shim_rid, sc->shim_res);
+	if (sc->mem_res)
+		bus_release_resource(dev, SYS_RES_MEMORY, sc->mem_rid, sc->mem_res);
+	mtx_destroy(&sc->sc_mtx);
+	return (error);
+}
+
+static int
+sst_pci_detach(device_t dev)
+{
+	struct sst_softc *sc = device_get_softc(dev);
+
+	if (sc->irq_cookie)
+		bus_teardown_intr(dev, sc->irq_res, sc->irq_cookie);
+	if (sc->irq_res)
+		bus_release_resource(dev, SYS_RES_IRQ, sc->irq_rid, sc->irq_res);
+	if (sc->shim_res)
+		bus_release_resource(dev, SYS_RES_MEMORY, sc->shim_rid, sc->shim_res);
+	if (sc->mem_res)
+		bus_release_resource(dev, SYS_RES_MEMORY, sc->mem_rid, sc->mem_res);
+	mtx_destroy(&sc->sc_mtx);
+
+	return (0);
+}
+
+/* ================================================================
  * ACPI Detach
  * ================================================================ */
 
@@ -2729,7 +2870,9 @@ sst_acpi_resume(device_t dev)
  * Driver Registration
  * ================================================================ */
 
+
 static device_method_t sst_methods[] = {
+	/* ACPI probe/attach */
 	DEVMETHOD(device_probe,		sst_acpi_probe),
 	DEVMETHOD(device_attach,	sst_acpi_attach),
 	DEVMETHOD(device_detach,	sst_acpi_detach),
@@ -2744,7 +2887,27 @@ static driver_t sst_driver = {
 	sizeof(struct sst_softc),
 };
 
+static device_method_t sst_pci_methods[] = {
+	/* PCI probe/attach */
+	DEVMETHOD(device_probe,		sst_pci_probe),
+	DEVMETHOD(device_attach,	sst_pci_attach),
+	DEVMETHOD(device_detach,	sst_pci_detach),
+	DEVMETHOD(device_suspend,	sst_acpi_suspend), /* Re-use */
+	DEVMETHOD(device_resume,	sst_acpi_resume),
+	DEVMETHOD_END
+};
+
+static driver_t sst_pci_driver = {
+	"acpi_intel_sst", /* Same name to share code */
+	sst_pci_methods,
+	sizeof(struct sst_softc),
+};
+
+/* Register both ACPI and PCI drivers */
 DRIVER_MODULE(acpi_intel_sst, acpi, sst_driver, 0, 0);
+DRIVER_MODULE(sst_pci, pci, sst_pci_driver, 0, 0);
 MODULE_DEPEND(acpi_intel_sst, acpi, 1, 1, 1);
+MODULE_DEPEND(acpi_intel_sst, pci, 1, 1, 1);
 MODULE_DEPEND(acpi_intel_sst, firmware, 1, 1, 1);
-MODULE_VERSION(acpi_intel_sst, 7);
+MODULE_VERSION(acpi_intel_sst, 8);
+
