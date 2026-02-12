@@ -71,6 +71,7 @@ static int sst_wpt_power_up(struct sst_softc *sc);
 static bool sst_test_bar0(struct sst_softc *sc);
 static int sst_enable_sram(struct sst_softc *sc);
 static int sst_enable_sram_direct(device_t dev);
+static int sst_check_sram_immediate(const char *checkpoint);
 static int sst_try_enable_hda(struct sst_softc *sc);
 static int sst_try_enable_adsp(struct sst_softc *sc) __unused;
 static void sst_probe_i2c_codec(struct sst_softc *sc);
