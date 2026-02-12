@@ -504,6 +504,107 @@ sst_acpi_attach(device_t dev)
 	}
 
 	/*
+	 * CRITICAL: Call ACPI power resource to enable audio!
+	 * The DSDT has a PAUD PowerResource that controls GPIO 0x4C (76)
+	 * which enables the audio memory decoder.
+	 *
+	 * Method 1: Try calling \_SB.PCI0.PAUD._ON directly
+	 * Method 2: Try toggling GPIO 76 directly via I/O ports
+	 */
+	{
+		ACPI_STATUS status;
+		ACPI_HANDLE paud_handle;
+		ACPI_OBJECT_LIST arg_list;
+		arg_list.Count = 0;
+		arg_list.Pointer = NULL;
+
+		device_printf(dev, "=== ACPI Power Resource Activation ===\n");
+
+		/* Try to find and call PAUD._ON */
+		status = AcpiGetHandle(NULL, "\\_SB.PCI0.PAUD", &paud_handle);
+		if (ACPI_SUCCESS(status)) {
+			device_printf(dev, "  Found PAUD power resource\n");
+
+			/* Try calling _ON method */
+			status = AcpiEvaluateObject(paud_handle, "_ON", &arg_list, NULL);
+			if (ACPI_SUCCESS(status)) {
+				device_printf(dev, "  PAUD._ON called successfully!\n");
+			} else {
+				device_printf(dev, "  PAUD._ON failed: 0x%x\n", status);
+			}
+
+			/* Check _STA */
+			ACPI_BUFFER sta_buf;
+			ACPI_OBJECT sta_obj;
+			sta_buf.Length = sizeof(sta_obj);
+			sta_buf.Pointer = &sta_obj;
+			status = AcpiEvaluateObject(paud_handle, "_STA", NULL, &sta_buf);
+			if (ACPI_SUCCESS(status) && sta_obj.Type == ACPI_TYPE_INTEGER) {
+				device_printf(dev, "  PAUD._STA: %llu\n",
+				    (unsigned long long)sta_obj.Integer.Value);
+			}
+		} else {
+			device_printf(dev, "  PAUD not found (0x%x), trying GPIO directly\n",
+			    status);
+		}
+
+		/*
+		 * Method 2: Direct GPIO access
+		 * GPIO base = GPBA << 7 = 0x1C00 << 7 = 0xE0000 (SystemIO)
+		 * GPIO 76 register = base + 0x100 + (76 * 8) = base + 0x360
+		 * Bit 31 = output value
+		 *
+		 * Actually, for Lynx/Wildcat Point, GPIO base is typically
+		 * around 0x800 from LPC config space register 0x48
+		 */
+		device_printf(dev, "  Trying direct GPIO 76 toggle...\n");
+		{
+			/* Read GPIO base from LPC Bridge (bus 0, dev 31, func 0) */
+			uint32_t gpio_base_reg = pci_cfgregread(0, 31, 0, 0x48, 4);
+			uint32_t gpio_base = gpio_base_reg & 0xFF80; /* Bits 15:7 */
+			uint32_t gpio76_reg = gpio_base + 0x100 + (76 * 8);
+
+			device_printf(dev, "  LPC GPIO_BASE reg [0x48]: 0x%08x\n", gpio_base_reg);
+			device_printf(dev, "  GPIO base: 0x%x\n", gpio_base);
+			device_printf(dev, "  GPIO 76 register: 0x%x\n", gpio76_reg);
+
+			if (gpio_base != 0 && gpio_base != 0xFF80) {
+				/* Read current GPIO 76 value */
+				uint32_t gpio_val = inl(gpio76_reg);
+				device_printf(dev, "  GPIO 76 current: 0x%08x (bit31=%d)\n",
+				    gpio_val, (gpio_val >> 31) & 1);
+
+				/* Set bit 31 (output high) to enable audio */
+				gpio_val |= 0x80000000;
+				outl(gpio76_reg, gpio_val);
+				DELAY(10000);
+
+				/* Verify */
+				gpio_val = inl(gpio76_reg);
+				device_printf(dev, "  GPIO 76 after set: 0x%08x (bit31=%d)\n",
+				    gpio_val, (gpio_val >> 31) & 1);
+			} else {
+				device_printf(dev, "  Invalid GPIO base, skipping\n");
+			}
+		}
+
+		/* Test BAR0 after GPIO toggle */
+		device_printf(dev, "  Testing BAR0 after power-up...\n");
+		{
+			bus_space_tag_t mem_tag = X86_BUS_SPACE_MEM;
+			bus_space_handle_t test_handle;
+
+			if (bus_space_map(mem_tag, 0xfe000000, 0x1000, 0,
+			    &test_handle) == 0) {
+				uint32_t test_val = bus_space_read_4(mem_tag, test_handle, 0);
+				device_printf(dev, "  BAR0[0]: 0x%08x%s\n", test_val,
+				    test_val != 0xFFFFFFFF ? " <-- ENABLED!" : " (still disabled)");
+				bus_space_unmap(mem_tag, test_handle, 0x1000);
+			}
+		}
+	}
+
+	/*
 	 * WPT (Wildcat Point = Broadwell-U) Power-Up Sequence
 	 * Based on Linux catpt driver dsp.c:catpt_dsp_power_up()
 	 *
@@ -1008,6 +1109,73 @@ sst_acpi_attach(device_t dev)
 				device_printf(dev, "  BAR0[0] now: 0x%08x%s\n", scan_val,
 				    scan_val != 0xFFFFFFFF ? " <-- CHANGED!" : "");
 				bus_space_unmap(mem_tag, scan_handle, 0x1000);
+			}
+
+			/*
+			 * Check PCH RCBA (Root Complex Base Address)
+			 * RCBA is typically at 0xFED1C000 for Broadwell/WPT
+			 * FD2 (Function Disable 2) at RCBA+0x3428 has ADSPD bit
+			 */
+			device_printf(dev, "=== PCH RCBA SCAN ===\n");
+			{
+				bus_space_handle_t rcba_handle;
+				uint64_t rcba_base = 0xFED1C000;
+
+				if (bus_space_map(mem_tag, rcba_base, 0x4000, 0,
+				    &rcba_handle) == 0) {
+					uint32_t fd, fd2, fd3;
+
+					/* FD at RCBA+0x3418, FD2 at RCBA+0x3428 */
+					fd = bus_space_read_4(mem_tag, rcba_handle, 0x3418);
+					fd2 = bus_space_read_4(mem_tag, rcba_handle, 0x3428);
+					fd3 = bus_space_read_4(mem_tag, rcba_handle, 0x342C);
+
+					device_printf(dev, "  RCBA base: 0x%llx\n",
+					    (unsigned long long)rcba_base);
+					device_printf(dev, "  FD  [0x3418]: 0x%08x\n", fd);
+					device_printf(dev, "  FD2 [0x3428]: 0x%08x (ADSPD=bit 1)\n", fd2);
+					device_printf(dev, "  FD3 [0x342C]: 0x%08x\n", fd3);
+
+					/* Check if ADSPD (bit 1) is set in FD2 */
+					if (fd2 & 0x02) {
+						device_printf(dev, "  ADSPD bit SET - DSP is DISABLED!\n");
+						device_printf(dev, "  Trying to clear ADSPD...\n");
+						bus_space_write_4(mem_tag, rcba_handle, 0x3428,
+						    fd2 & ~0x02);
+						DELAY(10000);
+						uint32_t fd2_new = bus_space_read_4(mem_tag,
+						    rcba_handle, 0x3428);
+						device_printf(dev, "  FD2 after clear: 0x%08x\n", fd2_new);
+
+						/* Test BAR0 again */
+						if (bus_space_map(mem_tag, 0xfe000000, 0x1000, 0,
+						    &scan_handle) == 0) {
+							scan_val = bus_space_read_4(mem_tag, scan_handle, 0);
+							device_printf(dev, "  BAR0[0] now: 0x%08x%s\n",
+							    scan_val,
+							    scan_val != 0xFFFFFFFF ? " <-- ENABLED!" : "");
+							bus_space_unmap(mem_tag, scan_handle, 0x1000);
+						}
+					} else {
+						device_printf(dev, "  ADSPD bit clear - DSP should be enabled\n");
+					}
+
+					/* Dump other potentially relevant RCBA registers */
+					device_printf(dev, "  Other RCBA regs:\n");
+					device_printf(dev, "    [0x2030] LPSS: 0x%08x\n",
+					    bus_space_read_4(mem_tag, rcba_handle, 0x2030));
+					device_printf(dev, "    [0x2034]: 0x%08x\n",
+					    bus_space_read_4(mem_tag, rcba_handle, 0x2034));
+					device_printf(dev, "    [0x3410] CG: 0x%08x\n",
+					    bus_space_read_4(mem_tag, rcba_handle, 0x3410));
+					device_printf(dev, "    [0x3414]: 0x%08x\n",
+					    bus_space_read_4(mem_tag, rcba_handle, 0x3414));
+
+					bus_space_unmap(mem_tag, rcba_handle, 0x4000);
+				} else {
+					device_printf(dev, "  Failed to map RCBA at 0x%llx\n",
+					    (unsigned long long)rcba_base);
+				}
 			}
 			}  /* End test block scope */
 		}
