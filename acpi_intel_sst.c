@@ -2726,16 +2726,26 @@ sst_pci_attach(device_t dev)
 		    bus_read_4(sc->shim_res, offset + 12));
 	}
 
-#if 0
-	/* CRITICAL FIX: Write BAR0 address to LPSS REMAP_ADDR (0x810) */
+	/* EXPERIMENTAL: Force Enable APLL in VDRTCTL2
+	 * BAR0 might be dead because the DSP clock is not running.
+	 * VDRTCTL2 [0xA8] controls the clock. Bit 12 is often APLL Select.
+	 */
 	{
-		uint32_t bar0_addr = rman_get_start(sc->mem_res);
-		device_printf(dev, "Setting LPSS REMAP_ADDR to 0x%08x\n", bar0_addr);
-		bus_write_4(sc->shim_res, 0x810, bar0_addr);
-		bus_write_4(sc->shim_res, 0x814, 0); 
+		uint32_t val;
+		device_printf(dev, "Attempting to enable APLL in VDRTCTL2 (0xA8)...\n");
+		val = bus_read_4(sc->shim_res, SST_WPT_VDRTCTL2);
+		device_printf(dev, "  VDRTCTL2 before: 0x%08x\n", val);
+		
+		val |= (1 << 12); // Set bit 12
+		val &= ~0xFFF;    // Clear frequency bits (try default/safe?) - optional, acts as reset
+		val |= 0xBFF;     // Restore default freq (from logs)
+		
+		bus_write_4(sc->shim_res, SST_WPT_VDRTCTL2, val);
 		DELAY(1000);
+		
+		val = bus_read_4(sc->shim_res, SST_WPT_VDRTCTL2);
+		device_printf(dev, "  VDRTCTL2 after:  0x%08x\n", val);
 	}
-#endif
 
 	/* WPT Power-Up Sequence */
 	sst_wpt_power_up(sc);
