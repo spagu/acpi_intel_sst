@@ -113,17 +113,20 @@ Step 2: PMCS before: 0x0000000b (D3)
 | LPT (Haswell) | Bit 1 | Bit 2 | Bits 6-9 | Bits 16-23 |
 | WPT (Broadwell) | Bit 0 | Bit 1 | Bits 2-11 | Bits 12-19 |
 
-Successfully configured:
+**CORRECTED** - Should be configured as:
 ```
 Step 3: VDRTCTL0 before: 0x00000001
-Step 4: VDRTCTL0 after SRAM on: 0x00000003
+Step 4: VDRTCTL0 after SRAM on: 0x000FFFFF
 ```
 
-Value 0x00000003 means:
-- Bit 0 = 1: D3PGD (D3 Power Gate Disabled)
-- Bit 1 = 1: D3SRAMPGD (D3 SRAM Power Gate Disabled)
-- Bits 2-11 = 0: ISRAMPGE cleared (IRAM powered ON)
-- Bits 12-19 = 0: DSRAMPGE cleared (DRAM powered ON)
+Value 0x000FFFFF means:
+- Bit 0 = 1: D3PGD (D3 Power Gate Disabled = DSP powered)
+- Bit 1 = 1: D3SRAMPGD (D3 SRAM Power Gate Disabled = SRAM powered)
+- Bits 2-11 = 0x3FF: ISRAMPGE SET (all 10 IRAM blocks powered ON)
+- Bits 12-19 = 0xFF: DSRAMPGE SET (all 8 DRAM blocks powered ON)
+
+**BUG FOUND**: Original code was CLEARING ISRAMPGE/DSRAMPGE (value 0x00000003),
+which powered OFF the SRAM! Per Linux catpt driver, these bits must be SET.
 
 #### 4.1.3 VDRTCTL2 (Clock Gating Control)
 
@@ -728,9 +731,9 @@ vdrtctl0 |= SST_WPT_VDRTCTL0_D3PGD;      /* Bit 0 */
 vdrtctl0 |= SST_WPT_VDRTCTL0_D3SRAMPGD;  /* Bit 1 */
 bus_write_4(sc->shim_res, SST_PCI_VDRTCTL0, vdrtctl0);
 
-/* Step 4: Power on ALL SRAM banks (clear bits) */
-vdrtctl0 &= ~SST_WPT_VDRTCTL0_ISRAMPGE_MASK;  /* Clear bits 2-11 */
-vdrtctl0 &= ~SST_WPT_VDRTCTL0_DSRAMPGE_MASK;  /* Clear bits 12-19 */
+/* Step 4: Power on ALL SRAM banks (SET bits per Linux catpt driver) */
+vdrtctl0 |= SST_WPT_VDRTCTL0_ISRAMPGE_MASK;  /* Set bits 2-11: all IRAM ON */
+vdrtctl0 |= SST_WPT_VDRTCTL0_DSRAMPGE_MASK;  /* Set bits 12-19: all DRAM ON */
 bus_write_4(sc->shim_res, SST_PCI_VDRTCTL0, vdrtctl0);
 
 /* Step 5: Enable Audio PLL (clear APLLSE bit 31) */

@@ -48,11 +48,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - This change is required for SST audio to work on Dell XPS 13 9343
 
 ### Fixed
+- **Critical: SRAM power gate logic was inverted** - ISRAMPGE/DSRAMPGE bits must be SET, not CLEARED
+  - Linux catpt driver sets ISRAMPGE_MASK | DSRAMPGE_MASK to power ON SRAM
+  - Our code was clearing these bits, which powered OFF the SRAM
+  - This caused BAR0 (DSP memory) to return 0xFFFFFFFF
+  - VDRTCTL0 should be 0x000FFFFF (all SRAM enabled), not 0x00000003
 - **Critical: WPT (Broadwell-U) power-up sequence** - VDRTCTL0 register bits were using LPT (Haswell) positions
   - WPT uses bits 0-1 for D3PGD/D3SRAMPGD (not bits 8/16 like LPT)
   - WPT uses bits 2-11 for ISRAMPGE, bits 12-19 for DSRAMPGE
   - WPT places APLLSE at VDRTCTL2 bit 31 (not VDRTCTL0 bit 0 like LPT)
-  - This was causing BAR0 memory to return 0xFFFFFFFF
 
 ### Added
 - **ACPI `_INI` method call** - calls ACPI initialization method during device attach

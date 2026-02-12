@@ -565,13 +565,14 @@ sst_acpi_attach(device_t dev)
 
 		/*
 		 * Step 4: Power on ALL SRAM banks
-		 * CLEAR ISRAMPGE (bits 2-11) and DSRAMPGE (bits 12-19)
-		 * Setting these bits = power gate ENABLED = SRAM OFF
-		 * Clearing these bits = power gate DISABLED = SRAM ON
+		 * SET ISRAMPGE (bits 2-11) and DSRAMPGE (bits 12-19)
+		 * Per Linux catpt driver: setting these bits = SRAM powered ON
+		 * ISRAMPGE = 10 bits for 10 IRAM blocks (bits 2-11)
+		 * DSRAMPGE = 8 bits for 8 DRAM blocks (bits 12-19)
 		 */
 		vdrtctl0 = bus_read_4(sc->shim_res, SST_PCI_VDRTCTL0);
-		vdrtctl0 &= ~SST_WPT_VDRTCTL0_ISRAMPGE_MASK;  /* Clear bits 2-11 */
-		vdrtctl0 &= ~SST_WPT_VDRTCTL0_DSRAMPGE_MASK;  /* Clear bits 12-19 */
+		vdrtctl0 |= SST_WPT_VDRTCTL0_ISRAMPGE_MASK;  /* Set bits 2-11 */
+		vdrtctl0 |= SST_WPT_VDRTCTL0_DSRAMPGE_MASK;  /* Set bits 12-19 */
 		bus_write_4(sc->shim_res, SST_PCI_VDRTCTL0, vdrtctl0);
 		DELAY(60);  /* 60us per catpt driver */
 
