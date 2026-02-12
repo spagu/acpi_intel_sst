@@ -173,34 +173,53 @@ sst_ipc_recv(struct sst_softc *sc, uint32_t *header, void *data, size_t *size)
 
 /*
  * Poll IPC registers for DSP ready (used when IRQ unavailable)
+ *
+ * IPC protocol:
+ *   IPCX (Host->DSP): Host sets BUSY to send, DSP clears BUSY when done
+ *   IPCD (DSP->Host): DSP sets BUSY to send notification/ready, Host acknowledges
+ *
+ * DSP signals ready by setting BUSY bit in IPCD (not DONE).
  */
 static int
 sst_ipc_poll_ready(struct sst_softc *sc)
 {
 	uint32_t ipcd, ipcx;
 
-	/* Check for IPC reply (DONE from DSP) */
+	/* Check for message from DSP (BUSY in IPCD = DSP sent message to Host) */
 	ipcd = sst_shim_read(sc, SST_SHIM_IPCD);
-	if (ipcd & SST_IPC_DONE) {
-		/* Clear DONE bit */
-		sst_shim_write(sc, SST_SHIM_IPCD, ipcd & ~SST_IPC_DONE);
+	if (ipcd & SST_IPC_BUSY) {
+		/* Acknowledge: clear BUSY, set DONE */
+		sst_shim_write(sc, SST_SHIM_IPCD,
+			       (ipcd & ~SST_IPC_BUSY) | SST_IPC_DONE);
 
-		/* First message after boot is "ready" */
+		/* First message after boot is "ready" notification */
 		if (!sc->ipc.ready) {
 			sc->ipc.ready = true;
-			device_printf(sc->dev, "DSP signaled ready (polled)\n");
+			device_printf(sc->dev,
+			    "DSP signaled ready (polled): IPCD=0x%08x\n", ipcd);
+		} else {
+			device_printf(sc->dev,
+			    "IPC: DSP notification (polled): 0x%08x\n", ipcd);
 		}
 		sc->ipc.msg.reply = ipcd;
 		sc->ipc.state = SST_IPC_STATE_DONE;
 		return (1);
 	}
 
-	/* Check for IPC message from DSP */
+	/* Check for IPC reply completion (DONE in IPCD = DSP finished our request) */
+	if (ipcd & SST_IPC_DONE) {
+		/* Clear DONE bit */
+		sst_shim_write(sc, SST_SHIM_IPCD, ipcd & ~SST_IPC_DONE);
+		device_printf(sc->dev, "IPC: Reply done (polled): 0x%08x\n", ipcd);
+		sc->ipc.msg.reply = ipcd;
+		sc->ipc.state = SST_IPC_STATE_DONE;
+		return (1);
+	}
+
+	/* Check for our outgoing message being processed (BUSY cleared in IPCX) */
 	ipcx = sst_shim_read(sc, SST_SHIM_IPCX);
-	if (ipcx & SST_IPC_BUSY) {
-		/* Clear BUSY bit to acknowledge */
-		sst_shim_write(sc, SST_SHIM_IPCX, ipcx & ~SST_IPC_BUSY);
-		device_printf(sc->dev, "IPC: DSP message (polled): 0x%08x\n", ipcx);
+	if ((sc->ipc.state == SST_IPC_STATE_PENDING) && !(ipcx & SST_IPC_BUSY)) {
+		device_printf(sc->dev, "IPC: Command accepted: IPCX=0x%08x\n", ipcx);
 		return (1);
 	}
 
@@ -272,6 +291,10 @@ sst_ipc_wait_ready(struct sst_softc *sc, int timeout_ms)
 /*
  * IPC interrupt handler
  * Called from main interrupt handler
+ *
+ * IPC protocol:
+ *   IPCD (DSP->Host): DSP sets BUSY to send notification, Host clears BUSY + sets DONE
+ *   IPCX (Host->DSP): DSP sets DONE when our command completes
  */
 void
 sst_ipc_intr(struct sst_softc *sc)
@@ -280,20 +303,40 @@ sst_ipc_intr(struct sst_softc *sc)
 
 	/* Read interrupt status */
 	isr = sst_shim_read(sc, SST_SHIM_ISRX);
-
-	/* Check for IPC reply (DONE from DSP) */
 	ipcd = sst_shim_read(sc, SST_SHIM_IPCD);
+	ipcx = sst_shim_read(sc, SST_SHIM_IPCX);
+
+	/* Check for notification from DSP (BUSY in IPCD) */
+	if (ipcd & SST_IPC_BUSY) {
+		/* Acknowledge: clear BUSY, set DONE */
+		sst_shim_write(sc, SST_SHIM_IPCD,
+			       (ipcd & ~SST_IPC_BUSY) | SST_IPC_DONE);
+
+		mtx_lock(&sc->ipc.lock);
+
+		/* First message after boot is "ready" notification */
+		if (!sc->ipc.ready) {
+			sc->ipc.ready = true;
+			device_printf(sc->dev, "DSP signaled ready: IPCD=0x%08x\n",
+				      ipcd);
+		} else {
+			device_printf(sc->dev, "IPC: DSP notification: 0x%08x\n",
+				      ipcd);
+		}
+
+		/* Store reply and wake up waiter */
+		sc->ipc.msg.reply = ipcd;
+		cv_signal(&sc->ipc.wait_cv);
+
+		mtx_unlock(&sc->ipc.lock);
+	}
+
+	/* Check for reply completion (DONE in IPCD - DSP finished our command) */
 	if (ipcd & SST_IPC_DONE) {
 		/* Clear DONE bit */
 		sst_shim_write(sc, SST_SHIM_IPCD, ipcd & ~SST_IPC_DONE);
 
 		mtx_lock(&sc->ipc.lock);
-
-		/* First message after boot is "ready" */
-		if (!sc->ipc.ready) {
-			sc->ipc.ready = true;
-			device_printf(sc->dev, "DSP signaled ready\n");
-		}
 
 		/* Store reply and wake up sender */
 		sc->ipc.msg.reply = ipcd;
@@ -301,17 +344,6 @@ sst_ipc_intr(struct sst_softc *sc)
 		cv_signal(&sc->ipc.wait_cv);
 
 		mtx_unlock(&sc->ipc.lock);
-	}
-
-	/* Check for IPC message from DSP */
-	ipcx = sst_shim_read(sc, SST_SHIM_IPCX);
-	if (ipcx & SST_IPC_BUSY) {
-		/* Clear BUSY bit to acknowledge */
-		sst_shim_write(sc, SST_SHIM_IPCX, ipcx & ~SST_IPC_BUSY);
-
-		/* Handle unsolicited messages from DSP */
-		device_printf(sc->dev, "IPC: DSP message received: 0x%08x\n",
-			      ipcx);
 	}
 
 	/* Clear interrupt status */

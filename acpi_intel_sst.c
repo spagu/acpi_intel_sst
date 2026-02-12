@@ -50,7 +50,7 @@
 #define PCI_DEVICE_SST_BDW	0x9CB6
 #define PCI_DEVICE_SST_HSW	0x9C76 /* Haswell pending testing */
 
-#define SST_DRV_VERSION "0.26.0-SHIM-0xE7000"
+#define SST_DRV_VERSION "0.27.0-IPC-BUSY-fix"
 
 /* Forward declarations */
 static int sst_acpi_probe(device_t dev);

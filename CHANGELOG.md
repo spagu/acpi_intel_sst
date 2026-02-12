@@ -5,6 +5,47 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.27.0] - 2026-02-12
+
+### CRITICAL FIX: IPC Protocol - Check BUSY bit for DSP Ready Detection
+
+- **Root Cause Found**: IPC ready detection was checking the wrong bit!
+  - Code was checking `SST_IPC_DONE` (bit 30) in IPCD
+  - DSP signals ready by setting `SST_IPC_BUSY` (bit 31) in IPCD
+  - IPCD=0x84200209 showed BUSY=1 (bit 31 set), but code missed it
+
+- **IPC Protocol Clarification**:
+  - **IPCD** (DSP->Host): DSP sets **BUSY** to send notification/message to Host
+  - **IPCX** (Host->DSP): Host sets **BUSY** to send command to DSP
+  - To acknowledge DSP message: clear BUSY, set DONE in IPCD
+
+- **Fix Applied to `sst_ipc.c`**:
+  - `sst_ipc_poll_ready()`: Now checks BUSY in IPCD first (DSP message detection)
+  - `sst_ipc_intr()`: Fixed interrupt handler to check BUSY before DONE
+  - Proper acknowledgment: `(ipcd & ~SST_IPC_BUSY) | SST_IPC_DONE`
+
+- **Code Change**:
+  ```c
+  /* BEFORE (wrong): */
+  if (ipcd & SST_IPC_DONE) { ... }
+
+  /* AFTER (correct): */
+  if (ipcd & SST_IPC_BUSY) {
+      /* DSP sent message - acknowledge */
+      sst_shim_write(sc, SST_SHIM_IPCD,
+          (ipcd & ~SST_IPC_BUSY) | SST_IPC_DONE);
+      if (!sc->ipc.ready) {
+          sc->ipc.ready = true;
+          ...
+      }
+  }
+  ```
+
+- **Expected Result**: DSP ready detection should now work correctly with
+  IPCD=0x84200209 (BUSY bit set = DSP sent ready notification)
+
+---
+
 ## [0.26.0] - 2026-02-12
 
 ### CRITICAL FIX: Correct SHIM Offset for WPT/Broadwell
