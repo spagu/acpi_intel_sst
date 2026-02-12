@@ -2661,7 +2661,7 @@ sst_pci_attach(device_t dev)
 
 	device_printf(dev, "Intel SST Driver v0.9.0-PCI (PCI Attach)\n");
 	device_printf(dev, "Driver Build Time: %s %s\n", __DATE__, __TIME__); // VERIFY NEW BUILD
-	bool bar0_ok;
+	// bool bar0_ok; (Removed due to redefinition)
 
 	sc = device_get_softc(dev);
 	sc->dev = dev;
