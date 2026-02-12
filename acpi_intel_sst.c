@@ -1284,10 +1284,6 @@ sst_acpi_attach(device_t dev)
 						}
 					}
 				}
-				} else {
-					device_printf(dev, "  Failed to map RCBA at 0x%llx\n",
-					    (unsigned long long)rcba_base);
-				}
 			}
 			}  /* End test block scope */
 		}
