@@ -855,7 +855,66 @@ sst_acpi_attach(device_t dev)
 				}
 			}
 		}
-		device_printf(dev, "=== END BRUTE FORCE SCAN ===\n");
+
+		/* Full PCI config space dump via BAR1 */
+		device_printf(dev, "=== FULL PCI CONFIG DUMP (via BAR1) ===\n");
+		if (sc->shim_res != NULL) {
+			int off;
+			device_printf(dev, "Looking for enable bits, memory decoder regs...\n");
+			for (off = 0; off < 0x100; off += 4) {
+				uint32_t val = bus_read_4(sc->shim_res, off);
+				/* Print non-zero, non-0xFFFFFFFF values */
+				if (val != 0 && val != 0xFFFFFFFF) {
+					device_printf(dev, "  [0x%02x]: 0x%08x", off, val);
+					/* Annotate known registers */
+					if (off == 0x00) device_printf(dev, " (DevID/VenID)");
+					else if (off == 0x04) device_printf(dev, " (Status/Cmd)");
+					else if (off == 0x08) device_printf(dev, " (Class/Rev)");
+					else if (off == 0x10) device_printf(dev, " (BAR0)");
+					else if (off == 0x14) device_printf(dev, " (BAR1)");
+					else if (off == 0x2c) device_printf(dev, " (SubsysID)");
+					else if (off == 0x34) device_printf(dev, " (CapPtr)");
+					else if (off == 0x80) device_printf(dev, " (PM Cap)");
+					else if (off == 0x84) device_printf(dev, " (PMCS)");
+					else if (off == 0xA0) device_printf(dev, " (VDRTCTL0)");
+					else if (off == 0xA4) device_printf(dev, " (VDRTCTL1)");
+					else if (off == 0xA8) device_printf(dev, " (VDRTCTL2)");
+					else if (off == 0xAC) device_printf(dev, " (VDRTCTL3)");
+					else if (off == 0xE0) device_printf(dev, " (IPCC)");
+					else if (off == 0xE4) device_printf(dev, " (IMC)");
+					else if (off == 0xE8) device_printf(dev, " (IPCD)");
+					else if (off == 0xEC) device_printf(dev, " (IMD)");
+					device_printf(dev, "\n");
+				}
+			}
+
+			/* Try extended config space (0x100-0x1000) if accessible */
+			device_printf(dev, "Extended config space (0x100-0x200):\n");
+			for (off = 0x100; off < 0x200; off += 4) {
+				uint32_t val = bus_read_4(sc->shim_res, off);
+				if (val != 0 && val != 0xFFFFFFFF) {
+					device_printf(dev, "  [0x%03x]: 0x%08x\n", off, val);
+				}
+			}
+
+			/* Try writing to BAR0 to see if it's writable */
+			device_printf(dev, "Testing BAR0 write...\n");
+			uint32_t bar0_orig = bus_read_4(sc->shim_res, 0x10);
+			device_printf(dev, "  BAR0 original: 0x%08x\n", bar0_orig);
+
+			/* Write all 1s to get BAR size */
+			bus_write_4(sc->shim_res, 0x10, 0xFFFFFFFF);
+			DELAY(1000);
+			uint32_t bar0_size = bus_read_4(sc->shim_res, 0x10);
+			device_printf(dev, "  BAR0 after 0xFFFFFFFF: 0x%08x (size mask)\n", bar0_size);
+
+			/* Restore original */
+			bus_write_4(sc->shim_res, 0x10, bar0_orig);
+			DELAY(1000);
+			uint32_t bar0_restored = bus_read_4(sc->shim_res, 0x10);
+			device_printf(dev, "  BAR0 restored: 0x%08x\n", bar0_restored);
+		}
+		device_printf(dev, "=== END FULL PCI CONFIG DUMP ===\n");
 
 		error = ENXIO;
 		goto fail;
