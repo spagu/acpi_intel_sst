@@ -2729,17 +2729,20 @@ sst_pci_attach(device_t dev)
 	/* Explicitly toggle PCI Power State D0 -> D3 -> D0
 	 * This aims to reset the internal DSP power management logic.
 	 */
-	device_printf(dev, "Cycling PCI Power State: D0 -> D3 -> D0\n");
-	pci_set_powerstate(dev, PCI_POWERSTATE_D3);
-	DELAY(20000);
-	pci_set_powerstate(dev, PCI_POWERSTATE_D0);
-	DELAY(20000); // Wait for D0 transition
-	
-	/* Re-read Command register to ensure MEM/BM are set after D0 transition */
-	cmd = pci_read_config(dev, PCIR_COMMAND, 2);
-	if (!(cmd & PCIM_CMD_MEMEN) || !(cmd & PCIM_CMD_BUSMASTEREN)) {
-		device_printf(dev, "Restoring PCI Command after D3 cycle: 0x%04x -> MEM|BM\n", cmd);
-		pci_write_config(dev, PCIR_COMMAND, cmd | PCIM_CMD_MEMEN | PCIM_CMD_BUSMASTEREN, 2);
+	{
+		uint32_t cmd;
+		device_printf(dev, "Cycling PCI Power State: D0 -> D3 -> D0\n");
+		pci_set_powerstate(dev, PCI_POWERSTATE_D3);
+		DELAY(20000);
+		pci_set_powerstate(dev, PCI_POWERSTATE_D0);
+		DELAY(20000); // Wait for D0 transition
+		
+		/* Re-read Command register to ensure MEM/BM are set after D0 transition */
+		cmd = pci_read_config(dev, PCIR_COMMAND, 2);
+		if (!(cmd & PCIM_CMD_MEMEN) || !(cmd & PCIM_CMD_BUSMASTEREN)) {
+			device_printf(dev, "Restoring PCI Command after D3 cycle: 0x%04x -> MEM|BM\n", cmd);
+			pci_write_config(dev, PCIR_COMMAND, cmd | PCIM_CMD_MEMEN | PCIM_CMD_BUSMASTEREN, 2);
+		}
 	}
 
 	/* EXPERIMENTAL: Force Enable APLL in VDRTCTL2 (Keep this, it worked!) */
