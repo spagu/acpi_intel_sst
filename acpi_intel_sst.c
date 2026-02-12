@@ -560,7 +560,7 @@ sst_acpi_attach(device_t dev)
 		device_printf(dev, "  Trying direct GPIO 76 toggle...\n");
 		{
 			/* Read GPIO base from LPC Bridge (bus 0, dev 31, func 0) */
-			uint32_t gpio_base_reg = pci_cfgregread(0, 31, 0, 0x48, 4);
+			uint32_t gpio_base_reg = pci_cfgregread(0, 0, 31, 0, 0x48, 4);
 			uint32_t gpio_base = gpio_base_reg & 0xFF80; /* Bits 15:7 */
 			uint32_t gpio76_reg = gpio_base + 0x100 + (76 * 8);
 
