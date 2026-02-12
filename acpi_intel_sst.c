@@ -916,6 +916,10 @@ sst_acpi_attach(device_t dev)
 
 			/* Experiment with unknown register 0xF8 */
 			device_printf(dev, "=== TESTING UNKNOWN REGISTERS ===\n");
+			{
+			bus_space_tag_t mem_tag = X86_BUS_SPACE_MEM;
+			bus_space_handle_t scan_handle;
+			uint32_t scan_val;
 			uint32_t reg_f8 = bus_read_4(sc->shim_res, 0xF8);
 			uint32_t reg_fc = bus_read_4(sc->shim_res, 0xFC);
 			device_printf(dev, "  [0xF8]: 0x%08x\n", reg_f8);
@@ -1005,6 +1009,7 @@ sst_acpi_attach(device_t dev)
 				    scan_val != 0xFFFFFFFF ? " <-- CHANGED!" : "");
 				bus_space_unmap(mem_tag, scan_handle, 0x1000);
 			}
+			}  /* End test block scope */
 		}
 		device_printf(dev, "=== END EXPERIMENTS ===\n");
 
