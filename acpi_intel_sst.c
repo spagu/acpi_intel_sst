@@ -50,7 +50,7 @@
 #define PCI_DEVICE_SST_BDW	0x9CB6
 #define PCI_DEVICE_SST_HSW	0x9C76 /* Haswell pending testing */
 
-#define SST_DRV_VERSION "0.21.3-PowerUpCheck"
+#define SST_DRV_VERSION "0.21.4-BarAllocCheck"
 
 /* Forward declarations */
 static int sst_acpi_probe(device_t dev);
@@ -2157,9 +2157,11 @@ sst_acpi_attach(device_t dev)
 	sst_check_sram_immediate("ACPI_AFTER_POWER_UP_CALL");
 
 	/* ---- Phase 2: Allocate BAR1 (PCI config mirror) ---- */
+	sst_check_sram_immediate("BEFORE_BAR1_ALLOC");
 	sc->shim_rid = 1;
 	sc->shim_res = bus_alloc_resource_any(dev, SYS_RES_MEMORY,
 	    &sc->shim_rid, RF_ACTIVE);
+	sst_check_sram_immediate("AFTER_BAR1_ALLOC");
 	if (sc->shim_res == NULL) {
 		device_printf(dev, "Failed to allocate BAR1 resource\n");
 		error = ENXIO;
@@ -2169,9 +2171,12 @@ sst_acpi_attach(device_t dev)
 	    rman_get_start(sc->shim_res), rman_get_size(sc->shim_res));
 
 	/* Dump PCI config via BAR1 */
+	sst_check_sram_immediate("BEFORE_PCI_DUMP");
 	sst_dump_pci_config(sc);
+	sst_check_sram_immediate("AFTER_PCI_DUMP");
 
 	/* Force enable Memory Space + Bus Master via BAR1 */
+	sst_check_sram_immediate("BEFORE_MEMEN_WRITE");
 	{
 		uint16_t cmd16 = bus_read_2(sc->shim_res, 0x04);
 		if ((cmd16 & 0x06) != 0x06) {
@@ -2180,14 +2185,19 @@ sst_acpi_attach(device_t dev)
 			DELAY(10000);
 		}
 	}
+	sst_check_sram_immediate("AFTER_MEMEN_WRITE");
 
 	/* ---- Phase 3: WPT Power-Up Sequence ---- */
+	sst_check_sram_immediate("BEFORE_WPT_POWER_UP");
 	sst_wpt_power_up(sc);
+	sst_check_sram_immediate("AFTER_WPT_POWER_UP");
 
 	/* ---- Phase 4: Allocate and Test BAR0 ---- */
+	sst_check_sram_immediate("BEFORE_BAR0_ALLOC");
 	sc->mem_rid = 0;
 	sc->mem_res = bus_alloc_resource_any(dev, SYS_RES_MEMORY,
 	    &sc->mem_rid, RF_ACTIVE);
+	sst_check_sram_immediate("AFTER_BAR0_ALLOC");
 	if (sc->mem_res == NULL) {
 		device_printf(dev, "Failed to allocate BAR0 resource\n");
 		error = ENXIO;
