@@ -2671,8 +2671,20 @@ sst_pci_attach(device_t dev)
 
 	device_printf(dev, "Intel SST Driver v%s (PCI Attach)\n", SST_DRV_VERSION);
 
-	/* Enable bus master */
+	/* Enable Memory Space + Bus Master */
 	pci_enable_busmaster(dev);
+	{
+		uint16_t cmd;
+		cmd = pci_read_config(dev, PCIR_COMMAND, 2);
+		device_printf(dev, "PCI Command initial: 0x%04x\n", cmd);
+		if ((cmd & (PCIM_CMD_MEMEN | PCIM_CMD_BUSMASTEREN)) !=
+		    (PCIM_CMD_MEMEN | PCIM_CMD_BUSMASTEREN)) {
+			cmd |= (PCIM_CMD_MEMEN | PCIM_CMD_BUSMASTEREN);
+			pci_write_config(dev, PCIR_COMMAND, cmd, 2);
+			device_printf(dev, "PCI Command updated: 0x%04x\n",
+			    pci_read_config(dev, PCIR_COMMAND, 2));
+		}
+	}
 
 	/* Allocate BAR0 (DSP Memory) */
 	sc->mem_rid = PCIR_BAR(0);
