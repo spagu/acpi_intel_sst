@@ -2713,6 +2713,22 @@ sst_pci_attach(device_t dev)
 	/* WPT Power-Up Sequence */
 	sst_wpt_power_up(sc);
 
+	/* CRITICAL FIX: Write BAR0 address to LPSS REMAP_ADDR (0x810)
+	 * This tells the LPSS logic where the MMIO window is located. */
+	{
+		uint32_t bar0_addr = rman_get_start(sc->mem_res);
+		uint32_t current_remap = bus_read_4(sc->shim_res, 0x810);
+		
+		device_printf(dev, "LPSS REMAP_ADDR [0x810] current: 0x%08x\n", current_remap);
+		if (current_remap != bar0_addr) {
+			device_printf(dev, "Setting LPSS REMAP_ADDR to 0x%08x\n", bar0_addr);
+			bus_write_4(sc->shim_res, 0x810, bar0_addr);
+			/* Also update 0x814 (High part) just in case, though usually 0 for 32-bit BAR */
+			bus_write_4(sc->shim_res, 0x814, 0); 
+			DELAY(1000);
+		}
+	}
+
 	/* Test BAR0 */
 	bar0_ok = sst_test_bar0(sc);
 	device_printf(dev, "BAR0 test: %s\n",
