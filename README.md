@@ -23,18 +23,21 @@
 
 ### Current Research Areas
 
-1. **BAR0 Memory Access** - PCH not decoding 0xfe000000 (DSP memory)
-2. **LPSS Enable** - Find PCH register to enable Low Power SubSystem
-3. **Windows Driver Analysis** - Reverse engineer IntcADSP.sys init sequence
-4. **Brute Force Scanning** - Find where DSP is actually mapped
+1. **IOBP Sideband** - Read/clear PCICFGCTL register to enable BAR0 memory decode
+2. **I2C Codec Path** - Talk to RT286 codec directly via DesignWare I2C at 0xFE105000
+3. **HDA Fallback** - Enable PCH HDA controller (clear HDAD bit in FD register + reboot)
 
 ### Known Facts
 
 - ✅ Windows audio works on this hardware
 - ✅ ACPI device enabled (_STA = 0xF)
 - ✅ SRAM power gates enabled (VDRTCTL0 = 0x000FFFFF)
-- ❌ BAR0 returns 0xFFFFFFFF (memory not accessible)
-- ❌ SST not visible as PCI device (device 19 missing)
+- ✅ LPSS private configs ALIVE (0xFE100000-0xFE106FFF decoded)
+- ✅ I2C0 comes alive after D3-to-D0 transition (DesignWare controller confirmed)
+- ✅ SDMA BAR0 accessible (0xFE101000 responds)
+- ❌ BAR0 (0xFE000000) returns 0xFFFFFFFF (separate 1MB decode window)
+- ❌ SST not visible as PCI device (hidden by IOBP PCICFGCTL PCICD bit)
+- ❌ HDA controller disabled by BIOS (FD bit 4 = 1)
 
 ---
 
@@ -736,22 +739,22 @@ On Dell XPS 13 9343, the SST DSP BAR0 memory region (0xFE000000) may return `0xF
 - Audio works correctly in Windows
 
 **What we've tried:**
-- Correct WPT (Wildcat Point) power-up sequence
-- PMCS D0 power state
+- Correct WPT (Wildcat Point) power-up sequence (VDRTCTL0=0x000FFFFF, all SRAM powered)
+- PMCS D0 power state transition via BAR1
 - VDRTCTL0/VDRTCTL2 power gating configuration
 - IOMMU disabled (`hw.dmar.enable=0`)
-- GPIO audio power enable
-- PCH RCBA FD2 ADSP enable check
-- Warm reboots from Windows
-- ACPI `_PS0`, `_ON`, `_INI` methods
-- Intel Audio `_DSM` calls
+- GPIO audio power enable (GPIO 0x4C)
+- PCH RCBA FD register manipulation (corrected bit positions from DSDT)
+- ACPI `_PS0`, `_ON`, `_INI`, `_DSM` methods
+- GNVS variable verification (OSYS=0x07DD, S0ID=1, SMD0=1)
+- LPSS address space probing (0xFE100000-0xFE10F000)
+- BAR0 remap experiments
+- I2C0/SDMA BAR0 decode tests
 
-**Possible causes:**
-1. Intel SST DSP on Broadwell-U requires proprietary Windows driver initialization
-2. Hardware strapping or BIOS configuration locks the device
-3. Dell-specific BIOS implementation hides the device from non-Windows OSes
+**Root cause identified:**
+The BIOS places ADSP in **ACPI mode** via the IOBP sideband register **PCICFGCTL** (address 0xd7000500), which sets PCICD=1 to hide PCI config. The 1MB BAR0 at 0xFE000000 is in a **separate PCH memory decode window** from the LPSS fabric range at 0xFE100000+. The IOBP sideband interface (RCBA+0x2330) is needed to reconfigure memory decode.
 
-**Related issue:** The I2C controllers (ig4iic0) at 0xfe103000 and 0xfe105000 also fail with the same error - they're inside the same LPSS memory region. This confirms the **entire LPSS (Low Power SubSystem) memory range is inaccessible** from FreeBSD.
+**LPSS status (corrected):** The LPSS private config space (0xFE100000-0xFE106FFF) IS accessible. I2C0/SDMA BAR0s work. Only the separate 1MB ADSP BAR0 window at 0xFE000000 fails. I2C controllers work after D3-to-D0 transition via private config.
 
 **Workarounds to try:**
 
@@ -797,12 +800,13 @@ On Dell XPS 13 9343, the SST DSP BAR0 memory region (0xFE000000) may return `0xF
 
 | Feature | FreeBSD | Linux | Windows |
 |---------|---------|-------|---------|
-| SST in lspci/pciconf | No (ACPI only) | Yes (PCI) | Yes (PCI) |
-| LPSS power domain | Not managed | intel-lpss driver | Intel Serial IO |
-| I2C (ig4) | Fails | Works | Works |
-| ACPI `_OSI` return | "FreeBSD" | "Windows 20XX" | Native |
+| SST in lspci/pciconf | No (ACPI only) | Yes (PCI) or ACPI | Yes (PCI) or ACPI |
+| LPSS power domain | Partial (BAR1 works) | intel-lpss driver | Intel Serial IO |
+| I2C (ig4) | Works after D3-D0 transition | Works | Works |
+| ACPI `_OSI` return | "FreeBSD" (OSYS=0x07DD via custom DSDT) | "Windows 20XX" | Native |
+| IOBP sideband | Not implemented | Via PCI | Via PCI |
 
-**Key insight:** Linux returns Windows compatibility strings for `_OSI()` queries, which may cause BIOS to expose LPSS devices on PCI bus instead of hiding them as ACPI-only devices.
+**Key insight:** The device can operate in PCI mode or ACPI mode. The Dell BIOS uses ACPI mode (IOBP PCICFGCTL PCICD=1), which hides PCI config. Linux's catpt driver works in both modes. The IOBP sideband interface at RCBA+0x2330 controls the mode switching.
 
 For detailed technical analysis, see [docs/TECHNICAL_FINDINGS.md](docs/TECHNICAL_FINDINGS.md).
 

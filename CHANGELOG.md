@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Research Findings (v0.6.0)
+- **IOBP Sideband Interface Discovery** - identified the PCH mechanism controlling ADSP BAR0
+  - IOBP registers at RCBA+0x2330/0x2334/0x2338/0x233A
+  - PCICFGCTL register at IOBP address 0xd7000500 controls PCI/ACPI mode
+  - PCICD bit (bit 0) hides device from PCI enumeration
+  - SPCBAD bit (bit 7) may control BAR0 memory decode
+  - PMCTL at 0xd70001e0 controls power management
+  - Source: coreboot `src/soc/intel/broadwell/pch/adsp.c`
+- **LPSS Memory Architecture Mapped** - full address space analysis
+  - 0xFE100000-0xFE106FFF: LPSS fabric (ALIVE - private configs + BAR0s)
+  - 0xFE000000-0xFE0FFFFF: Separate 1MB ADSP decode window (DEAD)
+  - SDMA BAR0 at 0xFE101000 responds (returns 0x00000000)
+  - I2C0 BAR0 at 0xFE103000 alive after D3-to-D0 transition
+  - I2C0 IC_COMP_TYPE = 0x44570140 (DesignWare confirmed!)
+- **FD Register Bit Positions Corrected** - from DSDT OperationRegion analysis
+  - DSDT field layout: skip(1), ADSD(1), SATD(1), SMBD(1), HDAD(1)
+  - Bit 1 = ADSD (was incorrectly at bit 0)
+  - Bit 4 = HDAD (was incorrectly at bit 3)
+  - Previous code accidentally disabled SMBus; FD restored to 0x00368011
+- **GNVS Variables Read** - BIOS NVS area decoded
+  - OSYS=0x07DD (Win8.1), S0ID=1, ANCS=0, SMD0=1 (PCI mode)
+  - ADB0=0xFE000000, SB10=0xFE102000
+- **DSDT _CRS Analysis** - BAR addresses from NVS variables (ADB0/ADB1/ADI0)
+- **WPT Memory Layout Correction** - from Linux catpt spec
+  - DRAM at 0x000000, IRAM at 0x0A0000, SHIM at 0x0FB000
+  - Differs from LPT (Haswell) layout used in earlier code
+- **Firmware Init Sequence Documented** - from coreboot source
+  - 11-step init including IOBP writes, PSF snoop, D3hot as final step
+
 ### Added
 - **Brute Force Memory Scanner** - when BAR0 returns 0xFFFFFFFF, scan memory regions
   - Scans common LPSS addresses (0xf0000000-0xfe000000 range)

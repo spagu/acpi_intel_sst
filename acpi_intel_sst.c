@@ -7,7 +7,15 @@
  * Intel Smart Sound Technology (SST) ACPI Driver for FreeBSD
  * Target: Intel Broadwell-U (INT3438)
  *
- * Phase 1-5: ACPI, DSP, Firmware, IPC, I2S/SSP, DMA, PCM/sound(4)
+ * This driver attempts to enable audio on Dell XPS 13 9343 and similar
+ * Broadwell-U platforms. It implements two strategies:
+ *
+ * 1. Primary: SST DSP path (BAR0 MMIO for IRAM/DRAM/SHIM access)
+ * 2. Fallback: Enable PCH HDA controller by modifying RCBA Function
+ *    Disable register, allowing the standard hdac(4) driver to handle audio
+ *
+ * Additionally, it probes the I2C1 controller to verify communication
+ * with the RT286/ALC3263 audio codec.
  */
 
 #include <sys/param.h>
@@ -22,8 +30,8 @@
 
 #include <machine/bus.h>
 #include <machine/resource.h>
-#include <machine/cpufunc.h>	/* inl/outl for GPIO access */
-#include <x86/bus.h>		/* X86_BUS_SPACE_MEM */
+#include <machine/cpufunc.h>
+#include <x86/bus.h>
 
 #include <contrib/dev/acpica/include/acpi.h>
 #include <dev/acpica/acpivar.h>
@@ -36,10 +44,9 @@
 
 /* Intel SST PCI IDs */
 #define PCI_VENDOR_INTEL	0x8086
-#define PCI_DEVICE_SST_BDW	0x9CB6	/* Wildcat Point-LP Smart Sound */
+#define PCI_DEVICE_SST_BDW	0x9CB6
 
-/* Driver version for debugging */
-#define SST_DRV_VERSION "0.5.0"
+#define SST_DRV_VERSION "0.7.0"
 
 /* Forward declarations */
 static int sst_acpi_probe(device_t dev);
@@ -48,10 +55,19 @@ static int sst_acpi_detach(device_t dev);
 static int sst_acpi_suspend(device_t dev);
 static int sst_acpi_resume(device_t dev);
 static void sst_intr(void *arg);
-
-/* Helper functions */
 static void sst_reset(struct sst_softc *sc);
 static void sst_init(struct sst_softc *sc);
+
+/* New functions */
+static void sst_acpi_power_up(struct sst_softc *sc);
+static int sst_wpt_power_up(struct sst_softc *sc);
+static bool sst_test_bar0(struct sst_softc *sc);
+static int sst_try_enable_hda(struct sst_softc *sc);
+static int sst_try_enable_adsp(struct sst_softc *sc);
+static void sst_probe_i2c_codec(struct sst_softc *sc);
+static void sst_dump_pci_config(struct sst_softc *sc);
+static void sst_dump_pch_state(struct sst_softc *sc);
+static void sst_iobp_probe(struct sst_softc *sc);
 
 /* Supported ACPI IDs */
 static char *sst_ids[] = {
@@ -60,69 +76,1584 @@ static char *sst_ids[] = {
 	NULL
 };
 
-/**
- * @brief Main interrupt handler
- */
+/* ================================================================
+ * Interrupt Handler
+ * ================================================================ */
+
 static void
 sst_intr(void *arg)
 {
 	struct sst_softc *sc = arg;
 	uint32_t pisr;
 
-	/* Read platform interrupt status */
 	pisr = sst_shim_read(sc, SST_SHIM_PISR);
-
 	if (pisr == 0 || pisr == SST_INVALID_REG_VALUE)
 		return;
 
-	/* Handle IPC interrupts */
 	sst_ipc_intr(sc);
-
-	/* Handle DMA interrupts */
 	sst_dma_intr(sc);
-
-	/* Clear platform interrupt status */
 	sst_shim_write(sc, SST_SHIM_PISR, pisr);
 }
 
-/**
- * @brief Resets the DSP core.
- */
+/* ================================================================
+ * DSP Reset and Init
+ * ================================================================ */
+
 static void
 sst_reset(struct sst_softc *sc)
 {
 	uint32_t csr;
 
 	device_printf(sc->dev, "Resetting DSP...\n");
-
-	/* 1. Assert Reset and Stall */
 	csr = sst_shim_read(sc, SST_SHIM_CSR);
 	csr |= (SST_CSR_RST | SST_CSR_STALL);
 	sst_shim_write(sc, SST_SHIM_CSR, csr);
-
-	/* Wait for reset to propagate */
 	DELAY(SST_RESET_DELAY_US);
-
-	device_printf(sc->dev, "DSP in Reset/Stall state. CSR: 0x%08x\n",
-		      sst_shim_read(sc, SST_SHIM_CSR));
 }
 
-/**
- * @brief Initialize DSP hardware
- */
 static void
 sst_init(struct sst_softc *sc)
 {
-	/* Mask all interrupts initially */
 	sst_shim_write(sc, SST_SHIM_IMRX, SST_IPC_BUSY | SST_IPC_DONE);
 	sst_shim_write(sc, SST_SHIM_IMRD, SST_IPC_BUSY | SST_IPC_DONE);
-
 	sst_reset(sc);
 }
 
-/**
- * @brief Probes for the Intel SST device in ACPI tree.
+/* ================================================================
+ * ACPI Power-Up Sequence
+ * Calls all ACPI methods to transition device to D0
+ * ================================================================ */
+
+static void
+sst_acpi_power_up(struct sst_softc *sc)
+{
+	ACPI_STATUS status;
+	UINT32 sta;
+
+	/* Check _STA */
+	status = acpi_GetInteger(sc->handle, "_STA", &sta);
+	if (ACPI_SUCCESS(status)) {
+		device_printf(sc->dev, "ACPI _STA: 0x%x (%s%s%s%s)\n", sta,
+		    (sta & 0x01) ? "Present " : "",
+		    (sta & 0x02) ? "Enabled " : "",
+		    (sta & 0x04) ? "Shown " : "",
+		    (sta & 0x08) ? "Functional" : "");
+	}
+
+	/* _PS0 (D0 power state) */
+	status = AcpiEvaluateObject(sc->handle, "_PS0", NULL, NULL);
+	if (ACPI_SUCCESS(status)) {
+		device_printf(sc->dev, "Called _PS0 successfully\n");
+		DELAY(100000);
+	}
+
+	/* acpi_pwr_switch_consumer */
+	acpi_pwr_switch_consumer(sc->handle, ACPI_STATE_D0);
+
+	/* _DSM (Device Specific Method) */
+	{
+		ACPI_OBJECT_LIST args;
+		ACPI_OBJECT arg[4];
+		ACPI_BUFFER result = { ACPI_ALLOCATE_BUFFER, NULL };
+
+		static uint8_t intel_dsm_uuid[] = {
+			0x6e, 0x88, 0x9f, 0xa6, 0xeb, 0x6c, 0x94, 0x45,
+			0xa4, 0x1f, 0x7b, 0x5d, 0xce, 0x24, 0xc5, 0x53
+		};
+
+		arg[0].Type = ACPI_TYPE_BUFFER;
+		arg[0].Buffer.Length = 16;
+		arg[0].Buffer.Pointer = intel_dsm_uuid;
+		arg[1].Type = ACPI_TYPE_INTEGER;
+		arg[1].Integer.Value = 1;
+		arg[2].Type = ACPI_TYPE_INTEGER;
+		arg[2].Integer.Value = 0;
+		arg[3].Type = ACPI_TYPE_PACKAGE;
+		arg[3].Package.Count = 0;
+		arg[3].Package.Elements = NULL;
+		args.Count = 4;
+		args.Pointer = arg;
+
+		status = AcpiEvaluateObject(sc->handle, "_DSM", &args, &result);
+		if (ACPI_SUCCESS(status)) {
+			device_printf(sc->dev, "_DSM query successful\n");
+			if (result.Pointer)
+				AcpiOsFree(result.Pointer);
+
+			/* Function 1: enable */
+			arg[2].Integer.Value = 1;
+			result.Length = ACPI_ALLOCATE_BUFFER;
+			result.Pointer = NULL;
+			status = AcpiEvaluateObject(sc->handle, "_DSM",
+			    &args, &result);
+			if (ACPI_SUCCESS(status)) {
+				device_printf(sc->dev, "_DSM enable called\n");
+				if (result.Pointer)
+					AcpiOsFree(result.Pointer);
+			}
+		}
+	}
+
+	/* _PR0 (Power Resources) */
+	{
+		ACPI_BUFFER result = { ACPI_ALLOCATE_BUFFER, NULL };
+
+		status = AcpiEvaluateObject(sc->handle, "_PR0", NULL, &result);
+		if (ACPI_SUCCESS(status)) {
+			ACPI_OBJECT *obj = result.Pointer;
+			if (obj && obj->Type == ACPI_TYPE_PACKAGE) {
+				for (UINT32 i = 0; i < obj->Package.Count; i++) {
+					ACPI_OBJECT *ref = &obj->Package.Elements[i];
+					if (ref->Type == ACPI_TYPE_LOCAL_REFERENCE) {
+						AcpiEvaluateObject(
+						    ref->Reference.Handle,
+						    "_ON", NULL, NULL);
+						device_printf(sc->dev,
+						    "Turned on power resource %d\n", i);
+					}
+				}
+			}
+			if (result.Pointer)
+				AcpiOsFree(result.Pointer);
+		}
+	}
+
+	/* PAUD power resource */
+	{
+		ACPI_HANDLE paud;
+
+		status = AcpiGetHandle(NULL, "\\_SB.PCI0.PAUD", &paud);
+		if (ACPI_SUCCESS(status)) {
+			AcpiEvaluateObject(paud, "_ON", NULL, NULL);
+			device_printf(sc->dev, "PAUD._ON called\n");
+		}
+	}
+
+	DELAY(200000);
+}
+
+/* ================================================================
+ * WPT (Wildcat Point / Broadwell-U) Power-Up via BAR1
+ * Based on Linux catpt driver dsp.c
+ * ================================================================ */
+
+static int
+sst_wpt_power_up(struct sst_softc *sc)
+{
+	uint32_t vdrtctl0, vdrtctl2, pmcs;
+
+	device_printf(sc->dev, "=== WPT Power-Up Sequence ===\n");
+
+	/* Step 1: Disable clock gating first */
+	vdrtctl2 = bus_read_4(sc->shim_res, SST_PCI_VDRTCTL2);
+	device_printf(sc->dev, "  VDRTCTL2 initial: 0x%08x\n", vdrtctl2);
+	vdrtctl2 &= ~SST_VDRTCTL2_DCLCGE;
+	bus_write_4(sc->shim_res, SST_PCI_VDRTCTL2, vdrtctl2);
+	DELAY(50000);
+
+	/* Step 2: Set D0 power state */
+	pmcs = bus_read_4(sc->shim_res, SST_PCI_PMCS);
+	device_printf(sc->dev, "  PMCS: 0x%08x (D%d)\n",
+	    pmcs, pmcs & SST_PMCS_PS_MASK);
+	if ((pmcs & SST_PMCS_PS_MASK) != SST_PMCS_PS_D0) {
+		pmcs = (pmcs & ~SST_PMCS_PS_MASK) | SST_PMCS_PS_D0;
+		bus_write_4(sc->shim_res, SST_PCI_PMCS, pmcs);
+		DELAY(100000);
+		pmcs = bus_read_4(sc->shim_res, SST_PCI_PMCS);
+		device_printf(sc->dev, "  PMCS after D0: 0x%08x (D%d)\n",
+		    pmcs, pmcs & SST_PMCS_PS_MASK);
+	}
+
+	/* Step 3: Disable D3 power gating */
+	vdrtctl0 = bus_read_4(sc->shim_res, SST_PCI_VDRTCTL0);
+	device_printf(sc->dev, "  VDRTCTL0 initial: 0x%08x\n", vdrtctl0);
+	vdrtctl0 |= SST_WPT_VDRTCTL0_D3PGD | SST_WPT_VDRTCTL0_D3SRAMPGD;
+	bus_write_4(sc->shim_res, SST_PCI_VDRTCTL0, vdrtctl0);
+	DELAY(50000);
+
+	/* Step 4: Power on ALL SRAM banks */
+	vdrtctl0 = bus_read_4(sc->shim_res, SST_PCI_VDRTCTL0);
+	vdrtctl0 |= SST_WPT_VDRTCTL0_ISRAMPGE_MASK;
+	vdrtctl0 |= SST_WPT_VDRTCTL0_DSRAMPGE_MASK;
+	bus_write_4(sc->shim_res, SST_PCI_VDRTCTL0, vdrtctl0);
+	DELAY(100);
+
+	vdrtctl0 = bus_read_4(sc->shim_res, SST_PCI_VDRTCTL0);
+	device_printf(sc->dev, "  VDRTCTL0 after SRAM: 0x%08x\n", vdrtctl0);
+
+	/* Step 5: Enable Audio PLL (clear APLLSE bit 31) */
+	vdrtctl2 = bus_read_4(sc->shim_res, SST_PCI_VDRTCTL2);
+	if (vdrtctl2 & SST_VDRTCTL2_APLLSE_MASK) {
+		vdrtctl2 &= ~SST_VDRTCTL2_APLLSE_MASK;
+		bus_write_4(sc->shim_res, SST_PCI_VDRTCTL2, vdrtctl2);
+		DELAY(100000);
+	}
+
+	/* Step 6: Clear trunk clock gating */
+	vdrtctl2 = bus_read_4(sc->shim_res, SST_PCI_VDRTCTL2);
+	vdrtctl2 &= ~SST_VDRTCTL2_DTCGE;
+	bus_write_4(sc->shim_res, SST_PCI_VDRTCTL2, vdrtctl2);
+	DELAY(50000);
+
+	/* Step 7: Re-enable dynamic clock gating */
+	vdrtctl2 = bus_read_4(sc->shim_res, SST_PCI_VDRTCTL2);
+	vdrtctl2 |= SST_VDRTCTL2_DCLCGE;
+	bus_write_4(sc->shim_res, SST_PCI_VDRTCTL2, vdrtctl2);
+
+	/* Final state */
+	device_printf(sc->dev, "  Final VDRTCTL0: 0x%08x\n",
+	    bus_read_4(sc->shim_res, SST_PCI_VDRTCTL0));
+	device_printf(sc->dev, "  Final VDRTCTL2: 0x%08x\n",
+	    bus_read_4(sc->shim_res, SST_PCI_VDRTCTL2));
+	device_printf(sc->dev, "  Final PMCS:     0x%08x\n",
+	    bus_read_4(sc->shim_res, SST_PCI_PMCS));
+
+	return (0);
+}
+
+/* ================================================================
+ * Test BAR0 Accessibility
+ * Returns true if BAR0 (DSP MMIO) responds with non-0xFFFFFFFF
+ * ================================================================ */
+
+static bool
+sst_test_bar0(struct sst_softc *sc)
+{
+	uint32_t val;
+
+	if (sc->mem_res == NULL)
+		return (false);
+
+	val = bus_read_4(sc->mem_res, 0);
+	if (val == SST_INVALID_REG_VALUE) {
+		/* Try SHIM offset too */
+		val = bus_read_4(sc->mem_res, SST_SHIM_OFFSET);
+		if (val == SST_INVALID_REG_VALUE)
+			return (false);
+	}
+	return (true);
+}
+
+/* ================================================================
+ * Dump PCI Config via BAR1
+ * ================================================================ */
+
+static void
+sst_dump_pci_config(struct sst_softc *sc)
+{
+	if (sc->shim_res == NULL)
+		return;
+
+	device_printf(sc->dev, "PCI Config (BAR1 mirror):\n");
+	device_printf(sc->dev, "  VID/DID:  0x%08x\n",
+	    bus_read_4(sc->shim_res, 0x00));
+	device_printf(sc->dev, "  STS/CMD:  0x%08x\n",
+	    bus_read_4(sc->shim_res, 0x04));
+	device_printf(sc->dev, "  CLS/REV:  0x%08x\n",
+	    bus_read_4(sc->shim_res, 0x08));
+	device_printf(sc->dev, "  BAR0:     0x%08x\n",
+	    bus_read_4(sc->shim_res, 0x10));
+	device_printf(sc->dev, "  BAR1:     0x%08x\n",
+	    bus_read_4(sc->shim_res, 0x14));
+	device_printf(sc->dev, "  PMCSR:    0x%08x\n",
+	    bus_read_4(sc->shim_res, SST_PCI_PMCS));
+	device_printf(sc->dev, "  VDRTCTL0: 0x%08x\n",
+	    bus_read_4(sc->shim_res, SST_PCI_VDRTCTL0));
+	device_printf(sc->dev, "  VDRTCTL2: 0x%08x\n",
+	    bus_read_4(sc->shim_res, SST_PCI_VDRTCTL2));
+}
+
+/* ================================================================
+ * HDA Controller Enablement via RCBA
+ *
+ * On Broadwell-U, the BIOS disables the PCH HDA controller (0:1B.0)
+ * when ADSP/SST mode is selected. We can re-enable it by clearing
+ * the HDAD bit in the PCH Function Disable register.
+ *
+ * RCBA + 0x3418 (FD register) - from DSDT analysis:
+ *   Bit 1: ADSD - Audio DSP Disable
+ *   Bit 4: HDAD - HD Audio Disable
+ * ================================================================ */
+
+static int
+sst_try_enable_hda(struct sst_softc *sc)
+{
+	uint32_t rcba_reg, rcba_base, fd, fd_new;
+	uint32_t hda_vid;
+	bus_space_tag_t mem_tag;
+	bus_space_handle_t rcba_handle;
+	int error;
+
+	device_printf(sc->dev, "=== HDA Controller Enablement ===\n");
+
+	/* Read RCBA from LPC bridge */
+	rcba_reg = pci_cfgregread(0, PCH_LPC_BUS, PCH_LPC_DEV,
+	    PCH_LPC_FUNC, PCH_LPC_RCBA_REG, 4);
+	rcba_base = rcba_reg & PCH_RCBA_MASK;
+
+	device_printf(sc->dev, "  RCBA reg: 0x%08x, base: 0x%08x, %s\n",
+	    rcba_reg, rcba_base,
+	    (rcba_reg & PCH_RCBA_ENABLE) ? "enabled" : "DISABLED");
+
+	if (rcba_base == 0 || rcba_base == PCH_RCBA_MASK ||
+	    !(rcba_reg & PCH_RCBA_ENABLE)) {
+		device_printf(sc->dev, "  RCBA not available\n");
+		return (ENXIO);
+	}
+
+	/* Map RCBA region */
+	mem_tag = X86_BUS_SPACE_MEM;
+	error = bus_space_map(mem_tag, rcba_base, PCH_RCBA_SIZE, 0,
+	    &rcba_handle);
+	if (error != 0) {
+		device_printf(sc->dev, "  Failed to map RCBA: %d\n", error);
+		return (error);
+	}
+
+	/* Read Function Disable register */
+	fd = bus_space_read_4(mem_tag, rcba_handle, PCH_RCBA_FD);
+	device_printf(sc->dev, "  FD [0x3418]: 0x%08x\n", fd);
+	device_printf(sc->dev, "    ADSD (bit 1): %s\n",
+	    (fd & PCH_FD_ADSD) ? "ADSP Disabled" : "ADSP Enabled");
+	device_printf(sc->dev, "    HDAD (bit 4): %s\n",
+	    (fd & PCH_FD_HDAD) ? "HDA Disabled" : "HDA Enabled");
+
+	/* Check current HDA state on PCI bus */
+	hda_vid = pci_cfgregread(0, PCH_HDA_BUS, PCH_HDA_DEV,
+	    PCH_HDA_FUNC, 0x00, 4);
+	device_printf(sc->dev, "  HDA PCI (0:%x.%d): 0x%08x%s\n",
+	    PCH_HDA_DEV, PCH_HDA_FUNC, hda_vid,
+	    hda_vid != 0xFFFFFFFF ? " (PRESENT)" : " (absent)");
+
+	if (hda_vid != 0xFFFFFFFF) {
+		device_printf(sc->dev, "  HDA already present on PCI bus!\n");
+		bus_space_unmap(mem_tag, rcba_handle, PCH_RCBA_SIZE);
+		return (0);
+	}
+
+	/* HDA is absent - try to enable it */
+	if (fd & PCH_FD_HDAD) {
+		device_printf(sc->dev, "  Enabling HDA controller...\n");
+
+		fd_new = fd & ~PCH_FD_HDAD;	/* Clear HDAD to enable HDA */
+
+		device_printf(sc->dev, "  Writing FD: 0x%08x -> 0x%08x\n",
+		    fd, fd_new);
+		bus_space_write_4(mem_tag, rcba_handle, PCH_RCBA_FD, fd_new);
+		DELAY(100000);	/* 100ms settle */
+
+		/* Verify */
+		fd = bus_space_read_4(mem_tag, rcba_handle, PCH_RCBA_FD);
+		device_printf(sc->dev, "  FD after write: 0x%08x\n", fd);
+		device_printf(sc->dev, "    HDAD now: %s\n",
+		    (fd & PCH_FD_HDAD) ? "still disabled (write rejected)" :
+		    "ENABLED!");
+
+		/* Check if HDA appeared on PCI */
+		DELAY(100000);	/* Additional settle time */
+		hda_vid = pci_cfgregread(0, PCH_HDA_BUS, PCH_HDA_DEV,
+		    PCH_HDA_FUNC, 0x00, 4);
+		device_printf(sc->dev, "  HDA PCI after enable: 0x%08x\n",
+		    hda_vid);
+
+		if (hda_vid != 0xFFFFFFFF) {
+			uint32_t hda_class = pci_cfgregread(0, PCH_HDA_BUS,
+			    PCH_HDA_DEV, PCH_HDA_FUNC, 0x08, 4);
+			device_printf(sc->dev,
+			    "  *** HDA CONTROLLER APPEARED! ***\n");
+			device_printf(sc->dev,
+			    "  VID/DID: 0x%08x, Class: 0x%06x\n",
+			    hda_vid, hda_class >> 8);
+
+			/* Trigger PCI bus rescan so hdac(4)
+			 * discovers the new device */
+			{
+				device_t acpi, pcib, pci;
+
+				acpi = device_get_parent(sc->dev);
+				pcib = device_find_child(acpi,
+				    "pcib", 0);
+				if (pcib != NULL) {
+					pci = device_find_child(pcib,
+					    "pci", 0);
+					if (pci != NULL) {
+						device_printf(sc->dev,
+						    "  Triggering PCI"
+						    " rescan...\n");
+						bus_topo_lock();
+						BUS_RESCAN(pci);
+						bus_topo_unlock();
+					}
+				}
+			}
+		} else {
+			device_printf(sc->dev,
+			    "  HDA did not appear."
+			    " FD write may need reboot.\n");
+		}
+	} else {
+		device_printf(sc->dev, "  HDAD bit already clear (HDA enabled)\n");
+		device_printf(sc->dev,
+		    "  But HDA not on PCI bus - trying toggle...\n");
+
+		/* Try toggling: set HDAD, wait, clear it again */
+		fd_new = fd | PCH_FD_HDAD;
+		bus_space_write_4(mem_tag, rcba_handle, PCH_RCBA_FD, fd_new);
+		DELAY(100000);
+		device_printf(sc->dev, "  FD after set HDAD: 0x%08x\n",
+		    bus_space_read_4(mem_tag, rcba_handle, PCH_RCBA_FD));
+
+		fd_new = fd & ~PCH_FD_HDAD;
+		bus_space_write_4(mem_tag, rcba_handle, PCH_RCBA_FD, fd_new);
+		DELAY(200000);
+
+		fd = bus_space_read_4(mem_tag, rcba_handle, PCH_RCBA_FD);
+		device_printf(sc->dev, "  FD after clear HDAD: 0x%08x\n", fd);
+
+		hda_vid = pci_cfgregread(0, PCH_HDA_BUS, PCH_HDA_DEV,
+		    PCH_HDA_FUNC, 0x00, 4);
+		device_printf(sc->dev,
+		    "  HDA PCI after toggle: 0x%08x%s\n",
+		    hda_vid,
+		    hda_vid != 0xFFFFFFFF ? " (APPEARED!)" :
+		    " (still absent)");
+
+		if (hda_vid != 0xFFFFFFFF) {
+			device_t acpi, pcib, pci;
+
+			acpi = device_get_parent(sc->dev);
+			pcib = device_find_child(acpi,
+			    "pcib", 0);
+			if (pcib != NULL) {
+				pci = device_find_child(pcib,
+				    "pci", 0);
+				if (pci != NULL) {
+					device_printf(sc->dev,
+					    "  Triggering PCI"
+					    " rescan...\n");
+					bus_topo_lock();
+					BUS_RESCAN(pci);
+					bus_topo_unlock();
+				}
+			}
+		}
+	}
+
+	/* Also dump FD2 for reference */
+	{
+		uint32_t fd2 = bus_space_read_4(mem_tag, rcba_handle,
+		    PCH_RCBA_FD2);
+		device_printf(sc->dev, "  FD2 [0x3428]: 0x%08x\n", fd2);
+	}
+
+	/* Scan relevant RCBA registers for debugging */
+	{
+		uint32_t v;
+
+		v = bus_space_read_4(mem_tag, rcba_handle, 0x2030);
+		device_printf(sc->dev, "  RCBA [0x2030] LPSS: 0x%08x\n", v);
+
+		v = bus_space_read_4(mem_tag, rcba_handle, 0x3410);
+		device_printf(sc->dev, "  RCBA [0x3410] CG:   0x%08x\n", v);
+	}
+
+	bus_space_unmap(mem_tag, rcba_handle, PCH_RCBA_SIZE);
+
+	return (hda_vid != 0xFFFFFFFF ? 0 : ENXIO);
+}
+
+/* ================================================================
+ * ADSP Enablement via RCBA
+ *
+ * When ADSD (bit 0 of FD register) is set, the ADSP function is
+ * disabled at the PCH level. This means BAR0 (DSP MMIO) is gated
+ * off and returns 0xFFFFFFFF, even though BAR1 (PCI config mirror)
+ * may still be accessible via the LPSS private config space.
+ *
+ * This function clears ADSD to re-enable the ADSP hardware,
+ * which should make BAR0 accessible.
+ * ================================================================ */
+
+static int
+sst_try_enable_adsp(struct sst_softc *sc)
+{
+	uint32_t rcba_reg, rcba_base, fd, fd_new, fd_verify;
+	bus_space_tag_t mem_tag;
+	bus_space_handle_t rcba_handle;
+	int error;
+
+	device_printf(sc->dev, "=== ADSP Enablement ===\n");
+
+	/* Read RCBA from LPC bridge */
+	rcba_reg = pci_cfgregread(0, PCH_LPC_BUS, PCH_LPC_DEV,
+	    PCH_LPC_FUNC, PCH_LPC_RCBA_REG, 4);
+	rcba_base = rcba_reg & PCH_RCBA_MASK;
+
+	if (rcba_base == 0 || rcba_base == PCH_RCBA_MASK ||
+	    !(rcba_reg & PCH_RCBA_ENABLE)) {
+		device_printf(sc->dev, "  RCBA not available\n");
+		return (ENXIO);
+	}
+
+	/* Map RCBA region */
+	mem_tag = X86_BUS_SPACE_MEM;
+	error = bus_space_map(mem_tag, rcba_base, PCH_RCBA_SIZE, 0,
+	    &rcba_handle);
+	if (error != 0) {
+		device_printf(sc->dev, "  Failed to map RCBA: %d\n", error);
+		return (error);
+	}
+
+	/* Read FD register */
+	fd = bus_space_read_4(mem_tag, rcba_handle, PCH_RCBA_FD);
+	device_printf(sc->dev, "  FD before: 0x%08x (ADSD=%d, HDAD=%d)\n",
+	    fd, (fd & PCH_FD_ADSD) ? 1 : 0, (fd & PCH_FD_HDAD) ? 1 : 0);
+
+	if (!(fd & PCH_FD_ADSD)) {
+		device_printf(sc->dev, "  ADSP already enabled\n");
+		bus_space_unmap(mem_tag, rcba_handle, PCH_RCBA_SIZE);
+		return (0);
+	}
+
+	/* Clear ADSD to enable ADSP, also set HDAD to disable HDA
+	 * (only one of HDA/ADSP should be active) */
+	fd_new = fd & ~PCH_FD_ADSD;	/* Enable ADSP */
+	fd_new |= PCH_FD_HDAD;		/* Disable HDA (mutual exclusion) */
+
+	device_printf(sc->dev, "  Writing FD: 0x%08x -> 0x%08x\n",
+	    fd, fd_new);
+	device_printf(sc->dev, "  (Clearing ADSD to enable ADSP, setting HDAD)\n");
+
+	bus_space_write_4(mem_tag, rcba_handle, PCH_RCBA_FD, fd_new);
+	DELAY(100000);	/* 100ms settle */
+
+	/* Verify write took effect */
+	fd_verify = bus_space_read_4(mem_tag, rcba_handle, PCH_RCBA_FD);
+	device_printf(sc->dev, "  FD after:  0x%08x (ADSD=%d, HDAD=%d)\n",
+	    fd_verify,
+	    (fd_verify & PCH_FD_ADSD) ? 1 : 0,
+	    (fd_verify & PCH_FD_HDAD) ? 1 : 0);
+
+	if (fd_verify & PCH_FD_ADSD) {
+		device_printf(sc->dev,
+		    "  ADSD write REJECTED by hardware\n");
+		/* Try just clearing ADSD without touching HDAD */
+		fd_new = fd & ~PCH_FD_ADSD;
+		device_printf(sc->dev,
+		    "  Retry: writing FD 0x%08x (only clear ADSD)\n", fd_new);
+		bus_space_write_4(mem_tag, rcba_handle, PCH_RCBA_FD, fd_new);
+		DELAY(100000);
+		fd_verify = bus_space_read_4(mem_tag, rcba_handle, PCH_RCBA_FD);
+		device_printf(sc->dev, "  FD retry:  0x%08x (ADSD=%d)\n",
+		    fd_verify, (fd_verify & PCH_FD_ADSD) ? 1 : 0);
+	}
+
+	if (!(fd_verify & PCH_FD_ADSD)) {
+		device_printf(sc->dev, "  *** ADSP ENABLED! ***\n");
+		device_printf(sc->dev, "  Waiting for hardware to stabilize...\n");
+		DELAY(200000);	/* 200ms for hardware to come up */
+	} else {
+		device_printf(sc->dev, "  ADSD is write-locked, cannot enable ADSP via FD\n");
+	}
+
+	bus_space_unmap(mem_tag, rcba_handle, PCH_RCBA_SIZE);
+
+	return ((fd_verify & PCH_FD_ADSD) ? EPERM : 0);
+}
+
+/* ================================================================
+ * I2C Codec Probe
+ *
+ * The I2C1 controller at 0xFE105000 is a DesignWare I2C that talks
+ * to the RT286/ALC3263 audio codec at address 0x2C.
+ * We probe it to verify the codec is alive.
+ * ================================================================ */
+
+static void
+sst_probe_i2c_codec(struct sst_softc *sc)
+{
+	bus_space_tag_t mem_tag;
+	bus_space_handle_t i2c_handle;
+	uint32_t comp_type, ic_con, ic_tar, ic_enable, ic_status;
+	uint32_t comp_param;
+	int error;
+	int timeout;
+
+	device_printf(sc->dev, "=== I2C Codec Probe ===\n");
+
+	mem_tag = X86_BUS_SPACE_MEM;
+	error = bus_space_map(mem_tag, SST_I2C1_BASE, SST_I2C1_SIZE,
+	    0, &i2c_handle);
+	if (error != 0) {
+		device_printf(sc->dev, "  Failed to map I2C1: %d\n", error);
+		return;
+	}
+
+	/* Verify DesignWare I2C controller */
+	comp_type = bus_space_read_4(mem_tag, i2c_handle, DW_IC_COMP_TYPE);
+	device_printf(sc->dev, "  IC_COMP_TYPE: 0x%08x %s\n",
+	    comp_type,
+	    comp_type == DW_IC_COMP_TYPE_VALUE ? "(DesignWare OK)" : "(UNKNOWN)");
+
+	if (comp_type != DW_IC_COMP_TYPE_VALUE) {
+		device_printf(sc->dev, "  Not a DesignWare I2C controller\n");
+		goto out;
+	}
+
+	/* Read controller state */
+	ic_con = bus_space_read_4(mem_tag, i2c_handle, DW_IC_CON);
+	ic_tar = bus_space_read_4(mem_tag, i2c_handle, DW_IC_TAR);
+	ic_enable = bus_space_read_4(mem_tag, i2c_handle, DW_IC_ENABLE);
+	ic_status = bus_space_read_4(mem_tag, i2c_handle, DW_IC_STATUS);
+	comp_param = bus_space_read_4(mem_tag, i2c_handle, DW_IC_COMP_PARAM_1);
+
+	device_printf(sc->dev, "  IC_CON:    0x%08x (master=%d, speed=%d)\n",
+	    ic_con,
+	    (ic_con & DW_IC_CON_MASTER) ? 1 : 0,
+	    (ic_con >> 1) & 3);
+	device_printf(sc->dev, "  IC_TAR:    0x%03x (codec addr)\n",
+	    ic_tar & 0x3FF);
+	device_printf(sc->dev, "  IC_ENABLE: %d\n", ic_enable & 1);
+	device_printf(sc->dev, "  IC_STATUS: 0x%08x\n", ic_status);
+	device_printf(sc->dev, "  IC_PARAM:  0x%08x\n", comp_param);
+
+	/* Verify target address */
+	if ((ic_tar & 0x3FF) != SST_I2C1_CODEC_ADDR) {
+		device_printf(sc->dev,
+		    "  Target addr 0x%x != expected 0x%x\n",
+		    ic_tar & 0x3FF, SST_I2C1_CODEC_ADDR);
+	} else {
+		device_printf(sc->dev,
+		    "  Target addr 0x2C confirmed (RT286 codec)\n");
+	}
+
+	/* Try to communicate with the codec */
+	/* First disable the controller to configure it */
+	bus_space_write_4(mem_tag, i2c_handle, DW_IC_ENABLE, 0);
+	DELAY(10000);
+
+	/* Wait for disable */
+	for (timeout = 100; timeout > 0; timeout--) {
+		uint32_t en_status = bus_space_read_4(mem_tag, i2c_handle,
+		    DW_IC_ENABLE_STATUS);
+		if ((en_status & 1) == 0)
+			break;
+		DELAY(1000);
+	}
+
+	/* Configure: master mode, fast speed, restart enable, 7-bit addr */
+	bus_space_write_4(mem_tag, i2c_handle, DW_IC_CON,
+	    DW_IC_CON_MASTER | DW_IC_CON_SPEED_FS |
+	    DW_IC_CON_RESTART_EN | DW_IC_CON_SLAVE_DIS);
+
+	/* Set target address to RT286 */
+	bus_space_write_4(mem_tag, i2c_handle, DW_IC_TAR,
+	    SST_I2C1_CODEC_ADDR);
+
+	/* Disable all interrupts */
+	bus_space_write_4(mem_tag, i2c_handle, DW_IC_INTR_MASK, 0);
+
+	/* Clear any pending interrupts */
+	bus_space_read_4(mem_tag, i2c_handle, DW_IC_CLR_INTR);
+
+	/* Enable the controller */
+	bus_space_write_4(mem_tag, i2c_handle, DW_IC_ENABLE, 1);
+	DELAY(10000);
+
+	/* Wait for enable */
+	for (timeout = 100; timeout > 0; timeout--) {
+		uint32_t en_status = bus_space_read_4(mem_tag, i2c_handle,
+		    DW_IC_ENABLE_STATUS);
+		if (en_status & 1)
+			break;
+		DELAY(1000);
+	}
+
+	if (timeout <= 0) {
+		device_printf(sc->dev, "  I2C enable timed out\n");
+		goto disable_out;
+	}
+
+	device_printf(sc->dev, "  I2C controller enabled, trying codec read...\n");
+
+	/*
+	 * RT286 codec uses HDA-verb-like commands over I2C.
+	 * To read vendor ID:
+	 *   Send 4 bytes: verb command for GET_PARAM(AC_NODE_ROOT, AC_PAR_VENDOR_ID)
+	 *   Verb = 0x000F0000 (node=0x00, verb=0xF00, param=0x00)
+	 *
+	 * The I2C protocol for RT286:
+	 *   Write: [addr_hi] [addr_lo] [data_hi] [data_lo]
+	 *   Read:  [addr_hi] [addr_lo] RESTART [read] [read] [read] [read]
+	 *
+	 * For reading vendor ID: write 0x00 0xF0 0x00 0x00
+	 */
+	{
+		uint32_t abort;
+		int i;
+
+		/* Clear any previous abort */
+		bus_space_read_4(mem_tag, i2c_handle, DW_IC_CLR_TX_ABRT);
+
+		/* Write the verb command bytes */
+		/* Byte 0: Node ID high (0x00) */
+		bus_space_write_4(mem_tag, i2c_handle, DW_IC_DATA_CMD, 0x00);
+		/* Byte 1: Verb ID (0xF0 = GET_PARAMETER) */
+		bus_space_write_4(mem_tag, i2c_handle, DW_IC_DATA_CMD, 0xF0);
+		/* Byte 2: Parameter high (0x00) */
+		bus_space_write_4(mem_tag, i2c_handle, DW_IC_DATA_CMD, 0x00);
+		/* Byte 3: Parameter low (0x00 = VENDOR_ID) with STOP */
+		bus_space_write_4(mem_tag, i2c_handle, DW_IC_DATA_CMD,
+		    0x00 | DW_IC_DATA_CMD_STOP);
+
+		/* Wait for TX to complete */
+		for (timeout = 1000; timeout > 0; timeout--) {
+			ic_status = bus_space_read_4(mem_tag, i2c_handle,
+			    DW_IC_STATUS);
+			if (ic_status & DW_IC_STATUS_TFE)
+				break;
+			DELAY(100);
+		}
+
+		/* Check for TX abort */
+		abort = bus_space_read_4(mem_tag, i2c_handle,
+		    DW_IC_TX_ABRT_SOURCE);
+		if (abort) {
+			device_printf(sc->dev,
+			    "  I2C TX abort: 0x%08x (codec may need different protocol)\n",
+			    abort);
+			bus_space_read_4(mem_tag, i2c_handle,
+			    DW_IC_CLR_TX_ABRT);
+		} else {
+			device_printf(sc->dev,
+			    "  I2C write completed (no abort)\n");
+		}
+
+		/* Now try a raw read to see if any data comes back */
+		/* Issue 4 read commands */
+		for (i = 0; i < 4; i++) {
+			uint32_t cmd = DW_IC_DATA_CMD_READ;
+			if (i == 3)
+				cmd |= DW_IC_DATA_CMD_STOP;
+			bus_space_write_4(mem_tag, i2c_handle,
+			    DW_IC_DATA_CMD, cmd);
+		}
+
+		/* Wait for RX data */
+		DELAY(10000);
+		for (timeout = 1000; timeout > 0; timeout--) {
+			uint32_t rxflr = bus_space_read_4(mem_tag, i2c_handle,
+			    DW_IC_RXFLR);
+			if (rxflr >= 4)
+				break;
+			DELAY(100);
+		}
+
+		/* Read whatever is in the RX FIFO */
+		{
+			uint32_t rxflr = bus_space_read_4(mem_tag, i2c_handle,
+			    DW_IC_RXFLR);
+			device_printf(sc->dev, "  RX FIFO level: %d\n", rxflr);
+
+			if (rxflr > 0) {
+				uint32_t vendor_id = 0;
+				for (i = 0; i < (int)rxflr && i < 4; i++) {
+					uint32_t data = bus_space_read_4(
+					    mem_tag, i2c_handle,
+					    DW_IC_DATA_CMD);
+					vendor_id = (vendor_id << 8) |
+					    (data & 0xFF);
+					device_printf(sc->dev,
+					    "  RX[%d]: 0x%02x\n",
+					    i, data & 0xFF);
+				}
+				device_printf(sc->dev,
+				    "  Codec response: 0x%08x\n", vendor_id);
+				if (vendor_id == RT286_VENDOR_ID)
+					device_printf(sc->dev,
+					    "  *** RT286 CODEC CONFIRMED! ***\n");
+			}
+		}
+
+		/* Check for abort on reads */
+		abort = bus_space_read_4(mem_tag, i2c_handle,
+		    DW_IC_TX_ABRT_SOURCE);
+		if (abort) {
+			device_printf(sc->dev,
+			    "  I2C read abort: 0x%08x\n", abort);
+			bus_space_read_4(mem_tag, i2c_handle,
+			    DW_IC_CLR_TX_ABRT);
+		}
+
+		/* Final status */
+		device_printf(sc->dev, "  Final IC_STATUS: 0x%08x\n",
+		    bus_space_read_4(mem_tag, i2c_handle, DW_IC_STATUS));
+		device_printf(sc->dev, "  Final RAW_INTR:  0x%08x\n",
+		    bus_space_read_4(mem_tag, i2c_handle, DW_IC_RAW_INTR_STAT));
+	}
+
+disable_out:
+	/* Disable the controller when done */
+	bus_space_write_4(mem_tag, i2c_handle, DW_IC_ENABLE, 0);
+	DELAY(10000);
+
+out:
+	bus_space_unmap(mem_tag, i2c_handle, SST_I2C1_SIZE);
+}
+
+/* ================================================================
+ * IOBP (I/O Bridge Port) Sideband Access
+ *
+ * The PCH uses an IOBP sideband interface to control internal device
+ * configuration. This is the mechanism that controls PCI/ACPI mode
+ * switching, BAR decode enables, and power management for LPSS devices.
+ *
+ * Source: coreboot src/southbridge/intel/lynxpoint/iobp.c
+ * ================================================================ */
+
+static int
+sst_iobp_poll(bus_space_tag_t mt, bus_space_handle_t rh)
+{
+	int timeout;
+
+	for (timeout = 5000; timeout > 0; timeout--) {
+		if ((bus_space_read_2(mt, rh, PCH_IOBPS) &
+		    PCH_IOBPS_READY) == 0)
+			return (0);
+		DELAY(10);
+	}
+	return (ETIMEDOUT);
+}
+
+static int
+sst_iobp_read(bus_space_tag_t mt, bus_space_handle_t rh,
+    uint32_t addr, uint32_t *val)
+{
+	int error;
+
+	/* Wait for not busy */
+	error = sst_iobp_poll(mt, rh);
+	if (error)
+		return (error);
+
+	/* Write target address */
+	bus_space_write_4(mt, rh, PCH_IOBPIRI, addr);
+
+	/* Set READ opcode and trigger */
+	bus_space_write_2(mt, rh, PCH_IOBPS,
+	    PCH_IOBPS_READ | PCH_IOBPS_READY);
+
+	/* Wait for completion */
+	error = sst_iobp_poll(mt, rh);
+	if (error)
+		return (error);
+
+	/* Check transaction status */
+	if (bus_space_read_2(mt, rh, PCH_IOBPS) & PCH_IOBPS_TX_MASK)
+		return (EIO);
+
+	/* Read data */
+	*val = bus_space_read_4(mt, rh, PCH_IOBPD);
+	return (0);
+}
+
+static int
+sst_iobp_write(bus_space_tag_t mt, bus_space_handle_t rh,
+    uint32_t addr, uint32_t val)
+{
+	int error;
+
+	/* Wait for not busy */
+	error = sst_iobp_poll(mt, rh);
+	if (error)
+		return (error);
+
+	/* Write target address */
+	bus_space_write_4(mt, rh, PCH_IOBPIRI, addr);
+
+	/* Set WRITE opcode */
+	bus_space_write_2(mt, rh, PCH_IOBPS, PCH_IOBPS_WRITE);
+
+	/* Write data */
+	bus_space_write_4(mt, rh, PCH_IOBPD, val);
+
+	/* Write magic value and trigger */
+	bus_space_write_2(mt, rh, PCH_IOBPU, PCH_IOBPU_MAGIC);
+	bus_space_write_2(mt, rh, PCH_IOBPS,
+	    PCH_IOBPS_WRITE | PCH_IOBPS_READY);
+
+	/* Wait for completion */
+	error = sst_iobp_poll(mt, rh);
+	if (error)
+		return (error);
+
+	/* Check transaction status */
+	if (bus_space_read_2(mt, rh, PCH_IOBPS) & PCH_IOBPS_TX_MASK)
+		return (EIO);
+
+	return (0);
+}
+
+/*
+ * Read and dump all ADSP IOBP registers, then try to enable BAR0.
  */
+static void
+sst_iobp_probe(struct sst_softc *sc)
+{
+	uint32_t rcba_reg, rcba_base;
+	uint32_t pcicfgctl, pmctl, vdldat1, vdldat2, psf_snoop;
+	bus_space_tag_t mt;
+	bus_space_handle_t rh;
+	int error;
+
+	device_printf(sc->dev, "=== IOBP Sideband Probe ===\n");
+
+	rcba_reg = pci_cfgregread(0, PCH_LPC_BUS, PCH_LPC_DEV,
+	    PCH_LPC_FUNC, PCH_LPC_RCBA_REG, 4);
+	rcba_base = rcba_reg & PCH_RCBA_MASK;
+
+	if (rcba_base == 0 || !(rcba_reg & PCH_RCBA_ENABLE)) {
+		device_printf(sc->dev, "  RCBA not available\n");
+		return;
+	}
+
+	mt = X86_BUS_SPACE_MEM;
+	error = bus_space_map(mt, rcba_base, PCH_RCBA_SIZE, 0, &rh);
+	if (error != 0) {
+		device_printf(sc->dev, "  Failed to map RCBA: %d\n", error);
+		return;
+	}
+
+	/* Read PCICFGCTL - the key register */
+	error = sst_iobp_read(mt, rh, ADSP_IOBP_PCICFGCTL, &pcicfgctl);
+	if (error != 0) {
+		device_printf(sc->dev,
+		    "  IOBP read PCICFGCTL failed: %d\n", error);
+		goto out;
+	}
+	device_printf(sc->dev, "  PCICFGCTL (0xd7000500): 0x%08x\n",
+	    pcicfgctl);
+	device_printf(sc->dev, "    PCICD  (bit 0): %d (%s)\n",
+	    (pcicfgctl & ADSP_PCICFGCTL_PCICD) ? 1 : 0,
+	    (pcicfgctl & ADSP_PCICFGCTL_PCICD) ? "PCI HIDDEN" :
+	    "PCI Visible");
+	device_printf(sc->dev, "    ACPIIE (bit 1): %d (%s)\n",
+	    (pcicfgctl & ADSP_PCICFGCTL_ACPIIE) ? 1 : 0,
+	    (pcicfgctl & ADSP_PCICFGCTL_ACPIIE) ? "ACPI IRQ" :
+	    "PCI IRQ");
+	device_printf(sc->dev, "    SPCBAD (bit 7): %d (%s)\n",
+	    (pcicfgctl & ADSP_PCICFGCTL_SPCBAD) ? 1 : 0,
+	    (pcicfgctl & ADSP_PCICFGCTL_SPCBAD) ? "BAR DISABLED" :
+	    "BAR Enabled");
+
+	/* Read PMCTL */
+	error = sst_iobp_read(mt, rh, ADSP_IOBP_PMCTL, &pmctl);
+	if (error == 0) {
+		device_printf(sc->dev,
+		    "  PMCTL    (0xd70001e0): 0x%08x %s\n",
+		    pmctl,
+		    pmctl == ADSP_PMCTL_VALUE ? "(expected 0x3F)" : "");
+	} else {
+		device_printf(sc->dev,
+		    "  PMCTL read failed: %d\n", error);
+	}
+
+	/* Read VDLDAT1 */
+	error = sst_iobp_read(mt, rh, ADSP_IOBP_VDLDAT1, &vdldat1);
+	if (error == 0) {
+		device_printf(sc->dev,
+		    "  VDLDAT1  (0xd7000624): 0x%08x %s\n",
+		    vdldat1,
+		    vdldat1 == ADSP_VDLDAT1_VALUE ?
+		    "(expected 0x00040100)" : "");
+	}
+
+	/* Read VDLDAT2 */
+	error = sst_iobp_read(mt, rh, ADSP_IOBP_VDLDAT2, &vdldat2);
+	if (error == 0) {
+		device_printf(sc->dev,
+		    "  VDLDAT2  (0xd7000628): 0x%08x\n", vdldat2);
+	}
+
+	/* Check PSF snoop bit */
+	psf_snoop = bus_space_read_4(mt, rh, PCH_RCBA_PSF_SNOOP);
+	device_printf(sc->dev,
+	    "  PSF_SNOOP (0x3350): 0x%08x (ADSP bit=%d)\n",
+	    psf_snoop,
+	    (psf_snoop & PCH_PSF_SNOOP_ADSP) ? 1 : 0);
+
+	/* Now try to enable BAR0 by clearing SPCBAD if set */
+	if (pcicfgctl & ADSP_PCICFGCTL_SPCBAD) {
+		uint32_t new_cfg = pcicfgctl & ~ADSP_PCICFGCTL_SPCBAD;
+		device_printf(sc->dev,
+		    "  Clearing SPCBAD bit...\n");
+		error = sst_iobp_write(mt, rh,
+		    ADSP_IOBP_PCICFGCTL, new_cfg);
+		if (error == 0) {
+			uint32_t verify;
+			error = sst_iobp_read(mt, rh,
+			    ADSP_IOBP_PCICFGCTL, &verify);
+			if (error == 0) {
+				device_printf(sc->dev,
+				    "  PCICFGCTL after: 0x%08x\n",
+				    verify);
+			}
+		} else {
+			device_printf(sc->dev,
+			    "  IOBP write failed: %d\n", error);
+		}
+	}
+
+	/* Set PSF snoop if not set */
+	if (!(psf_snoop & PCH_PSF_SNOOP_ADSP)) {
+		device_printf(sc->dev,
+		    "  Setting PSF snoop ADSP bit...\n");
+		bus_space_write_4(mt, rh, PCH_RCBA_PSF_SNOOP,
+		    psf_snoop | PCH_PSF_SNOOP_ADSP);
+		DELAY(10000);
+		psf_snoop = bus_space_read_4(mt, rh,
+		    PCH_RCBA_PSF_SNOOP);
+		device_printf(sc->dev,
+		    "  PSF_SNOOP after: 0x%08x\n", psf_snoop);
+	}
+
+	/* Set PMCTL to recommended value if different */
+	if (pmctl != ADSP_PMCTL_VALUE) {
+		device_printf(sc->dev,
+		    "  Setting PMCTL to 0x%02x...\n",
+		    ADSP_PMCTL_VALUE);
+		sst_iobp_write(mt, rh, ADSP_IOBP_PMCTL,
+		    ADSP_PMCTL_VALUE);
+		DELAY(10000);
+	}
+
+	/* Clear PCICD to restore PCI visibility */
+	if (pcicfgctl & ADSP_PCICFGCTL_PCICD) {
+		uint32_t new_cfg, verify;
+
+		new_cfg = pcicfgctl & ~(ADSP_PCICFGCTL_PCICD |
+		    ADSP_PCICFGCTL_SPCBAD);
+		device_printf(sc->dev,
+		    "  Clearing PCICD (restoring PCI)...\n");
+		device_printf(sc->dev,
+		    "  PCICFGCTL: 0x%08x -> 0x%08x\n",
+		    pcicfgctl, new_cfg);
+		error = sst_iobp_write(mt, rh,
+		    ADSP_IOBP_PCICFGCTL, new_cfg);
+		if (error == 0) {
+			DELAY(100000);
+			sst_iobp_read(mt, rh,
+			    ADSP_IOBP_PCICFGCTL, &verify);
+			device_printf(sc->dev,
+			    "  PCICFGCTL verify: 0x%08x\n", verify);
+		}
+	}
+
+	/* Check PCI device and configure via PCI config space */
+	{
+		uint32_t pci_vid = pci_cfgregread(0, 0,
+		    0x13, 0, 0x00, 4);
+		device_printf(sc->dev,
+		    "  PCI 0:13.0 VID: 0x%08x%s\n",
+		    pci_vid,
+		    pci_vid != 0xFFFFFFFF ?
+		    " (VISIBLE!)" : " (absent)");
+
+		if (pci_vid != 0xFFFFFFFF) {
+			uint32_t pci_cmd, pci_bar0,
+			    pci_bar1, pci_pmcs, pci_class;
+
+			pci_cmd = pci_cfgregread(0, 0,
+			    0x13, 0, 0x04, 4);
+			pci_bar0 = pci_cfgregread(0, 0,
+			    0x13, 0, 0x10, 4);
+			pci_bar1 = pci_cfgregread(0, 0,
+			    0x13, 0, 0x14, 4);
+			pci_class = pci_cfgregread(0, 0,
+			    0x13, 0, 0x08, 4);
+			pci_pmcs = pci_cfgregread(0, 0,
+			    0x13, 0, 0x84, 4);
+
+			device_printf(sc->dev,
+			    "  PCI CMD:   0x%08x\n",
+			    pci_cmd);
+			device_printf(sc->dev,
+			    "  PCI BAR0:  0x%08x\n",
+			    pci_bar0);
+			device_printf(sc->dev,
+			    "  PCI BAR1:  0x%08x\n",
+			    pci_bar1);
+			device_printf(sc->dev,
+			    "  PCI CLASS: 0x%08x\n",
+			    pci_class);
+			device_printf(sc->dev,
+			    "  PCI PMCS:  0x%08x (D%d)\n",
+			    pci_pmcs,
+			    pci_pmcs & 3);
+
+			/* Program BAR0 via PCI if needed */
+			if (pci_bar0 == 0 ||
+			    pci_bar0 == 0xFFFFFFFF) {
+				device_printf(sc->dev,
+				    "  Programming BAR0 via PCI...\n");
+				pci_cfgregwrite(0, 0, 0x13, 0,
+				    0x10, 0xFE000000, 4);
+				DELAY(10000);
+				pci_bar0 = pci_cfgregread(0, 0,
+				    0x13, 0, 0x10, 4);
+				device_printf(sc->dev,
+				    "  PCI BAR0 after: 0x%08x\n",
+				    pci_bar0);
+			}
+
+			/* Ensure MEM + Bus Master enabled */
+			if ((pci_cmd & 0x06) != 0x06) {
+				device_printf(sc->dev,
+				    "  Enabling MEM+BM via PCI CMD...\n");
+				pci_cfgregwrite(0, 0, 0x13, 0,
+				    0x04,
+				    (pci_cmd & 0xFFFF) | 0x06,
+				    2);
+				DELAY(10000);
+				pci_cmd = pci_cfgregread(0, 0,
+				    0x13, 0, 0x04, 4);
+				device_printf(sc->dev,
+				    "  PCI CMD after: 0x%08x\n",
+				    pci_cmd);
+			}
+
+			/* Dump extended PCI config */
+			device_printf(sc->dev,
+			    "  PCI IPC regs:\n");
+			device_printf(sc->dev,
+			    "    IPCC [0xE0]: 0x%08x\n",
+			    pci_cfgregread(0, 0,
+			    0x13, 0, 0xE0, 4));
+			device_printf(sc->dev,
+			    "    IMC  [0xE4]: 0x%08x\n",
+			    pci_cfgregread(0, 0,
+			    0x13, 0, 0xE4, 4));
+			device_printf(sc->dev,
+			    "    IPCD [0xE8]: 0x%08x\n",
+			    pci_cfgregread(0, 0,
+			    0x13, 0, 0xE8, 4));
+			device_printf(sc->dev,
+			    "    IMD  [0xEC]: 0x%08x\n",
+			    pci_cfgregread(0, 0,
+			    0x13, 0, 0xEC, 4));
+			device_printf(sc->dev,
+			    "    [0xF0]: 0x%08x\n",
+			    pci_cfgregread(0, 0,
+			    0x13, 0, 0xF0, 4));
+			device_printf(sc->dev,
+			    "    [0xF4]: 0x%08x\n",
+			    pci_cfgregread(0, 0,
+			    0x13, 0, 0xF4, 4));
+			device_printf(sc->dev,
+			    "    [0xF8]: 0x%08x\n",
+			    pci_cfgregread(0, 0,
+			    0x13, 0, 0xF8, 4));
+
+			/*
+			 * D3hot -> D0 cycle: coreboot puts
+			 * ADSP in D3hot as final step.
+			 * Maybe BAR0 decode only activates
+			 * after a proper D3->D0 transition.
+			 */
+			device_printf(sc->dev,
+			    "  D3hot cycle: D0->D3hot...\n");
+			pci_cfgregwrite(0, 0, 0x13, 0,
+			    0x84, (pci_pmcs & ~3) | 3, 4);
+			DELAY(100000);
+			pci_pmcs = pci_cfgregread(0, 0,
+			    0x13, 0, 0x84, 4);
+			device_printf(sc->dev,
+			    "  PMCS in D3hot: 0x%08x (D%d)\n",
+			    pci_pmcs, pci_pmcs & 3);
+
+			/* Quick BAR0 check in D3 */
+			{
+				bus_space_tag_t bmt =
+				    X86_BUS_SPACE_MEM;
+				bus_space_handle_t bh;
+				if (bus_space_map(bmt,
+				    0xFE000000, 0x1000,
+				    0, &bh) == 0) {
+					device_printf(sc->dev,
+					    "  BAR0 in D3hot:"
+					    " 0x%08x\n",
+					    bus_space_read_4(
+					    bmt, bh, 0));
+					bus_space_unmap(bmt,
+					    bh, 0x1000);
+				}
+			}
+
+			/* Now D3hot -> D0 */
+			device_printf(sc->dev,
+			    "  D3hot -> D0...\n");
+			pci_cfgregwrite(0, 0, 0x13, 0,
+			    0x84, pci_pmcs & ~3, 4);
+			DELAY(100000);
+			pci_pmcs = pci_cfgregread(0, 0,
+			    0x13, 0, 0x84, 4);
+			device_printf(sc->dev,
+			    "  PMCS after D0: 0x%08x (D%d)\n",
+			    pci_pmcs, pci_pmcs & 3);
+
+			/* Re-verify BAR0/CMD survived D3 */
+			pci_bar0 = pci_cfgregread(0, 0,
+			    0x13, 0, 0x10, 4);
+			pci_cmd = pci_cfgregread(0, 0,
+			    0x13, 0, 0x04, 4);
+			device_printf(sc->dev,
+			    "  BAR0 post-D3: 0x%08x\n",
+			    pci_bar0);
+			device_printf(sc->dev,
+			    "  CMD post-D3:  0x%08x\n",
+			    pci_cmd);
+
+			/* Re-program BAR0 if lost */
+			if (pci_bar0 == 0 ||
+			    pci_bar0 == 0xFFFFFFFF) {
+				pci_cfgregwrite(0, 0, 0x13, 0,
+				    0x10, 0xFE000000, 4);
+				DELAY(10000);
+			}
+
+			/* Re-enable MEM+BM if lost */
+			if ((pci_cmd & 0x06) != 0x06) {
+				pci_cfgregwrite(0, 0, 0x13, 0,
+				    0x04,
+				    (pci_cmd & 0xFFFF) | 0x06,
+				    2);
+				DELAY(10000);
+			}
+
+			/* WPT power sequence via PCI config */
+			{
+				uint32_t v0, v2;
+
+				v2 = pci_cfgregread(0, 0,
+				    0x13, 0, 0xA8, 4);
+				v2 &= ~SST_VDRTCTL2_DCLCGE;
+				pci_cfgregwrite(0, 0, 0x13, 0,
+				    0xA8, v2, 4);
+				DELAY(50000);
+
+				v0 = pci_cfgregread(0, 0,
+				    0x13, 0, 0xA0, 4);
+				v0 |= SST_WPT_VDRTCTL0_D3PGD |
+				    SST_WPT_VDRTCTL0_D3SRAMPGD;
+				v0 |= SST_WPT_VDRTCTL0_ISRAMPGE_MASK;
+				v0 |= SST_WPT_VDRTCTL0_DSRAMPGE_MASK;
+				pci_cfgregwrite(0, 0, 0x13, 0,
+				    0xA0, v0, 4);
+				DELAY(50000);
+
+				v2 &= ~SST_VDRTCTL2_APLLSE_MASK;
+				pci_cfgregwrite(0, 0, 0x13, 0,
+				    0xA8, v2, 4);
+				DELAY(50000);
+
+				v2 |= SST_VDRTCTL2_DCLCGE;
+				pci_cfgregwrite(0, 0, 0x13, 0,
+				    0xA8, v2, 4);
+
+				device_printf(sc->dev,
+				    "  PCI VDRTCTL0: 0x%08x\n",
+				    pci_cfgregread(0, 0,
+				    0x13, 0, 0xA0, 4));
+				device_printf(sc->dev,
+				    "  PCI VDRTCTL2: 0x%08x\n",
+				    pci_cfgregread(0, 0,
+				    0x13, 0, 0xA8, 4));
+			}
+
+			/* Test BAR0 again */
+			if (sc->mem_res != NULL) {
+				uint32_t v = bus_read_4(
+				    sc->mem_res, 0);
+				device_printf(sc->dev,
+				    "  BAR0[0] after IOBP:"
+				    " 0x%08x%s\n",
+				    v,
+				    v != 0xFFFFFFFF ?
+				    " *** ALIVE! ***" :
+				    " still dead");
+			}
+
+			/* Also try direct map of BAR0 */
+			{
+				bus_space_tag_t bmt =
+				    X86_BUS_SPACE_MEM;
+				bus_space_handle_t bh;
+				int berr;
+
+				berr = bus_space_map(bmt,
+				    0xFE000000, 0x1000, 0, &bh);
+				if (berr == 0) {
+					uint32_t bv;
+					bv = bus_space_read_4(
+					    bmt, bh, 0);
+					device_printf(sc->dev,
+					    "  Direct BAR0[0]:"
+					    " 0x%08x%s\n",
+					    bv,
+					    bv != 0xFFFFFFFF ?
+					    " *** ALIVE! ***" :
+					    " still dead");
+					if (bv != 0xFFFFFFFF) {
+						device_printf(
+						    sc->dev,
+						    "  [0x04]:"
+						    " 0x%08x\n",
+						    bus_space_read_4(
+						    bmt, bh,
+						    0x04));
+						device_printf(
+						    sc->dev,
+						    "  [0x10]:"
+						    " 0x%08x\n",
+						    bus_space_read_4(
+						    bmt, bh,
+						    0x10));
+					}
+					bus_space_unmap(bmt,
+					    bh, 0x1000);
+				}
+			}
+		}
+	}
+
+out:
+	bus_space_unmap(mt, rh, PCH_RCBA_SIZE);
+}
+
+/* ================================================================
+ * PCH Register Dump
+ *
+ * Read LPC bridge config and PCH registers to understand the LPSS
+ * power/routing state. The LPSS fabric won't work if the PCH hasn't
+ * enabled the memory decode for these regions.
+ * ================================================================ */
+
+static void
+sst_dump_pch_state(struct sst_softc *sc)
+{
+	uint32_t v, pmbase, gpiobase;
+	bus_space_tag_t mem_tag;
+	bus_space_handle_t rcba_handle;
+	uint32_t rcba_reg, rcba_base;
+	int error;
+
+	device_printf(sc->dev, "=== PCH State Dump ===\n");
+
+	/* LPC bridge PCI config registers */
+	device_printf(sc->dev, "  LPC (0:1F.0) VID/DID: 0x%08x\n",
+	    pci_cfgregread(0, 0, 0x1F, 0, 0x00, 4));
+
+	pmbase = pci_cfgregread(0, 0, 0x1F, 0, 0x40, 4);
+	device_printf(sc->dev, "  LPC PMBASE [0x40]: 0x%08x (I/O: 0x%04x)\n",
+	    pmbase, pmbase & 0xFF80);
+
+	v = pci_cfgregread(0, 0, 0x1F, 0, 0x44, 4);
+	device_printf(sc->dev, "  LPC ACPI_CNTL [0x44]: 0x%08x%s\n",
+	    v, (v & 0x80) ? " (ACPI enabled)" : " (ACPI disabled)");
+
+	gpiobase = pci_cfgregread(0, 0, 0x1F, 0, 0x48, 4);
+	device_printf(sc->dev, "  LPC GPIOBASE [0x48]: 0x%08x\n", gpiobase);
+
+	v = pci_cfgregread(0, 0, 0x1F, 0, 0x4C, 4);
+	device_printf(sc->dev, "  LPC GPIO_CNTL [0x4C]: 0x%08x\n", v);
+
+	/* GCS (General Control and Status) */
+	v = pci_cfgregread(0, 0, 0x1F, 0, 0xA0, 4);
+	device_printf(sc->dev, "  LPC GCS [0xA0]: 0x%08x\n", v);
+
+	/* LPC Decode ranges */
+	v = pci_cfgregread(0, 0, 0x1F, 0, 0x80, 4);
+	device_printf(sc->dev, "  LPC ILB_BASE [0x80]: 0x%08x\n", v);
+
+	v = pci_cfgregread(0, 0, 0x1F, 0, 0x84, 4);
+	device_printf(sc->dev, "  LPC IOAPIC_BASE [0x84]: 0x%08x\n", v);
+
+	v = pci_cfgregread(0, 0, 0x1F, 0, 0x88, 4);
+	device_printf(sc->dev, "  LPC SPI_BASE [0x88]: 0x%08x\n", v);
+
+	v = pci_cfgregread(0, 0, 0x1F, 0, 0x8C, 4);
+	device_printf(sc->dev, "  LPC MPHY_BASE [0x8C]: 0x%08x\n", v);
+
+	v = pci_cfgregread(0, 0, 0x1F, 0, 0xDC, 4);
+	device_printf(sc->dev, "  LPC BDE [0xDC]: 0x%08x\n", v);
+
+	v = pci_cfgregread(0, 0, 0x1F, 0, 0xF0, 4);
+	device_printf(sc->dev, "  LPC RCBA [0xF0]: 0x%08x\n", v);
+
+	/* Map RCBA and read more registers */
+	rcba_reg = pci_cfgregread(0, 0, 0x1F, 0, 0xF0, 4);
+	rcba_base = rcba_reg & PCH_RCBA_MASK;
+	mem_tag = X86_BUS_SPACE_MEM;
+
+	if (rcba_base != 0 && (rcba_reg & PCH_RCBA_ENABLE)) {
+		error = bus_space_map(mem_tag, rcba_base, PCH_RCBA_SIZE,
+		    0, &rcba_handle);
+		if (error == 0) {
+			/* SOFT_RESET_CTRL / SOFT_RESET_DATA */
+			v = bus_space_read_4(mem_tag, rcba_handle, 0x0038);
+			device_printf(sc->dev,
+			    "  RCBA [0x0038] SOFTRSTCTRL: 0x%08x\n", v);
+
+			/* D31IP - Device 31 Interrupt Pin */
+			v = bus_space_read_4(mem_tag, rcba_handle, 0x3100);
+			device_printf(sc->dev,
+			    "  RCBA [0x3100] D31IP: 0x%08x\n", v);
+
+			/* D27IP - Device 27 (HDA) Interrupt Pin */
+			v = bus_space_read_4(mem_tag, rcba_handle, 0x3110);
+			device_printf(sc->dev,
+			    "  RCBA [0x3110] D27IP: 0x%08x\n", v);
+
+			/* D19IP - Device 19 (LPSS) Interrupt Pin */
+			v = bus_space_read_4(mem_tag, rcba_handle, 0x3130);
+			device_printf(sc->dev,
+			    "  RCBA [0x3130] D19IP: 0x%08x\n", v);
+
+			/* LPSS I/O fabric configuration */
+			/* Check known LPSS-related RCBA offsets */
+			v = bus_space_read_4(mem_tag, rcba_handle, 0x2330);
+			device_printf(sc->dev,
+			    "  RCBA [0x2330] SCC: 0x%08x\n", v);
+
+			v = bus_space_read_4(mem_tag, rcba_handle, 0x2334);
+			device_printf(sc->dev,
+			    "  RCBA [0x2334] SCC2: 0x%08x\n", v);
+
+			/* Function Disable 2 */
+			v = bus_space_read_4(mem_tag, rcba_handle, 0x3428);
+			device_printf(sc->dev,
+			    "  RCBA [0x3428] FD2: 0x%08x\n", v);
+
+			/* Check DISPBDF and other SBI registers */
+			v = bus_space_read_4(mem_tag, rcba_handle, 0x3420);
+			device_printf(sc->dev,
+			    "  RCBA [0x3420] DISPBDF: 0x%08x\n", v);
+
+			v = bus_space_read_4(mem_tag, rcba_handle, 0x3424);
+			device_printf(sc->dev,
+			    "  RCBA [0x3424] FD_LOCK: 0x%08x\n", v);
+
+			/* Broadwell LPSS fabric specific registers */
+			/* PMC function bar decode */
+			int i;
+			for (i = 0x2000; i <= 0x2050; i += 4) {
+				v = bus_space_read_4(mem_tag, rcba_handle, i);
+				if (v != 0)
+					device_printf(sc->dev,
+					    "  RCBA [0x%04x]: 0x%08x\n",
+					    i, v);
+			}
+
+			/* IOSFBCTL / IO sideband fabric */
+			v = bus_space_read_4(mem_tag, rcba_handle, 0x3400);
+			device_printf(sc->dev,
+			    "  RCBA [0x3400] IOSFCTL: 0x%08x\n", v);
+
+			v = bus_space_read_4(mem_tag, rcba_handle, 0x3404);
+			device_printf(sc->dev,
+			    "  RCBA [0x3404] IOSFDAT: 0x%08x\n", v);
+
+			v = bus_space_read_4(mem_tag, rcba_handle, 0x3408);
+			device_printf(sc->dev,
+			    "  RCBA [0x3408] IOSFST: 0x%08x\n", v);
+
+			/* CG - Clock Gating */
+			v = bus_space_read_4(mem_tag, rcba_handle, 0x3410);
+			device_printf(sc->dev,
+			    "  RCBA [0x3410] CG: 0x%08x\n", v);
+
+			v = bus_space_read_4(mem_tag, rcba_handle, 0x3414);
+			device_printf(sc->dev,
+			    "  RCBA [0x3414] CG2: 0x%08x\n", v);
+
+			/* FD */
+			v = bus_space_read_4(mem_tag, rcba_handle, 0x3418);
+			device_printf(sc->dev,
+			    "  RCBA [0x3418] FD: 0x%08x\n", v);
+
+			/* Check if there's an LPSS memory base register */
+			v = bus_space_read_4(mem_tag, rcba_handle, 0x340C);
+			device_printf(sc->dev,
+			    "  RCBA [0x340C]: 0x%08x\n", v);
+
+			bus_space_unmap(mem_tag, rcba_handle, PCH_RCBA_SIZE);
+		}
+	}
+
+	/* Try reading ACPI PM registers via I/O space */
+	{
+		uint16_t pm_base = pmbase & 0xFF80;
+		if (pm_base != 0) {
+			uint32_t pm1_sts, pm1_cnt;
+
+			pm1_sts = inw(pm_base);
+			pm1_cnt = inl(pm_base + 0x04);
+			device_printf(sc->dev,
+			    "  ACPI PM1_STS: 0x%04x, PM1_CNT: 0x%08x\n",
+			    pm1_sts, pm1_cnt);
+
+			/* GPE0 status */
+			v = inl(pm_base + 0x20);
+			device_printf(sc->dev,
+			    "  ACPI GPE0_STS: 0x%08x\n", v);
+		}
+	}
+
+	/* Direct-map BAR0 and try reading (bypass resource allocation) */
+	{
+		bus_space_handle_t bar0_handle;
+
+		device_printf(sc->dev,
+		    "  Direct BAR0 map test (0xFE000000)...\n");
+		error = bus_space_map(mem_tag, 0xFE000000, 0x1000, 0,
+		    &bar0_handle);
+		if (error == 0) {
+			uint32_t v0 = bus_space_read_4(mem_tag, bar0_handle, 0);
+			uint32_t v4 = bus_space_read_4(mem_tag, bar0_handle, 4);
+			device_printf(sc->dev,
+			    "  Direct BAR0[0]=0x%08x [4]=0x%08x\n", v0, v4);
+
+			/* Try SHIM offset */
+			if (0xC0000 < 0x1000) {
+				/* Can't reach SHIM with 4K map */
+			}
+			bus_space_unmap(mem_tag, bar0_handle, 0x1000);
+		} else {
+			device_printf(sc->dev,
+			    "  Direct BAR0 map failed: %d\n", error);
+		}
+
+		/* Also try mapping just the SHIM region */
+		device_printf(sc->dev,
+		    "  Direct SHIM map test (0xFE0C0000)...\n");
+		error = bus_space_map(mem_tag, 0xFE0C0000, 0x1000, 0,
+		    &bar0_handle);
+		if (error == 0) {
+			uint32_t v0 = bus_space_read_4(mem_tag, bar0_handle, 0);
+			device_printf(sc->dev,
+			    "  Direct SHIM[0]=0x%08x\n", v0);
+			bus_space_unmap(mem_tag, bar0_handle, 0x1000);
+		} else {
+			device_printf(sc->dev,
+			    "  Direct SHIM map failed: %d\n", error);
+		}
+	}
+}
+
+/* ================================================================
+ * ACPI Probe
+ * ================================================================ */
+
 static int
 sst_acpi_probe(device_t dev)
 {
@@ -132,22 +1663,23 @@ sst_acpi_probe(device_t dev)
 		return (ENXIO);
 
 	rv = ACPI_ID_PROBE(device_get_parent(dev), dev, sst_ids, NULL);
-	if (rv <= 0) {
+	if (rv <= 0)
 		device_set_desc(dev, "Intel Broadwell-U Audio DSP (SST)");
-	}
 
 	return (rv);
 }
 
-/**
- * @brief Attaches the driver to the device.
- */
+/* ================================================================
+ * ACPI Attach - Main Driver Entry Point
+ * ================================================================ */
+
 static int
 sst_acpi_attach(device_t dev)
 {
 	struct sst_softc *sc;
-	uint32_t csr, ipcx;
+	uint32_t csr;
 	int error = 0;
+	bool bar0_ok;
 
 	sc = device_get_softc(dev);
 	sc->dev = dev;
@@ -159,1421 +1691,689 @@ sst_acpi_attach(device_t dev)
 	sc->attached = false;
 	sc->state = SST_STATE_NONE;
 
-	/* Initialize mutex */
 	mtx_init(&sc->sc_mtx, "sst_sc", NULL, MTX_DEF);
 
 	device_printf(dev, "Intel SST Driver v%s loading\n", SST_DRV_VERSION);
 
-	/*
-	 * 1. Power on sequence - try multiple ACPI methods
-	 */
+	/* ---- Phase 1: ACPI Power-Up ---- */
+	sst_acpi_power_up(sc);
 
-	/* Check device status via _STA */
-	{
-		ACPI_STATUS status;
-		UINT32 sta;
-
-		status = acpi_GetInteger(sc->handle, "_STA", &sta);
-		if (ACPI_SUCCESS(status)) {
-			device_printf(dev, "ACPI _STA: 0x%x (%s%s%s%s)\n",
-			    sta,
-			    (sta & 0x01) ? "Present " : "",
-			    (sta & 0x02) ? "Enabled " : "",
-			    (sta & 0x04) ? "Shown " : "",
-			    (sta & 0x08) ? "Functional" : "");
-		}
-	}
-
-	/* Try _ON method first (some devices use this) */
-	{
-		ACPI_STATUS status;
-		status = AcpiEvaluateObject(sc->handle, "_ON", NULL, NULL);
-		if (ACPI_SUCCESS(status)) {
-			device_printf(dev, "Called _ON method successfully\n");
-			DELAY(100000);  /* 100ms */
-		}
-	}
-
-	/* Try _PS0 (D0 power state) */
-	{
-		ACPI_STATUS status;
-		status = AcpiEvaluateObject(sc->handle, "_PS0", NULL, NULL);
-		if (ACPI_SUCCESS(status)) {
-			device_printf(dev, "Called _PS0 method successfully\n");
-			DELAY(100000);
-		} else {
-			device_printf(dev, "No _PS0 method (status=0x%x)\n",
-			    status);
-		}
-	}
-
-	/* Also try acpi_pwr_switch_consumer */
-	if (ACPI_FAILURE(acpi_pwr_switch_consumer(sc->handle, ACPI_STATE_D0))) {
-		device_printf(dev, "Warning: acpi_pwr_switch_consumer failed\n");
-	}
-
-	/* Try _INI method if available (ACPI device initialization) */
-	{
-		ACPI_STATUS status;
-		status = AcpiEvaluateObject(sc->handle, "_INI", NULL, NULL);
-		if (ACPI_SUCCESS(status)) {
-			device_printf(dev, "Called _INI method successfully\n");
-			DELAY(100000);  /* 100ms */
-		} else if (status != AE_NOT_FOUND) {
-			device_printf(dev, "Warning: _INI method failed (0x%x)\n",
-			    status);
-		}
-	}
-
-	/*
-	 * Try to find and power on the parent LPE device
-	 * The SST DSP might be gated by the LPE (Low Power Engine)
-	 */
-	{
-		ACPI_HANDLE parent;
-		ACPI_STATUS status;
-
-		status = AcpiGetParent(sc->handle, &parent);
-		if (ACPI_SUCCESS(status) && parent != NULL) {
-			char path[128];
-			ACPI_BUFFER buf = { sizeof(path), path };
-
-			AcpiGetName(parent, ACPI_FULL_PATHNAME, &buf);
-			device_printf(dev, "Parent device: %s\n", path);
-
-			/* Try to power on parent */
-			AcpiEvaluateObject(parent, "_PS0", NULL, NULL);
-		}
-	}
-
-	DELAY(200000);  /* 200ms total settle time */
-
-	/*
-	 * Try _DSM (Device Specific Method) if available
-	 * Intel audio devices sometimes require _DSM calls
-	 */
-	{
-		ACPI_OBJECT_LIST args;
-		ACPI_OBJECT arg[4];
-		ACPI_BUFFER result = { ACPI_ALLOCATE_BUFFER, NULL };
-		ACPI_STATUS status;
-
-		/* Intel Audio DSM UUID: a69f886e-6ceb-4594-a41f-7b5dce24c553 */
-		static uint8_t intel_dsm_uuid[] = {
-			0x6e, 0x88, 0x9f, 0xa6, 0xeb, 0x6c, 0x94, 0x45,
-			0xa4, 0x1f, 0x7b, 0x5d, 0xce, 0x24, 0xc5, 0x53
-		};
-
-		arg[0].Type = ACPI_TYPE_BUFFER;
-		arg[0].Buffer.Length = 16;
-		arg[0].Buffer.Pointer = intel_dsm_uuid;
-
-		arg[1].Type = ACPI_TYPE_INTEGER;
-		arg[1].Integer.Value = 1;  /* Revision */
-
-		arg[2].Type = ACPI_TYPE_INTEGER;
-		arg[2].Integer.Value = 0;  /* Function 0: query */
-
-		arg[3].Type = ACPI_TYPE_PACKAGE;
-		arg[3].Package.Count = 0;
-		arg[3].Package.Elements = NULL;
-
-		args.Count = 4;
-		args.Pointer = arg;
-
-		status = AcpiEvaluateObject(sc->handle, "_DSM", &args, &result);
-		if (ACPI_SUCCESS(status)) {
-			device_printf(dev, "_DSM query successful\n");
-			if (result.Pointer)
-				AcpiOsFree(result.Pointer);
-
-			/* Try function 1: enable */
-			arg[2].Integer.Value = 1;
-			result.Length = ACPI_ALLOCATE_BUFFER;
-			result.Pointer = NULL;
-
-			status = AcpiEvaluateObject(sc->handle, "_DSM",
-			    &args, &result);
-			if (ACPI_SUCCESS(status)) {
-				device_printf(dev,
-				    "_DSM enable function called\n");
-				if (result.Pointer)
-					AcpiOsFree(result.Pointer);
-			}
-		} else {
-			device_printf(dev, "No _DSM method\n");
-		}
-	}
-
-	/*
-	 * Check for power resource dependencies (_PR0)
-	 */
-	{
-		ACPI_STATUS status;
-		ACPI_BUFFER result = { ACPI_ALLOCATE_BUFFER, NULL };
-
-		status = AcpiEvaluateObject(sc->handle, "_PR0", NULL, &result);
-		if (ACPI_SUCCESS(status)) {
-			ACPI_OBJECT *obj = result.Pointer;
-			if (obj && obj->Type == ACPI_TYPE_PACKAGE) {
-				device_printf(dev,
-				    "_PR0 has %d power resources\n",
-				    obj->Package.Count);
-
-				/* Try to turn on each power resource */
-				for (UINT32 i = 0; i < obj->Package.Count; i++) {
-					ACPI_OBJECT *ref =
-					    &obj->Package.Elements[i];
-					if (ref->Type == ACPI_TYPE_LOCAL_REFERENCE) {
-						AcpiEvaluateObject(
-						    ref->Reference.Handle,
-						    "_ON", NULL, NULL);
-						device_printf(dev,
-						    "  Turned on power resource %d\n", i);
-					}
-				}
-				DELAY(100000);
-			}
-			if (result.Pointer)
-				AcpiOsFree(result.Pointer);
-		}
-	}
-
-	/*
-	 * 1.5 Check PCH RCBA for Function Disable bits
-	 * RCBA (Root Complex Base Address) contains Function Disable registers
-	 * FD2 at RCBA+0x3428 may have ADSP disabled at PCH level
-	 * RCBA is at LPC bridge (0:31:0) config offset 0xF0
-	 */
-	{
-		uint32_t rcba_reg, rcba_base;
-		uint32_t fd2;
-		bus_space_tag_t mem_tag;
-		bus_space_handle_t rcba_handle;
-		int map_err;
-
-		/* Read RCBA from LPC bridge config space */
-		rcba_reg = pci_cfgregread(0, 0, 0x1F, 0, 0xF0, 4);
-		rcba_base = rcba_reg & 0xFFFFC000;  /* Bits 14-31 */
-
-		device_printf(dev, "PCH RCBA Check:\n");
-		device_printf(dev, "  RCBA reg (0xF0): 0x%08x\n", rcba_reg);
-		device_printf(dev, "  RCBA base: 0x%08x\n", rcba_base);
-		device_printf(dev, "  RCBA enabled: %s\n",
-		    (rcba_reg & 1) ? "yes" : "no");
-
-		if (rcba_base != 0 && rcba_base != 0xFFFFC000 &&
-		    (rcba_reg & 1)) {
-			/*
-			 * Map RCBA to read/write FD2
-			 * FD2 (Function Disable 2) is at offset 0x3428
-			 * ADSPD bit is bit 1 in FD2
-			 */
-			mem_tag = X86_BUS_SPACE_MEM;
-			map_err = bus_space_map(mem_tag, rcba_base, 0x4000,
-			    0, &rcba_handle);
-
-			if (map_err == 0) {
-				uint32_t fd1;
-
-				/* Read FD1 at offset 0x3418 */
-				fd1 = bus_space_read_4(mem_tag, rcba_handle,
-				    0x3418);
-				device_printf(dev, "  FD1 (0x3418): 0x%08x\n",
-				    fd1);
-
-				/* Read FD2 at offset 0x3428 */
-				fd2 = bus_space_read_4(mem_tag, rcba_handle,
-				    0x3428);
-				device_printf(dev, "  FD2 (0x3428): 0x%08x\n",
-				    fd2);
-
-				/*
-				 * Check if ADSPD (Audio DSP Disable) bit 1 is set
-				 * If set, the ADSP is disabled at PCH level
-				 */
-				if (fd2 & (1 << 1)) {
-					device_printf(dev,
-					    "WARNING: ADSP is DISABLED in PCH FD2!\n");
-					device_printf(dev,
-					    "  Attempting to enable ADSP...\n");
-
-					/* Clear ADSPD bit to enable ADSP */
-					fd2 &= ~(1 << 1);
-					bus_space_write_4(mem_tag, rcba_handle,
-					    0x3428, fd2);
-					DELAY(100000);  /* 100ms */
-
-					fd2 = bus_space_read_4(mem_tag,
-					    rcba_handle, 0x3428);
-					device_printf(dev,
-					    "  FD2 after: 0x%08x\n", fd2);
-				} else {
-					device_printf(dev,
-					    "  ADSP is enabled in FD2\n");
-				}
-
-				bus_space_unmap(mem_tag, rcba_handle, 0x4000);
-			} else {
-				device_printf(dev,
-				    "  Failed to map RCBA: %d\n", map_err);
-			}
-		}
-	}
-
-	/*
-	 * 1.6 Direct GPIO control for audio power
-	 * ACPI PAUD power resource uses GPIO 0x4C to control audio power
-	 * GPIO base is at LPC bridge (0:0x1F:0) config offset 0x48, bits 7-15
-	 * GPIO register = GPIO_BASE + 0x100 + (pin * 8)
-	 * Bit 31 = output value
-	 */
-	{
-		uint32_t lpc_gpio_reg, gpio_base;
-		uint32_t gpio_addr, gpio_val;
-
-		/* Read GPIO base from LPC bridge config space */
-		/* LPC bridge is at bus 0, device 0x1F, function 0 */
-		lpc_gpio_reg = pci_cfgregread(0, 0, 0x1F, 0, 0x48, 4);
-		gpio_base = (lpc_gpio_reg >> 7) << 7;  /* bits 7-15, shifted */
-
-		device_printf(dev, "GPIO Control:\n");
-		device_printf(dev, "  LPC GPIO reg (0x48): 0x%08x\n",
-		    lpc_gpio_reg);
-		device_printf(dev, "  GPIO Base: 0x%08x\n", gpio_base);
-
-		if (gpio_base != 0 && gpio_base != 0xFFFFFFFF) {
-			/* GPIO 0x4C (76) register address */
-			gpio_addr = gpio_base + 0x100 + (0x4C * 8);
-			device_printf(dev, "  GPIO 0x4C addr: 0x%08x\n",
-			    gpio_addr);
-
-			/* Read current GPIO 0x4C state via I/O port */
-			gpio_val = inl(gpio_addr);
-			device_printf(dev, "  GPIO 0x4C value: 0x%08x "
-			    "(bit31=%d)\n", gpio_val, (gpio_val >> 31) & 1);
-
-			/* If bit 31 is not set, try to enable audio power */
-			if ((gpio_val & (1U << 31)) == 0) {
-				device_printf(dev,
-				    "  Enabling audio power (GPIO 0x4C)...\n");
-				gpio_val |= (1U << 31);
-				outl(gpio_addr, gpio_val);
-				DELAY(100000);  /* 100ms */
-
-				/* Verify */
-				gpio_val = inl(gpio_addr);
-				device_printf(dev,
-				    "  GPIO 0x4C after: 0x%08x (bit31=%d)\n",
-				    gpio_val, (gpio_val >> 31) & 1);
-			}
-		}
-	}
-
-	/*
-	 * 2. Allocate BAR1 FIRST for power control
-	 * BAR0 must be allocated AFTER power-up to get valid mapping
-	 */
+	/* ---- Phase 2: Allocate BAR1 (PCI config mirror) ---- */
 	sc->shim_rid = 1;
 	sc->shim_res = bus_alloc_resource_any(dev, SYS_RES_MEMORY,
-					      &sc->shim_rid, RF_ACTIVE);
+	    &sc->shim_rid, RF_ACTIVE);
 	if (sc->shim_res == NULL) {
-		device_printf(dev, "Failed to allocate PCI config resource\n");
+		device_printf(dev, "Failed to allocate BAR1 resource\n");
 		error = ENXIO;
 		goto fail;
 	}
+	device_printf(dev, "BAR1: 0x%lx (size: 0x%lx)\n",
+	    rman_get_start(sc->shim_res), rman_get_size(sc->shim_res));
 
-	device_printf(dev, "PCI Config (BAR1): 0x%lx, Size: 0x%lx\n",
-		      rman_get_start(sc->shim_res), rman_get_size(sc->shim_res));
+	/* Dump PCI config via BAR1 */
+	sst_dump_pci_config(sc);
 
-	/*
-	 * Try to get PCI address via _ADR method
-	 * Format: 0xDDDDFFFF where DDDD=device, FFFF=function
-	 */
+	/* Force enable Memory Space + Bus Master via BAR1 */
 	{
-		ACPI_STATUS status;
-		UINT32 adr;
-
-		status = acpi_GetInteger(sc->handle, "_ADR", &adr);
-		if (ACPI_SUCCESS(status)) {
-			device_printf(dev, "ACPI _ADR: 0x%x (dev=%u, func=%u)\n",
-			    adr,
-			    (adr >> 16) & 0xFFFF,
-			    adr & 0xFFFF);
+		uint16_t cmd16 = bus_read_2(sc->shim_res, 0x04);
+		if ((cmd16 & 0x06) != 0x06) {
+			cmd16 |= 0x06;
+			bus_write_2(sc->shim_res, 0x04, cmd16);
+			DELAY(10000);
 		}
 	}
 
-	/*
-	 * CRITICAL: Call ACPI power resource to enable audio!
-	 * The DSDT has a PAUD PowerResource that controls GPIO 0x4C (76)
-	 * which enables the audio memory decoder.
-	 *
-	 * Method 1: Try calling \_SB.PCI0.PAUD._ON directly
-	 * Method 2: Try toggling GPIO 76 directly via I/O ports
-	 */
-	{
-		ACPI_STATUS status;
-		ACPI_HANDLE paud_handle;
-		ACPI_OBJECT_LIST arg_list;
-		arg_list.Count = 0;
-		arg_list.Pointer = NULL;
+	/* ---- Phase 3: WPT Power-Up Sequence ---- */
+	sst_wpt_power_up(sc);
 
-		device_printf(dev, "=== ACPI Power Resource Activation ===\n");
-
-		/* Try to find and call PAUD._ON */
-		status = AcpiGetHandle(NULL, "\\_SB.PCI0.PAUD", &paud_handle);
-		if (ACPI_SUCCESS(status)) {
-			device_printf(dev, "  Found PAUD power resource\n");
-
-			/* Try calling _ON method */
-			status = AcpiEvaluateObject(paud_handle, "_ON", &arg_list, NULL);
-			if (ACPI_SUCCESS(status)) {
-				device_printf(dev, "  PAUD._ON called successfully!\n");
-			} else {
-				device_printf(dev, "  PAUD._ON failed: 0x%x\n", status);
-			}
-
-			/* Check _STA */
-			ACPI_BUFFER sta_buf;
-			ACPI_OBJECT sta_obj;
-			sta_buf.Length = sizeof(sta_obj);
-			sta_buf.Pointer = &sta_obj;
-			status = AcpiEvaluateObject(paud_handle, "_STA", NULL, &sta_buf);
-			if (ACPI_SUCCESS(status) && sta_obj.Type == ACPI_TYPE_INTEGER) {
-				device_printf(dev, "  PAUD._STA: %llu\n",
-				    (unsigned long long)sta_obj.Integer.Value);
-			}
-		} else {
-			device_printf(dev, "  PAUD not found (0x%x), trying GPIO directly\n",
-			    status);
-		}
-
-		/*
-		 * Method 2: Direct GPIO access
-		 * GPIO base = GPBA << 7 = 0x1C00 << 7 = 0xE0000 (SystemIO)
-		 * GPIO 76 register = base + 0x100 + (76 * 8) = base + 0x360
-		 * Bit 31 = output value
-		 *
-		 * Actually, for Lynx/Wildcat Point, GPIO base is typically
-		 * around 0x800 from LPC config space register 0x48
-		 */
-		device_printf(dev, "  Trying direct GPIO 76 toggle...\n");
-		{
-			/* Read GPIO base from LPC Bridge (bus 0, dev 31, func 0) */
-			uint32_t gpio_base_reg = pci_cfgregread(0, 0, 31, 0, 0x48, 4);
-			uint32_t gpio_base = gpio_base_reg & 0xFF80; /* Bits 15:7 */
-			uint32_t gpio76_reg = gpio_base + 0x100 + (76 * 8);
-
-			device_printf(dev, "  LPC GPIO_BASE reg [0x48]: 0x%08x\n", gpio_base_reg);
-			device_printf(dev, "  GPIO base: 0x%x\n", gpio_base);
-			device_printf(dev, "  GPIO 76 register: 0x%x\n", gpio76_reg);
-
-			if (gpio_base != 0 && gpio_base != 0xFF80) {
-				/* Read current GPIO 76 value */
-				uint32_t gpio_val = inl(gpio76_reg);
-				device_printf(dev, "  GPIO 76 current: 0x%08x (bit31=%d)\n",
-				    gpio_val, (gpio_val >> 31) & 1);
-
-				/* Set bit 31 (output high) to enable audio */
-				gpio_val |= 0x80000000;
-				outl(gpio76_reg, gpio_val);
-				DELAY(10000);
-
-				/* Verify */
-				gpio_val = inl(gpio76_reg);
-				device_printf(dev, "  GPIO 76 after set: 0x%08x (bit31=%d)\n",
-				    gpio_val, (gpio_val >> 31) & 1);
-			} else {
-				device_printf(dev, "  Invalid GPIO base, skipping\n");
-			}
-		}
-
-		/* Test BAR0 after GPIO toggle */
-		device_printf(dev, "  Testing BAR0 after power-up...\n");
-		{
-			bus_space_tag_t mem_tag = X86_BUS_SPACE_MEM;
-			bus_space_handle_t test_handle;
-
-			if (bus_space_map(mem_tag, 0xfe000000, 0x1000, 0,
-			    &test_handle) == 0) {
-				uint32_t test_val = bus_space_read_4(mem_tag, test_handle, 0);
-				device_printf(dev, "  BAR0[0]: 0x%08x%s\n", test_val,
-				    test_val != 0xFFFFFFFF ? " <-- ENABLED!" : " (still disabled)");
-				bus_space_unmap(mem_tag, test_handle, 0x1000);
-			}
-		}
-	}
-
-	/*
-	 * WPT (Wildcat Point = Broadwell-U) Power-Up Sequence
-	 * Based on Linux catpt driver dsp.c:catpt_dsp_power_up()
-	 *
-	 * CRITICAL: WPT has DIFFERENT bit positions than LPT (Haswell)!
-	 * WPT VDRTCTL0:
-	 *   Bit 0:  D3PGD (D3 Power Gate Disable)
-	 *   Bit 1:  D3SRAMPGD (D3 SRAM Power Gate Disable)
-	 *   Bits 2-11: ISRAMPGE (Instruction SRAM Power Gate Enable)
-	 *   Bits 12-19: DSRAMPGE (Data SRAM Power Gate Enable)
-	 * WPT VDRTCTL2:
-	 *   Bit 1:  DCLCGE (Dynamic Clock Gating Enable)
-	 *   Bit 10: DTCGE (Trunk Clock Gating Enable)
-	 *   Bit 31: APLLSE (Audio PLL Shutdown Enable)
-	 */
-	{
-		uint32_t vdrtctl0, vdrtctl2, pmcs;
-
-		device_printf(dev, "=== WPT (Broadwell) Power-Up Sequence ===\n");
-
-		/*
-		 * Step 1: Disable clock gating FIRST
-		 * Must disable before any other power operations
-		 */
-		vdrtctl2 = bus_read_4(sc->shim_res, SST_PCI_VDRTCTL2);
-		device_printf(dev, "Step 1: VDRTCTL2 before: 0x%08x\n", vdrtctl2);
-
-		/* Clear DCLCGE (bit 1) to disable dynamic clock gating */
-		vdrtctl2 &= ~SST_VDRTCTL2_DCLCGE;
-		bus_write_4(sc->shim_res, SST_PCI_VDRTCTL2, vdrtctl2);
-		DELAY(50000);  /* 50ms */
-
-		/*
-		 * Step 2: Set D0 power state via PMCS
-		 */
-		pmcs = bus_read_4(sc->shim_res, SST_PCI_PMCS);
-		device_printf(dev, "Step 2: PMCS before: 0x%08x (D%d)\n",
-		    pmcs, pmcs & SST_PMCS_PS_MASK);
-
-		if ((pmcs & SST_PMCS_PS_MASK) != SST_PMCS_PS_D0) {
-			pmcs = (pmcs & ~SST_PMCS_PS_MASK) | SST_PMCS_PS_D0;
-			bus_write_4(sc->shim_res, SST_PCI_PMCS, pmcs);
-			DELAY(100000);  /* 100ms for D3->D0 transition */
-			pmcs = bus_read_4(sc->shim_res, SST_PCI_PMCS);
-			device_printf(dev, "  PMCS after: 0x%08x (D%d)\n",
-			    pmcs, pmcs & SST_PMCS_PS_MASK);
-		}
-
-		/*
-		 * Step 3: Disable D3 power gating (WPT bits 0-1)
-		 */
-		vdrtctl0 = bus_read_4(sc->shim_res, SST_PCI_VDRTCTL0);
-		device_printf(dev, "Step 3: VDRTCTL0 before: 0x%08x\n", vdrtctl0);
-
-		/* Set D3PGD (bit 0) and D3SRAMPGD (bit 1) to disable D3 power gating */
-		vdrtctl0 |= SST_WPT_VDRTCTL0_D3PGD;      /* Bit 0 */
-		vdrtctl0 |= SST_WPT_VDRTCTL0_D3SRAMPGD;  /* Bit 1 */
-		bus_write_4(sc->shim_res, SST_PCI_VDRTCTL0, vdrtctl0);
-		DELAY(50000);  /* 50ms */
-
-		/*
-		 * Step 4: Power on ALL SRAM banks
-		 * SET ISRAMPGE (bits 2-11) and DSRAMPGE (bits 12-19)
-		 * Per Linux catpt driver: setting these bits = SRAM powered ON
-		 * ISRAMPGE = 10 bits for 10 IRAM blocks (bits 2-11)
-		 * DSRAMPGE = 8 bits for 8 DRAM blocks (bits 12-19)
-		 */
-		vdrtctl0 = bus_read_4(sc->shim_res, SST_PCI_VDRTCTL0);
-		vdrtctl0 |= SST_WPT_VDRTCTL0_ISRAMPGE_MASK;  /* Set bits 2-11 */
-		vdrtctl0 |= SST_WPT_VDRTCTL0_DSRAMPGE_MASK;  /* Set bits 12-19 */
-		bus_write_4(sc->shim_res, SST_PCI_VDRTCTL0, vdrtctl0);
-		DELAY(60);  /* 60us per catpt driver */
-
-		vdrtctl0 = bus_read_4(sc->shim_res, SST_PCI_VDRTCTL0);
-		device_printf(dev, "Step 4: VDRTCTL0 after SRAM on: 0x%08x\n",
-		    vdrtctl0);
-
-		/*
-		 * Step 5: Enable Audio PLL (WPT: clear APLLSE bit 31 in VDRTCTL2)
-		 */
-		vdrtctl2 = bus_read_4(sc->shim_res, SST_PCI_VDRTCTL2);
-		device_printf(dev, "Step 5: VDRTCTL2 before PLL: 0x%08x\n", vdrtctl2);
-
-		if (vdrtctl2 & SST_VDRTCTL2_APLLSE_MASK) {
-			vdrtctl2 &= ~SST_VDRTCTL2_APLLSE_MASK;  /* Clear bit 31 */
-			bus_write_4(sc->shim_res, SST_PCI_VDRTCTL2, vdrtctl2);
-			DELAY(100000);  /* 100ms for PLL lock */
-		}
-
-		/*
-		 * Step 6: Also clear DTCGE (bit 10) for trunk clock
-		 */
-		vdrtctl2 = bus_read_4(sc->shim_res, SST_PCI_VDRTCTL2);
-		vdrtctl2 &= ~SST_VDRTCTL2_DTCGE;
-		bus_write_4(sc->shim_res, SST_PCI_VDRTCTL2, vdrtctl2);
-		DELAY(50000);
-
-		vdrtctl2 = bus_read_4(sc->shim_res, SST_PCI_VDRTCTL2);
-		device_printf(dev, "Step 6: VDRTCTL2 after: 0x%08x\n", vdrtctl2);
-
-		/*
-		 * Step 7: Re-enable clock gating (per catpt driver)
-		 */
-		vdrtctl2 |= SST_VDRTCTL2_DCLCGE;
-		bus_write_4(sc->shim_res, SST_PCI_VDRTCTL2, vdrtctl2);
-
-		/* Final state dump */
-		device_printf(dev, "=== Power-Up Complete ===\n");
-		device_printf(dev, "  VDRTCTL0: 0x%08x\n",
-		    bus_read_4(sc->shim_res, SST_PCI_VDRTCTL0));
-		device_printf(dev, "  VDRTCTL2: 0x%08x\n",
-		    bus_read_4(sc->shim_res, SST_PCI_VDRTCTL2));
-		device_printf(dev, "  PMCS:     0x%08x\n",
-		    bus_read_4(sc->shim_res, SST_PCI_PMCS));
-	}
-
-	/*
-	 * Step 8: Dump additional PCI extended config registers
-	 * These registers control IPC and DMA access
-	 */
-	{
-		device_printf(dev, "Step 8: Extended PCI config dump...\n");
-		device_printf(dev, "  IMC (0xE4): 0x%08x\n",
-		    bus_read_4(sc->shim_res, SST_PCI_IMC));
-		device_printf(dev, "  IMD (0xEC): 0x%08x\n",
-		    bus_read_4(sc->shim_res, SST_PCI_IMD));
-		device_printf(dev, "  IPCC (0xE0): 0x%08x\n",
-		    bus_read_4(sc->shim_res, SST_PCI_IPCC));
-		device_printf(dev, "  IPCD (0xE8): 0x%08x\n",
-		    bus_read_4(sc->shim_res, SST_PCI_IPCD_REG));
-	}
-
-	/*
-	 * Step 9: Clear Interrupt Masks via IMC register
-	 * This enables IPC doorbell and completion interrupts
-	 */
-	{
-		uint32_t imc;
-
-		device_printf(dev, "Step 9: Clearing interrupt masks...\n");
-		imc = bus_read_4(sc->shim_res, SST_PCI_IMC);
-		device_printf(dev, "  IMC before: 0x%08x\n", imc);
-
-		/* Write to IMC to clear doorbell and completion bits */
-		bus_write_4(sc->shim_res, SST_PCI_IMC,
-		    SST_IMC_IPCDB | SST_IMC_IPCCD);
-		DELAY(1000);
-
-		imc = bus_read_4(sc->shim_res, SST_PCI_IMC);
-		device_printf(dev, "  IMC after: 0x%08x\n", imc);
-	}
-
-	/*
-	 * Step 10: Set default IMD (Interrupt Mask Set) register
-	 */
-	{
-		device_printf(dev, "Step 10: Setting IMD default...\n");
-		device_printf(dev, "  IMD before: 0x%08x\n",
-		    bus_read_4(sc->shim_res, SST_PCI_IMD));
-
-		bus_write_4(sc->shim_res, SST_PCI_IMD, SST_IMD_DEFAULT);
-		DELAY(1000);
-
-		device_printf(dev, "  IMD after: 0x%08x\n",
-		    bus_read_4(sc->shim_res, SST_PCI_IMD));
-	}
-
-	/*
-	 * 2.1 Verify BAR1 is PCI config mirror and read diagnostic info
-	 * BAR1 at 0xfe100000 can be used to access PCI config space
-	 * Power-up was already done above with correct WPT sequence
-	 */
-	{
-		uint32_t cmd;
-
-		/* Dump PCI config space via BAR1 (shim_res) for diagnostics */
-		device_printf(dev, "PCI Config Space (via BAR1 mirror):\n");
-		device_printf(dev, "  DevID/VenID: 0x%08x\n",
-		    bus_read_4(sc->shim_res, 0x00));
-		cmd = bus_read_4(sc->shim_res, 0x04);
-		device_printf(dev, "  Status/Cmd:  0x%08x\n", cmd);
-		device_printf(dev, "  Class/Rev:   0x%08x\n",
-		    bus_read_4(sc->shim_res, 0x08));
-		device_printf(dev, "  PCI BAR0:    0x%08x\n",
-		    bus_read_4(sc->shim_res, 0x10));
-		device_printf(dev, "  PCI BAR1:    0x%08x\n",
-		    bus_read_4(sc->shim_res, 0x14));
-
-		/* Force enable Memory Space (bit 1) and Bus Master (bit 2) */
-		{
-			uint16_t cmd16 = bus_read_2(sc->shim_res, 0x04);
-			if ((cmd16 & 0x06) != 0x06) {
-				device_printf(dev, "Enabling Memory + BusMaster...\n");
-				cmd16 |= 0x06;
-				bus_write_2(sc->shim_res, 0x04, cmd16);
-				DELAY(10000);
-				device_printf(dev, "  Cmd after:  0x%04x\n",
-				    bus_read_2(sc->shim_res, 0x04));
-			}
-		}
-
-		/* Final BAR verification */
-		device_printf(dev, "  Final BAR0:  0x%08x\n",
-		    bus_read_4(sc->shim_res, 0x10));
-	}
-
-	/*
-	 * 2.2 Test direct BAR0 access via manual mapping
-	 * This helps diagnose if the issue is FreeBSD resource allocation
-	 * or actual hardware inaccessibility
-	 */
-	{
-		uint32_t bar0_addr = bus_read_4(sc->shim_res, 0x10);
-		device_printf(dev, "Testing BAR0 @ 0x%08x directly...\n",
-		    bar0_addr);
-
-		/* BAR0 should be 0xFE000000 based on PCI config */
-		if (bar0_addr != 0 && bar0_addr != 0xFFFFFFFF) {
-			/*
-			 * Try mapping a small region directly using
-			 * bus_space operations to test if memory responds
-			 */
-			bus_space_tag_t bst = rman_get_bustag(sc->shim_res);
-			bus_space_handle_t bsh;
-			int map_err;
-
-			map_err = bus_space_map(bst, bar0_addr & ~0xF,
-			    0x1000, 0, &bsh);
-			if (map_err == 0) {
-				uint32_t test_val;
-
-				/* Try reading SHIM CSR at 0xC0000 */
-				device_printf(dev,
-				    "Direct mapping successful!\n");
-				/*
-				 * Note: This maps only first 4KB,
-				 * can't reach 0xC0000
-				 * Just test first word
-				 */
-				test_val = bus_space_read_4(bst, bsh, 0);
-				device_printf(dev,
-				    "  Direct BAR0[0]: 0x%08x\n", test_val);
-
-				bus_space_unmap(bst, bsh, 0x1000);
-			} else {
-				device_printf(dev,
-				    "Direct mapping failed: %d\n", map_err);
-			}
-		}
-	}
-
-	/*
-	 * 2.3 NOW allocate BAR0 after power-up is complete
-	 * This ensures the memory mapping is valid
-	 */
+	/* ---- Phase 4: Allocate and Test BAR0 ---- */
 	sc->mem_rid = 0;
 	sc->mem_res = bus_alloc_resource_any(dev, SYS_RES_MEMORY,
-					     &sc->mem_rid, RF_ACTIVE);
+	    &sc->mem_rid, RF_ACTIVE);
 	if (sc->mem_res == NULL) {
-		device_printf(dev, "Failed to allocate DSP memory resource\n");
+		device_printf(dev, "Failed to allocate BAR0 resource\n");
 		error = ENXIO;
 		goto fail;
 	}
+	device_printf(dev, "BAR0: 0x%lx (size: 0x%lx)\n",
+	    rman_get_start(sc->mem_res), rman_get_size(sc->mem_res));
 
-	device_printf(dev, "DSP Memory (BAR0): 0x%lx, Size: 0x%lx\n",
-		      rman_get_start(sc->mem_res), rman_get_size(sc->mem_res));
+	/* Test BAR0 */
+	bar0_ok = sst_test_bar0(sc);
+	device_printf(dev, "BAR0 test: %s\n",
+	    bar0_ok ? "ACCESSIBLE" : "DEAD (0xFFFFFFFF)");
 
-	/* 2.3 Probe DSP memory layout */
-	device_printf(dev, "Probing DSP memory layout:\n");
-	device_printf(dev, "  BAR0+0x00000 (IRAM): 0x%08x\n",
-	    bus_read_4(sc->mem_res, 0x00000));
-	device_printf(dev, "  BAR0+0x80000 (DRAM): 0x%08x\n",
-	    bus_read_4(sc->mem_res, 0x80000));
-	device_printf(dev, "  BAR0+0xC0000 (SHIM): 0x%08x\n",
-	    bus_read_4(sc->mem_res, 0xC0000));
-	device_printf(dev, "  BAR0+0xE0000 (MBOX): 0x%08x\n",
-	    bus_read_4(sc->mem_res, 0xE0000));
-	if (sc->shim_res != NULL) {
-		device_printf(dev, "  BAR1+0x00 (SHIM mirror?): 0x%08x\n",
-		    bus_read_4(sc->shim_res, 0x00));
+	if (bar0_ok) {
+		/* Probe DSP memory regions */
+		device_printf(dev, "DSP Memory Layout:\n");
+		device_printf(dev, "  IRAM  (0x%05x): 0x%08x\n",
+		    SST_IRAM_OFFSET,
+		    bus_read_4(sc->mem_res, SST_IRAM_OFFSET));
+		device_printf(dev, "  DRAM  (0x%05x): 0x%08x\n",
+		    SST_DRAM_OFFSET,
+		    bus_read_4(sc->mem_res, SST_DRAM_OFFSET));
+		device_printf(dev, "  SHIM  (0x%05x): 0x%08x\n",
+		    SST_SHIM_OFFSET,
+		    bus_read_4(sc->mem_res, SST_SHIM_OFFSET));
+		device_printf(dev, "  MBOX  (0x%05x): 0x%08x\n",
+		    SST_MBOX_OUTBOX_OFFSET,
+		    bus_read_4(sc->mem_res, SST_MBOX_OUTBOX_OFFSET));
+
+		csr = sst_shim_read(sc, SST_SHIM_CSR);
+		device_printf(dev, "  SHIM CSR: 0x%08x\n", csr);
+
+		/* Continue with full DSP initialization... */
+		goto dsp_init;
 	}
 
-	/* Try SHIM at BAR0 + 0xC0000 first */
-	csr = sst_shim_read(sc, SST_SHIM_CSR);
-	ipcx = sst_shim_read(sc, SST_SHIM_IPCX);
+	/* ---- Phase 5: BAR0 Failed - Diagnose ---- */
+	device_printf(dev, "=== BAR0 inaccessible - diagnosing ===\n");
 
-	device_printf(dev, "SHIM Register Dump (BAR0+0x%x):\n", SST_SHIM_OFFSET);
-	device_printf(dev, "  CSR : 0x%08x\n", csr);
-	device_printf(dev, "  IPCX: 0x%08x\n", ipcx);
-	device_printf(dev, "  PISR: 0x%08x\n", sst_shim_read(sc, SST_SHIM_PISR));
-	device_printf(dev, "  IMRX: 0x%08x\n", sst_shim_read(sc, SST_SHIM_IMRX));
+	/* Dump PCH state for diagnostics */
+	sst_dump_pch_state(sc);
 
-	/* Sanity check */
-	if (csr == SST_INVALID_REG_VALUE) {
-		device_printf(dev, "Error: Registers read 0xFFFFFFFF\n");
+	/* Read GNVS (BIOS NVS Area) variables to understand LPSS config.
+	 * The LPSS fabric is configured by DSDT based on OSYS value.
+	 * If OSYS < 0x07DC (Windows 2012), the DSDT puts LPSS devices
+	 * to D3 sleep and doesn't initialize the memory fabric. */
+	{
+		bus_space_tag_t mt = X86_BUS_SPACE_MEM;
+		bus_space_handle_t gnvs_handle;
+		int map_err;
 
-		/*
-		 * BRUTE FORCE: Try to find DSP at different memory addresses
-		 * The ACPI-provided address might not be where the hardware
-		 * is actually mapped. Scan common LPSS memory regions.
-		 */
-		device_printf(dev, "=== BRUTE FORCE MEMORY SCAN ===\n");
+		device_printf(dev, "=== BIOS NVS Variables ===\n");
+
+		map_err = bus_space_map(mt, PCH_GNVS_BASE, PCH_GNVS_SIZE,
+		    0, &gnvs_handle);
+		if (map_err == 0) {
+			uint16_t osys_val;
+			uint8_t s0id_val, ancs_val;
+
+			/* OSYS at offset 0x00 (16-bit) */
+			osys_val = bus_space_read_2(mt, gnvs_handle, 0x00);
+			device_printf(dev, "  OSYS: 0x%04x (%s)\n",
+			    osys_val,
+			    osys_val >= 0x07DC ? "Windows 8+" :
+			    osys_val >= 0x07D9 ? "Windows 7" :
+			    "Pre-Win7");
+
+			/* Read all bytes at known approximate offsets
+			 * and dump relevant range for S0ID, ANCS, SMD0 */
+			{
+				int i;
+				device_printf(dev,
+				    "  GNVS raw [0x1C0-0x1D0]:");
+				for (i = 0x1C0; i < 0x1D0; i++) {
+					if ((i & 0xF) == 0)
+						device_printf(dev,
+						    "\n    [0x%03x]:", i);
+					printf(" %02x",
+					    bus_space_read_1(mt,
+					    gnvs_handle, i));
+				}
+				printf("\n");
+			}
+
+			/* Try to read S0ID, ANCS by evaluating ACPI
+			 * variables directly */
+			{
+				ACPI_STATUS ast;
+				UINT32 aval;
+
+				ast = acpi_GetInteger(ACPI_ROOT_OBJECT,
+				    "\\S0ID", &aval);
+				if (ACPI_SUCCESS(ast)) {
+					s0id_val = (uint8_t)aval;
+					device_printf(dev,
+					    "  S0ID: %d (%s)\n",
+					    s0id_val,
+					    s0id_val ?
+					    "Connected Standby" :
+					    "No CS");
+				} else {
+					device_printf(dev,
+					    "  S0ID: (cannot read)\n");
+					s0id_val = 0;
+				}
+
+				ast = acpi_GetInteger(ACPI_ROOT_OBJECT,
+				    "\\ANCS", &aval);
+				if (ACPI_SUCCESS(ast)) {
+					ancs_val = (uint8_t)aval;
+					device_printf(dev,
+					    "  ANCS: %d (%s)\n",
+					    ancs_val,
+					    ancs_val ?
+					    "Audio Not CS" : "Normal");
+				} else {
+					device_printf(dev,
+					    "  ANCS: (cannot read)\n");
+					ancs_val = 0;
+				}
+
+				ast = acpi_GetInteger(ACPI_ROOT_OBJECT,
+				    "\\SMD0", &aval);
+				if (ACPI_SUCCESS(ast)) {
+					device_printf(dev,
+					    "  SMD0: %d (%s)\n",
+					    (int)aval,
+					    aval == 0 ? "Disabled" :
+					    aval == 1 ? "PCI mode" :
+					    aval == 2 ? "ACPI mode" :
+					    "Unknown");
+				} else {
+					device_printf(dev,
+					    "  SMD0: (cannot read)\n");
+				}
+
+				ast = acpi_GetInteger(ACPI_ROOT_OBJECT,
+				    "\\SB10", &aval);
+				if (ACPI_SUCCESS(ast))
+					device_printf(dev,
+					    "  SB10: 0x%08x (SDMA BAR)\n",
+					    aval);
+
+				ast = acpi_GetInteger(ACPI_ROOT_OBJECT,
+				    "\\ADB0", &aval);
+				if (ACPI_SUCCESS(ast))
+					device_printf(dev,
+					    "  ADB0: 0x%08x (ADSP BAR0)\n",
+					    aval);
+			}
+
+			bus_space_unmap(mt, gnvs_handle, PCH_GNVS_SIZE);
+
+			/* Provide clear diagnosis */
+			if (osys_val < 0x07DC) {
+				device_printf(dev, "\n");
+				device_printf(dev,
+				    "*** ROOT CAUSE: OSYS=0x%04x < 0x07DC ***\n",
+				    osys_val);
+				device_printf(dev,
+				    "FreeBSD reports Windows 7 to ACPI.\n");
+				device_printf(dev,
+				    "The DSDT requires OSYS >= 0x07DC (Win8+) to\n");
+				device_printf(dev,
+				    "initialize the LPSS fabric and enable BAR0.\n");
+				device_printf(dev,
+				    "\nFIX: Add to /boot/loader.conf:\n");
+				device_printf(dev,
+				    "  hw.acpi.install_interface=\"Windows 2012\"\n");
+				device_printf(dev,
+				    "Then reboot.\n");
+			}
+		} else {
+			device_printf(dev,
+			    "  Cannot map GNVS at 0x%08x: %d\n",
+			    PCH_GNVS_BASE, map_err);
+		}
+	}
+
+	/* Restore FD to BIOS default (0x00368011) in case previous
+	 * module loads corrupted it with wrong bit offsets */
+	{
+		uint32_t rcba_reg, rcba_base, fd;
+		bus_space_tag_t mt = X86_BUS_SPACE_MEM;
+		bus_space_handle_t rh;
+
+		rcba_reg = pci_cfgregread(0, PCH_LPC_BUS, PCH_LPC_DEV,
+		    PCH_LPC_FUNC, PCH_LPC_RCBA_REG, 4);
+		rcba_base = rcba_reg & PCH_RCBA_MASK;
+
+		if (rcba_base != 0 && (rcba_reg & PCH_RCBA_ENABLE) &&
+		    bus_space_map(mt, rcba_base, PCH_RCBA_SIZE, 0, &rh) == 0) {
+			fd = bus_space_read_4(mt, rh, PCH_RCBA_FD);
+			device_printf(dev, "=== FD Register ===\n");
+			device_printf(dev, "  FD current: 0x%08x\n", fd);
+			device_printf(dev,
+			    "    ADSD (bit 1): %s\n",
+			    (fd & PCH_FD_ADSD) ? "ADSP Disabled" :
+			    "ADSP Enabled");
+			device_printf(dev,
+			    "    SMBD (bit 3): %s\n",
+			    (fd & PCH_FD_SMBD) ? "SMBus Disabled" :
+			    "SMBus Enabled");
+			device_printf(dev,
+			    "    HDAD (bit 4): %s\n",
+			    (fd & PCH_FD_HDAD) ? "HDA Disabled" :
+			    "HDA Enabled");
+
+			/* Restore BIOS default if corrupted by previous
+			 * wrong-bit-offset writes */
+			if (fd != 0x00368011) {
+				device_printf(dev,
+				    "  Restoring FD to BIOS default 0x00368011\n");
+				bus_space_write_4(mt, rh, PCH_RCBA_FD,
+				    0x00368011);
+				DELAY(10000);
+				fd = bus_space_read_4(mt, rh, PCH_RCBA_FD);
+				device_printf(dev,
+				    "  FD after restore: 0x%08x\n", fd);
+			}
+
+			bus_space_unmap(mt, rh, PCH_RCBA_SIZE);
+		}
+	}
+
+	/* Dump full LPSS private config space (BAR1)
+	 * Standard PCI: 0x00-0xFF
+	 * LPSS private: 0x100-0x1FF
+	 * LPSS extended: 0x200-0xFFF (PMCTRL, LTR, clocks, remap)
+	 * Key Linux intel-lpss registers:
+	 *   0x800: LTR value
+	 *   0x808: LPSS general
+	 *   0x810: REMAP_ADDR (BAR0 remap!)
+	 *   0x900: CLOCK_PARAMS */
+	{
+		int i;
+		uint32_t v;
+
+		device_printf(dev, "=== LPSS Private Config (BAR1) ===\n");
+		/* Dump interesting non-zero regions */
+		for (i = 0x00; i < 0x1000; i += 4) {
+			v = bus_read_4(sc->shim_res, i);
+			/* Print if non-zero or at known-interesting offset */
+			if (v != 0 || i == 0x10 || i == 0x84 ||
+			    i == 0xA0 || i == 0xA8 || i == 0x200 ||
+			    i == 0x800 || i == 0x808 || i == 0x810 ||
+			    i == 0x900)
+				device_printf(dev,
+				    "  [0x%03x]: 0x%08x\n", i, v);
+		}
+	}
+
+	/* Try LPSS devices private config - read from SDMA and I2C
+	 * to understand their power state */
+	{
+		bus_space_tag_t mt = X86_BUS_SPACE_MEM;
+		bus_space_handle_t h;
+		int map_err;
+		struct {
+			const char *name;
+			uint32_t addr;
+		} lpss_devs[] = {
+			{ "SDMA",  0xFE102000 },
+			{ "I2C0c", 0xFE104000 },
+			{ "I2C1c", 0xFE106000 },
+		};
+		int d;
+
+		device_printf(dev,
+		    "=== LPSS Device Private Configs ===\n");
+		for (d = 0; d < 3; d++) {
+			map_err = bus_space_map(mt, lpss_devs[d].addr,
+			    0x300, 0, &h);
+			if (map_err != 0) {
+				device_printf(dev, "  %s: map failed\n",
+				    lpss_devs[d].name);
+				continue;
+			}
+
+			device_printf(dev,
+			    "  %s (0x%08x):\n", lpss_devs[d].name,
+			    lpss_devs[d].addr);
+			device_printf(dev,
+			    "    VID/DID: 0x%08x\n",
+			    bus_space_read_4(mt, h, 0x00));
+			device_printf(dev,
+			    "    CMD/STS: 0x%08x\n",
+			    bus_space_read_4(mt, h, 0x04));
+			device_printf(dev,
+			    "    BAR0:    0x%08x\n",
+			    bus_space_read_4(mt, h, 0x10));
+			device_printf(dev,
+			    "    PMCSR:   0x%08x\n",
+			    bus_space_read_4(mt, h, 0x84));
+			device_printf(dev,
+			    "    [0x200]: 0x%08x (PMCTRL)\n",
+			    bus_space_read_4(mt, h, 0x200));
+			device_printf(dev,
+			    "    [0x204]: 0x%08x\n",
+			    bus_space_read_4(mt, h, 0x204));
+			device_printf(dev,
+			    "    [0x208]: 0x%08x\n",
+			    bus_space_read_4(mt, h, 0x208));
+
+			bus_space_unmap(mt, h, 0x300);
+		}
+	}
+
+	/* Try various LPSS BAR0 recovery strategies */
+	{
+		bus_space_tag_t mt = X86_BUS_SPACE_MEM;
+		bus_space_handle_t h;
+		int map_err;
+		uint32_t v;
+
+		device_printf(dev,
+		    "=== BAR0 Memory Decode Test ===\n");
+
+		/* Test 1: Is SDMA BAR0 (0xFE101000) accessible? */
+		map_err = bus_space_map(mt, 0xFE101000, 0x1000, 0, &h);
+		if (map_err == 0) {
+			v = bus_space_read_4(mt, h, 0);
+			device_printf(dev,
+			    "  SDMA BAR0 (0xFE101000)[0]: 0x%08x %s\n",
+			    v, v != 0xFFFFFFFF ? "ALIVE" : "DEAD");
+			bus_space_unmap(mt, h, 0x1000);
+		}
+
+		/* Test 2: Probe the 0xFE100000-0xFE10F000 range
+		 * to find what's decoded */
+		device_printf(dev,
+		    "  LPSS address space probe (4KB blocks):\n");
 		{
-			bus_space_tag_t mem_tag = X86_BUS_SPACE_MEM;
-			bus_space_handle_t scan_handle;
-			uint32_t scan_val;
-			uint64_t scan_addrs[] = {
-				0xf0000000, 0xf0100000, 0xf0200000, 0xf0500000,
-				0xf7200000, 0xf7210000, 0xf7218000, 0xf7220000,
-				0xf8000000, 0xf9000000, 0xfa000000, 0xfb000000,
-				0xfc000000, 0xfd000000, 0xfe000000, 0xfe100000,
-				0xfe200000, 0xfe300000, 0xfed00000, 0xfee00000
-			};
-			int i;
-
-			for (i = 0; i < sizeof(scan_addrs) / sizeof(scan_addrs[0]); i++) {
-				if (bus_space_map(mem_tag, scan_addrs[i], 0x1000, 0,
-				    &scan_handle) == 0) {
-					scan_val = bus_space_read_4(mem_tag, scan_handle, 0);
-					/* Look for:
-					 * - DevID/VenID: 0x9CB68086
-					 * - Non-0xFFFFFFFF value
-					 * - SST firmware magic: 0x54535324 ("$SST")
-					 */
-					if (scan_val != 0xFFFFFFFF && scan_val != 0x00000000) {
-						device_printf(dev, "  0x%08llx: 0x%08x",
-						    (unsigned long long)scan_addrs[i], scan_val);
-						if (scan_val == 0x9CB68086)
-							device_printf(dev, " <-- SST DevID!");
-						else if (scan_val == 0x54535324)
-							device_printf(dev, " <-- $SST magic!");
-						device_printf(dev, "\n");
-					}
-					bus_space_unmap(mem_tag, scan_handle, 0x1000);
-				}
-			}
-
-			/* Also scan near BAR1 which works */
-			device_printf(dev, "Scanning near working BAR1 (0xfe100000):\n");
-			for (i = 0; i < 16; i++) {
-				uint64_t addr = 0xfe100000 + (i * 0x10000);
-				if (bus_space_map(mem_tag, addr, 0x1000, 0,
-				    &scan_handle) == 0) {
-					scan_val = bus_space_read_4(mem_tag, scan_handle, 0);
-					if (scan_val != 0xFFFFFFFF) {
-						device_printf(dev, "  0x%08llx: 0x%08x\n",
-						    (unsigned long long)addr, scan_val);
-					}
-					bus_space_unmap(mem_tag, scan_handle, 0x1000);
+			int blk;
+			for (blk = 0; blk < 16; blk++) {
+				uint32_t addr = 0xFE100000 + blk * 0x1000;
+				map_err = bus_space_map(mt, addr,
+				    0x10, 0, &h);
+				if (map_err == 0) {
+					uint32_t v0, v4;
+					v0 = bus_space_read_4(mt, h, 0);
+					v4 = bus_space_read_4(mt, h, 4);
+					device_printf(dev,
+					    "    0x%08x: [0]=0x%08x "
+					    "[4]=0x%08x%s\n",
+					    addr, v0, v4,
+					    v0 == 0xFFFFFFFF ?
+					    " DEAD" : "");
+					bus_space_unmap(mt, h, 0x10);
 				}
 			}
 		}
 
-		/* Full PCI config space dump via BAR1 */
-		device_printf(dev, "=== FULL PCI CONFIG DUMP (via BAR1) ===\n");
-		if (sc->shim_res != NULL) {
-			int off;
-			device_printf(dev, "Looking for enable bits, memory decoder regs...\n");
-			for (off = 0; off < 0x100; off += 4) {
-				uint32_t val = bus_read_4(sc->shim_res, off);
-				/* Print non-zero, non-0xFFFFFFFF values */
-				if (val != 0 && val != 0xFFFFFFFF) {
-					device_printf(dev, "  [0x%02x]: 0x%08x", off, val);
-					/* Annotate known registers */
-					if (off == 0x00) device_printf(dev, " (DevID/VenID)");
-					else if (off == 0x04) device_printf(dev, " (Status/Cmd)");
-					else if (off == 0x08) device_printf(dev, " (Class/Rev)");
-					else if (off == 0x10) device_printf(dev, " (BAR0)");
-					else if (off == 0x14) device_printf(dev, " (BAR1)");
-					else if (off == 0x2c) device_printf(dev, " (SubsysID)");
-					else if (off == 0x34) device_printf(dev, " (CapPtr)");
-					else if (off == 0x80) device_printf(dev, " (PM Cap)");
-					else if (off == 0x84) device_printf(dev, " (PMCS)");
-					else if (off == 0xA0) device_printf(dev, " (VDRTCTL0)");
-					else if (off == 0xA4) device_printf(dev, " (VDRTCTL1)");
-					else if (off == 0xA8) device_printf(dev, " (VDRTCTL2)");
-					else if (off == 0xAC) device_printf(dev, " (VDRTCTL3)");
-					else if (off == 0xE0) device_printf(dev, " (IPCC)");
-					else if (off == 0xE4) device_printf(dev, " (IMC)");
-					else if (off == 0xE8) device_printf(dev, " (IPCD)");
-					else if (off == 0xEC) device_printf(dev, " (IMD)");
-					device_printf(dev, "\n");
-				}
-			}
+		/* Test 3: Try changing ADSP BAR0 in private config
+		 * to an address within the LPSS-decoded range */
+		device_printf(dev,
+		    "=== BAR0 Remap Experiment ===\n");
+		{
+			uint32_t old_bar0, new_bar0;
 
-			/* Try extended config space (0x100-0x1000) if accessible */
-			device_printf(dev, "Extended config space (0x100-0x200):\n");
-			for (off = 0x100; off < 0x200; off += 4) {
-				uint32_t val = bus_read_4(sc->shim_res, off);
-				if (val != 0 && val != 0xFFFFFFFF) {
-					device_printf(dev, "  [0x%03x]: 0x%08x\n", off, val);
-				}
-			}
+			old_bar0 = bus_read_4(sc->shim_res, 0x10);
+			device_printf(dev,
+			    "  Current BAR0 in privconfig: 0x%08x\n",
+			    old_bar0);
 
-			/* Try writing to BAR0 to see if it's writable */
-			device_printf(dev, "Testing BAR0 write...\n");
-			uint32_t bar0_orig = bus_read_4(sc->shim_res, 0x10);
-			device_printf(dev, "  BAR0 original: 0x%08x\n", bar0_orig);
-
-			/* Write all 1s to get BAR size */
-			bus_write_4(sc->shim_res, 0x10, 0xFFFFFFFF);
-			DELAY(1000);
-			uint32_t bar0_size = bus_read_4(sc->shim_res, 0x10);
-			device_printf(dev, "  BAR0 after 0xFFFFFFFF: 0x%08x (size mask)\n", bar0_size);
-
-			/* Restore original */
-			bus_write_4(sc->shim_res, 0x10, bar0_orig);
-			DELAY(1000);
-			uint32_t bar0_restored = bus_read_4(sc->shim_res, 0x10);
-			device_printf(dev, "  BAR0 restored: 0x%08x\n", bar0_restored);
-
-			/* Experiment with unknown register 0xF8 */
-			device_printf(dev, "=== TESTING UNKNOWN REGISTERS ===\n");
-			{
-			bus_space_tag_t mem_tag = X86_BUS_SPACE_MEM;
-			bus_space_handle_t scan_handle;
-			uint32_t scan_val;
-			uint32_t reg_f8 = bus_read_4(sc->shim_res, 0xF8);
-			uint32_t reg_fc = bus_read_4(sc->shim_res, 0xFC);
-			device_printf(dev, "  [0xF8]: 0x%08x\n", reg_f8);
-			device_printf(dev, "  [0xFC]: 0x%08x\n", reg_fc);
-
-			/* Check VDRTCTL1 and VDRTCTL3 */
-			uint32_t vdrtctl1 = bus_read_4(sc->shim_res, 0xA4);
-			uint32_t vdrtctl3 = bus_read_4(sc->shim_res, 0xAC);
-			device_printf(dev, "  VDRTCTL1 [0xA4]: 0x%08x\n", vdrtctl1);
-			device_printf(dev, "  VDRTCTL3 [0xAC]: 0x%08x\n", vdrtctl3);
-
-			/* Try setting various enable bits in 0xF8 */
-			device_printf(dev, "Trying to flip bits in 0xF8...\n");
-
-			/* Try setting bit 0 (often enable bit) */
-			bus_write_4(sc->shim_res, 0xF8, reg_f8 | 0x01);
+			/* Try remapping to unused LPSS space */
+			new_bar0 = 0xFE108000;
+			device_printf(dev,
+			    "  Writing BAR0 = 0x%08x...\n", new_bar0);
+			bus_write_4(sc->shim_res, 0x10, new_bar0);
 			DELAY(10000);
-			device_printf(dev, "  After |0x01: 0x%08x\n",
-			    bus_read_4(sc->shim_res, 0xF8));
 
-			/* Test BAR0 memory after each change */
-			if (bus_space_map(mem_tag, 0xfe000000, 0x1000, 0,
-			    &scan_handle) == 0) {
-				scan_val = bus_space_read_4(mem_tag, scan_handle, 0);
-				device_printf(dev, "  BAR0[0] now: 0x%08x%s\n", scan_val,
-				    scan_val != 0xFFFFFFFF ? " <-- CHANGED!" : "");
-				bus_space_unmap(mem_tag, scan_handle, 0x1000);
+			v = bus_read_4(sc->shim_res, 0x10);
+			device_printf(dev,
+			    "  BAR0 readback: 0x%08x\n", v);
+
+			if (v == new_bar0) {
+				/* Try reading the new address */
+				map_err = bus_space_map(mt, new_bar0,
+				    0x1000, 0, &h);
+				if (map_err == 0) {
+					uint32_t dsp_v;
+					dsp_v = bus_space_read_4(mt, h, 0);
+					device_printf(dev,
+					    "  New BAR0[0]: 0x%08x%s\n",
+					    dsp_v,
+					    dsp_v != 0xFFFFFFFF ?
+					    " *** ALIVE! ***" : " dead");
+
+					if (dsp_v != 0xFFFFFFFF) {
+						device_printf(dev,
+						    "  [0x00]: 0x%08x\n",
+						    dsp_v);
+						device_printf(dev,
+						    "  [0x04]: 0x%08x\n",
+						    bus_space_read_4(mt,
+						    h, 0x04));
+						device_printf(dev,
+						    "  [0x10]: 0x%08x\n",
+						    bus_space_read_4(mt,
+						    h, 0x10));
+					}
+					bus_space_unmap(mt, h, 0x1000);
+				}
 			}
 
-			/* Try clearing bit 27 (might be disable) */
-			bus_write_4(sc->shim_res, 0xF8, reg_f8 & ~0x08000000);
+			/* Restore original BAR0 */
+			bus_write_4(sc->shim_res, 0x10, old_bar0);
 			DELAY(10000);
-			device_printf(dev, "  After &~0x08000000: 0x%08x\n",
-			    bus_read_4(sc->shim_res, 0xF8));
-
-			if (bus_space_map(mem_tag, 0xfe000000, 0x1000, 0,
-			    &scan_handle) == 0) {
-				scan_val = bus_space_read_4(mem_tag, scan_handle, 0);
-				device_printf(dev, "  BAR0[0] now: 0x%08x%s\n", scan_val,
-				    scan_val != 0xFFFFFFFF ? " <-- CHANGED!" : "");
-				bus_space_unmap(mem_tag, scan_handle, 0x1000);
-			}
-
-			/* Try setting all low enable bits */
-			bus_write_4(sc->shim_res, 0xF8, reg_f8 | 0xFF);
-			DELAY(10000);
-			device_printf(dev, "  After |0xFF: 0x%08x\n",
-			    bus_read_4(sc->shim_res, 0xF8));
-
-			if (bus_space_map(mem_tag, 0xfe000000, 0x1000, 0,
-			    &scan_handle) == 0) {
-				scan_val = bus_space_read_4(mem_tag, scan_handle, 0);
-				device_printf(dev, "  BAR0[0] now: 0x%08x%s\n", scan_val,
-				    scan_val != 0xFFFFFFFF ? " <-- CHANGED!" : "");
-				bus_space_unmap(mem_tag, scan_handle, 0x1000);
-			}
-
-			/* Restore original 0xF8 */
-			bus_write_4(sc->shim_res, 0xF8, reg_f8);
-
-			/* Try VDRTCTL3 - might have enable bits */
-			device_printf(dev, "Trying VDRTCTL3...\n");
-			bus_write_4(sc->shim_res, 0xAC, 0x00000001);
-			DELAY(10000);
-			device_printf(dev, "  VDRTCTL3 after: 0x%08x\n",
-			    bus_read_4(sc->shim_res, 0xAC));
-
-			if (bus_space_map(mem_tag, 0xfe000000, 0x1000, 0,
-			    &scan_handle) == 0) {
-				scan_val = bus_space_read_4(mem_tag, scan_handle, 0);
-				device_printf(dev, "  BAR0[0] now: 0x%08x%s\n", scan_val,
-				    scan_val != 0xFFFFFFFF ? " <-- CHANGED!" : "");
-				bus_space_unmap(mem_tag, scan_handle, 0x1000);
-			}
-
-			/* Try VDRTCTL1 */
-			device_printf(dev, "Trying VDRTCTL1...\n");
-			bus_write_4(sc->shim_res, 0xA4, 0x00000001);
-			DELAY(10000);
-			device_printf(dev, "  VDRTCTL1 after: 0x%08x\n",
-			    bus_read_4(sc->shim_res, 0xA4));
-
-			if (bus_space_map(mem_tag, 0xfe000000, 0x1000, 0,
-			    &scan_handle) == 0) {
-				scan_val = bus_space_read_4(mem_tag, scan_handle, 0);
-				device_printf(dev, "  BAR0[0] now: 0x%08x%s\n", scan_val,
-				    scan_val != 0xFFFFFFFF ? " <-- CHANGED!" : "");
-				bus_space_unmap(mem_tag, scan_handle, 0x1000);
-			}
-
-			/*
-			 * Check PCH RCBA (Root Complex Base Address)
-			 * RCBA is typically at 0xFED1C000 for Broadwell/WPT
-			 * FD2 (Function Disable 2) at RCBA+0x3428 has ADSPD bit
-			 */
-			device_printf(dev, "=== PCH RCBA SCAN ===\n");
-			{
-				bus_space_handle_t rcba_handle;
-				uint64_t rcba_base = 0xFED1C000;
-
-				if (bus_space_map(mem_tag, rcba_base, 0x4000, 0,
-				    &rcba_handle) == 0) {
-					uint32_t fd, fd2, fd3;
-
-					/* FD at RCBA+0x3418, FD2 at RCBA+0x3428 */
-					fd = bus_space_read_4(mem_tag, rcba_handle, 0x3418);
-					fd2 = bus_space_read_4(mem_tag, rcba_handle, 0x3428);
-					fd3 = bus_space_read_4(mem_tag, rcba_handle, 0x342C);
-
-					device_printf(dev, "  RCBA base: 0x%llx\n",
-					    (unsigned long long)rcba_base);
-					device_printf(dev, "  FD  [0x3418]: 0x%08x\n", fd);
-					device_printf(dev, "  FD2 [0x3428]: 0x%08x (ADSPD=bit 1)\n", fd2);
-					device_printf(dev, "  FD3 [0x342C]: 0x%08x\n", fd3);
-
-					/* Check if ADSPD (bit 1) is set in FD2 */
-					if (fd2 & 0x02) {
-						device_printf(dev, "  ADSPD bit SET - DSP is DISABLED!\n");
-						device_printf(dev, "  Trying to clear ADSPD...\n");
-						bus_space_write_4(mem_tag, rcba_handle, 0x3428,
-						    fd2 & ~0x02);
-						DELAY(10000);
-						uint32_t fd2_new = bus_space_read_4(mem_tag,
-						    rcba_handle, 0x3428);
-						device_printf(dev, "  FD2 after clear: 0x%08x\n", fd2_new);
-
-						/* Test BAR0 again */
-						if (bus_space_map(mem_tag, 0xfe000000, 0x1000, 0,
-						    &scan_handle) == 0) {
-							scan_val = bus_space_read_4(mem_tag, scan_handle, 0);
-							device_printf(dev, "  BAR0[0] now: 0x%08x%s\n",
-							    scan_val,
-							    scan_val != 0xFFFFFFFF ? " <-- ENABLED!" : "");
-							bus_space_unmap(mem_tag, scan_handle, 0x1000);
-						}
-					} else {
-						device_printf(dev, "  ADSPD bit clear - DSP should be enabled\n");
-					}
-
-					/* Dump other potentially relevant RCBA registers */
-					device_printf(dev, "  Other RCBA regs:\n");
-					uint32_t lpss = bus_space_read_4(mem_tag, rcba_handle, 0x2030);
-					device_printf(dev, "    [0x2030] LPSS: 0x%08x\n", lpss);
-					device_printf(dev, "    [0x2034]: 0x%08x\n",
-					    bus_space_read_4(mem_tag, rcba_handle, 0x2034));
-					device_printf(dev, "    [0x3410] CG: 0x%08x\n",
-					    bus_space_read_4(mem_tag, rcba_handle, 0x3410));
-					device_printf(dev, "    [0x3414]: 0x%08x\n",
-					    bus_space_read_4(mem_tag, rcba_handle, 0x3414));
-
-					/*
-					 * LPSS register 0x2030 = 0x82000004
-					 * Try modifying to enable memory decoder
-					 * Bit 31 = probably lock, Bit 2 = unknown enable
-					 */
-					device_printf(dev, "  === LPSS EXPERIMENTATION ===\n");
-
-					/* Scan RCBA 0x2000-0x2100 for audio-related regs */
-					device_printf(dev, "  RCBA 0x2000-0x2100 scan:\n");
-					int off;
-					for (off = 0x2000; off < 0x2100; off += 4) {
-						uint32_t v = bus_space_read_4(mem_tag, rcba_handle, off);
-						if (v != 0 && v != 0xFFFFFFFF) {
-							device_printf(dev, "    [0x%04x]: 0x%08x\n", off, v);
-						}
-					}
-
-					/* Try clearing LPSS bit 2 */
-					device_printf(dev, "  Trying LPSS &~0x04...\n");
-					bus_space_write_4(mem_tag, rcba_handle, 0x2030, lpss & ~0x04);
-					DELAY(10000);
-					device_printf(dev, "    LPSS now: 0x%08x\n",
-					    bus_space_read_4(mem_tag, rcba_handle, 0x2030));
-					if (bus_space_map(mem_tag, 0xfe000000, 0x1000, 0,
-					    &scan_handle) == 0) {
-						scan_val = bus_space_read_4(mem_tag, scan_handle, 0);
-						device_printf(dev, "    BAR0[0]: 0x%08x%s\n", scan_val,
-						    scan_val != 0xFFFFFFFF ? " <-- CHANGED!" : "");
-						bus_space_unmap(mem_tag, scan_handle, 0x1000);
-					}
-
-					/* Restore and try setting bit 0 (often enable) */
-					bus_space_write_4(mem_tag, rcba_handle, 0x2030, lpss | 0x01);
-					DELAY(10000);
-					device_printf(dev, "  Trying LPSS |0x01: 0x%08x\n",
-					    bus_space_read_4(mem_tag, rcba_handle, 0x2030));
-					if (bus_space_map(mem_tag, 0xfe000000, 0x1000, 0,
-					    &scan_handle) == 0) {
-						scan_val = bus_space_read_4(mem_tag, scan_handle, 0);
-						device_printf(dev, "    BAR0[0]: 0x%08x%s\n", scan_val,
-						    scan_val != 0xFFFFFFFF ? " <-- CHANGED!" : "");
-						bus_space_unmap(mem_tag, scan_handle, 0x1000);
-					}
-
-					/* Restore original */
-					bus_space_write_4(mem_tag, rcba_handle, 0x2030, lpss);
-
-					/* Scan RCBA 0x3400-0x3500 for more function disable */
-					device_printf(dev, "  RCBA 0x3400-0x3500 scan:\n");
-					for (off = 0x3400; off < 0x3500; off += 4) {
-						uint32_t v = bus_space_read_4(mem_tag, rcba_handle, off);
-						if (v != 0 && v != 0xFFFFFFFF) {
-							device_printf(dev, "    [0x%04x]: 0x%08x\n", off, v);
-						}
-					}
-
-					bus_space_unmap(mem_tag, rcba_handle, 0x4000);
-				}
-
-				/*
-				 * Check P2SB (Primary to Sideband Bridge) - PCI 00:1f.1
-				 * On Broadwell, this might control access to internal devices
-				 * P2SB has a "hide" bit that makes it invisible
-				 */
-				device_printf(dev, "  === P2SB / LPC SCAN ===\n");
-				{
-					/* LPC Bridge at 00:1f.0 */
-					uint32_t lpc_vid = pci_cfgregread(0, 0, 31, 0, 0x00, 4);
-					device_printf(dev, "  LPC (00:1f.0) VID/DID: 0x%08x\n", lpc_vid);
-
-					/* Check for P2SB at 00:1f.1 */
-					uint32_t p2sb_vid = pci_cfgregread(0, 0, 31, 1, 0x00, 4);
-					device_printf(dev, "  P2SB (00:1f.1) VID/DID: 0x%08x\n", p2sb_vid);
-
-					if (p2sb_vid == 0xFFFFFFFF) {
-						device_printf(dev, "  P2SB hidden! Trying to unhide...\n");
-						/*
-						 * P2SB hide is controlled by register 0xE1 in P2SB config
-						 * We need to write 0 to unhide, but can't if it's hidden!
-						 * Try via LPC register at 0xE0-0xE4
-						 */
-						uint32_t lpc_e0 = pci_cfgregread(0, 0, 31, 0, 0xE0, 4);
-						device_printf(dev, "  LPC [0xE0]: 0x%08x\n", lpc_e0);
-					}
-
-					/* Check hidden PCI device at slot 19 (ADSP PCI location) */
-					uint32_t adsp_pci = pci_cfgregread(0, 0, 19, 0, 0x00, 4);
-					device_printf(dev, "  ADSP PCI (00:13.0) VID/DID: 0x%08x\n", adsp_pci);
-
-					/* Also check slot 20 */
-					uint32_t dev20 = pci_cfgregread(0, 0, 20, 0, 0x00, 4);
-					device_printf(dev, "  PCI 00:14.0 VID/DID: 0x%08x\n", dev20);
-
-					/* Scan all PCI devices on bus 0 */
-					device_printf(dev, "  === PCI Bus 0 Device Scan ===\n");
-					int slot, func;
-					for (slot = 0; slot < 32; slot++) {
-						for (func = 0; func < 8; func++) {
-							uint32_t vid = pci_cfgregread(0, 0, slot, func, 0x00, 4);
-							if (vid != 0xFFFFFFFF && vid != 0x00000000) {
-								uint32_t class = pci_cfgregread(0, 0, slot, func, 0x08, 4);
-								device_printf(dev, "    %02d:%d VID/DID=0x%08x Class=0x%08x\n",
-								    slot, func, vid, class >> 8);
-							}
-							if (func == 0) {
-								/* Check if multi-function */
-								uint8_t hdr = pci_cfgregread(0, 0, slot, 0, 0x0E, 1);
-								if ((hdr & 0x80) == 0)
-									break; /* Single function */
-							}
-						}
-					}
-				}
-
-				/*
-				 * Try probing the memory address from RCBA [0x341c]
-				 * 0xfce00000 might be an alternative ADSP location
-				 */
-				device_printf(dev, "  === ALTERNATIVE MEMORY PROBE ===\n");
-				{
-					uint64_t alt_addrs[] = {
-						0xfe100000,  /* SST BAR1 - WORKS */
-						0xfe101000,  /* SST BAR1 + 0x1000 */
-						0xfe102000,  /* Near I2C0 */
-						0xfe103000,  /* I2C0 - ig4iic fails here! */
-						0xfe104000,  /* Between I2C */
-						0xfe105000,  /* I2C1 - ig4iic fails here! */
-						0xfe106000,  /* After I2C */
-						0xfe000000,  /* SST BAR0 */
-						0xfce00000,  /* From RCBA [0x341c] */
-						0xfed04000,  /* From RCBA [0x3450] */
-					};
-					int i;
-					bus_space_tag_t test_tag = X86_BUS_SPACE_MEM;
-					bus_space_handle_t test_h;
-
-					for (i = 0; i < sizeof(alt_addrs)/sizeof(alt_addrs[0]); i++) {
-						if (bus_space_map(test_tag, alt_addrs[i], 0x100, 0,
-						    &test_h) == 0) {
-							uint32_t v0 = bus_space_read_4(test_tag, test_h, 0);
-							uint32_t v4 = bus_space_read_4(test_tag, test_h, 4);
-							/* Show ALL addresses to see the pattern */
-							device_printf(dev, "    0x%llx: [0]=0x%08x [4]=0x%08x",
-							    (unsigned long long)alt_addrs[i], v0, v4);
-							if (v0 == 0x9CB68086)
-								device_printf(dev, " <-- SST PCI!");
-							else if (v0 == 0xFFFFFFFF)
-								device_printf(dev, " <-- DEAD");
-							else
-								device_printf(dev, " <-- LIVE!");
-							device_printf(dev, "\n");
-							bus_space_unmap(test_tag, test_h, 0x100);
-						} else {
-							device_printf(dev, "    0x%llx: MAP FAILED\n",
-							    (unsigned long long)alt_addrs[i]);
-						}
-					}
-				}
-
-				/*
-				 * Try to enable memory access via LPSS PCI config mirrors!
-				 * We found that PCI config works but operational memory doesn't.
-				 * Maybe we need to enable Memory Space bit in Command register.
-				 */
-				device_printf(dev, "  === LPSS PCI CONFIG ENABLE ===\n");
-				{
-					bus_space_tag_t cfg_tag = X86_BUS_SPACE_MEM;
-					bus_space_handle_t cfg_h;
-					struct {
-						uint64_t pci_cfg;
-						uint64_t mem_addr;
-						const char *name;
-					} lpss_devs[] = {
-						{ 0xfe100000, 0xfe000000, "SST" },
-						{ 0xfe104000, 0xfe103000, "I2C0" },
-						{ 0xfe106000, 0xfe105000, "I2C1" },
-					};
-					int d;
-
-					for (d = 0; d < 3; d++) {
-						if (bus_space_map(cfg_tag, lpss_devs[d].pci_cfg, 0x100, 0,
-						    &cfg_h) == 0) {
-							uint32_t vid = bus_space_read_4(cfg_tag, cfg_h, 0x00);
-							uint32_t cmd = bus_space_read_4(cfg_tag, cfg_h, 0x04);
-							uint32_t bar0 = bus_space_read_4(cfg_tag, cfg_h, 0x10);
-
-							device_printf(dev, "    %s: VID=0x%08x CMD=0x%08x BAR0=0x%08x\n",
-							    lpss_devs[d].name, vid, cmd, bar0);
-
-							/* Check if Memory Space Enable (bit 1) is set */
-							if (!(cmd & 0x02)) {
-								device_printf(dev, "      Memory Space DISABLED! Enabling...\n");
-								bus_space_write_4(cfg_tag, cfg_h, 0x04, cmd | 0x06);
-								DELAY(10000);
-								cmd = bus_space_read_4(cfg_tag, cfg_h, 0x04);
-								device_printf(dev, "      CMD after enable: 0x%08x\n", cmd);
-							}
-
-							/* If BAR0 is 0 or invalid, try setting it */
-							if (bar0 == 0 || bar0 == 0xFFFFFFFF) {
-								device_printf(dev, "      BAR0 invalid! Setting to 0x%llx...\n",
-								    (unsigned long long)lpss_devs[d].mem_addr);
-								bus_space_write_4(cfg_tag, cfg_h, 0x10,
-								    (uint32_t)lpss_devs[d].mem_addr);
-								DELAY(10000);
-								bar0 = bus_space_read_4(cfg_tag, cfg_h, 0x10);
-								device_printf(dev, "      BAR0 after write: 0x%08x\n", bar0);
-							}
-
-							bus_space_unmap(cfg_tag, cfg_h, 0x100);
-
-							/* Test if memory now works */
-							bus_space_handle_t mem_h;
-							if (bus_space_map(cfg_tag, lpss_devs[d].mem_addr, 0x100, 0,
-							    &mem_h) == 0) {
-								uint32_t mem_val = bus_space_read_4(cfg_tag, mem_h, 0);
-								device_printf(dev, "      Memory[0]: 0x%08x%s\n", mem_val,
-								    mem_val != 0xFFFFFFFF ? " <-- WORKING!" : " (still dead)");
-								bus_space_unmap(cfg_tag, mem_h, 0x100);
-							}
-						}
-					}
-				}
-
-				/*
-				 * LAST RESORT: Try writing to PCI slot 19 config space
-				 * Maybe we can "create" the device by writing its VID/DID
-				 */
-				device_printf(dev, "  === SLOT 19 EXPERIMENTS ===\n");
-				{
-					/* Read extended config space of slot 19 */
-					uint32_t s19_cmd, s19_bar0, s19_bar1;
-
-					/* First, try to read/write command register */
-					s19_cmd = pci_cfgregread(0, 0, 19, 0, 0x04, 4);
-					device_printf(dev, "    Slot 19 CMD: 0x%08x\n", s19_cmd);
-
-					/* Check BAR registers */
-					s19_bar0 = pci_cfgregread(0, 0, 19, 0, 0x10, 4);
-					s19_bar1 = pci_cfgregread(0, 0, 19, 0, 0x14, 4);
-					device_printf(dev, "    Slot 19 BAR0: 0x%08x, BAR1: 0x%08x\n",
-					    s19_bar0, s19_bar1);
-
-					/* Try writing BAR0 address */
-					device_printf(dev, "    Writing 0xfe000000 to slot 19 BAR0...\n");
-					pci_cfgregwrite(0, 0, 19, 0, 0x10, 0xfe000000, 4);
-					pci_cfgregwrite(0, 0, 19, 0, 0x14, 0xfe100000, 4);
-					/* Enable memory space */
-					pci_cfgregwrite(0, 0, 19, 0, 0x04, 0x00000006, 4);
-
-					DELAY(10000);
-
-					/* Re-read */
-					device_printf(dev, "    After write: VID=0x%08x CMD=0x%08x\n",
-					    pci_cfgregread(0, 0, 19, 0, 0x00, 4),
-					    pci_cfgregread(0, 0, 19, 0, 0x04, 4));
-					device_printf(dev, "    BAR0=0x%08x BAR1=0x%08x\n",
-					    pci_cfgregread(0, 0, 19, 0, 0x10, 4),
-					    pci_cfgregread(0, 0, 19, 0, 0x14, 4));
-
-					/* Test BAR0 memory again */
-					bus_space_tag_t test_tag = X86_BUS_SPACE_MEM;
-					bus_space_handle_t test_h;
-					if (bus_space_map(test_tag, 0xfe000000, 0x1000, 0,
-					    &test_h) == 0) {
-						uint32_t v = bus_space_read_4(test_tag, test_h, 0);
-						device_printf(dev, "    BAR0[0] now: 0x%08x%s\n", v,
-						    v != 0xFFFFFFFF ? " <-- WORKING!" : "");
-						bus_space_unmap(test_tag, test_h, 0x1000);
-					}
-				}
-			}
-			}  /* End test block scope */
+			device_printf(dev,
+			    "  Restored BAR0: 0x%08x\n",
+			    bus_read_4(sc->shim_res, 0x10));
 		}
-		device_printf(dev, "=== END EXPERIMENTS ===\n");
 
-		error = ENXIO;
-		goto fail;
+		/* Test 4: Try I2C0 D0 transition and BAR0 check */
+		device_printf(dev,
+		    "=== I2C0 D0 Transition Test ===\n");
+		map_err = bus_space_map(mt, 0xFE104000, 0x300, 0, &h);
+		if (map_err == 0) {
+			uint32_t pmcsr;
+
+			pmcsr = bus_space_read_4(mt, h, 0x84);
+			device_printf(dev,
+			    "  I2C0 PMCSR: 0x%08x (D%d)\n",
+			    pmcsr, pmcsr & 3);
+
+			/* Force D0 */
+			if ((pmcsr & 3) != 0) {
+				bus_space_write_4(mt, h, 0x84,
+				    pmcsr & ~3);
+				DELAY(50000);
+				pmcsr = bus_space_read_4(mt, h, 0x84);
+				device_printf(dev,
+				    "  I2C0 PMCSR after D0: 0x%08x\n",
+				    pmcsr);
+			}
+			bus_space_unmap(mt, h, 0x300);
+
+			/* Check I2C0 BAR0 */
+			map_err = bus_space_map(mt, 0xFE103000,
+			    0x100, 0, &h);
+			if (map_err == 0) {
+				v = bus_space_read_4(mt, h, 0xFC);
+				device_printf(dev,
+				    "  I2C0 BAR0 IC_COMP_TYPE: 0x%08x%s\n",
+				    v,
+				    v == 0x44570140 ?
+				    " DesignWare!" :
+				    v == 0xFFFFFFFF ?
+				    " still dead" : " unknown");
+				bus_space_unmap(mt, h, 0x100);
+			}
+		}
+
+		/* Final BAR0 test */
+		bar0_ok = sst_test_bar0(sc);
+		device_printf(dev,
+		    "BAR0 final: %s\n",
+		    bar0_ok ? "*** ACCESSIBLE! ***" : "still dead");
+
+		if (bar0_ok)
+			goto dsp_init;
 	}
 
-	/* 3. Allocate Interrupt Resource */
+	/* ---- Phase 6: IOBP Sideband Access ---- */
+	sst_iobp_probe(sc);
+
+	/* Re-test BAR0 after IOBP changes */
+	bar0_ok = sst_test_bar0(sc);
+	device_printf(dev, "BAR0 after IOBP: %s\n",
+	    bar0_ok ? "*** ACCESSIBLE! ***" : "still dead");
+	if (bar0_ok)
+		goto dsp_init;
+
+	/* ---- Phase 7: I2C1 Codec Probe ---- */
+	/* Transition I2C1 to D0 first, then probe codec */
+	{
+		bus_space_tag_t mt = X86_BUS_SPACE_MEM;
+		bus_space_handle_t h;
+		int map_err;
+
+		device_printf(dev,
+		    "=== I2C1 D0 Transition + Codec Probe ===\n");
+		map_err = bus_space_map(mt, 0xFE106000, 0x300, 0, &h);
+		if (map_err == 0) {
+			uint32_t pmcsr;
+
+			pmcsr = bus_space_read_4(mt, h, 0x84);
+			device_printf(dev,
+			    "  I2C1 PMCSR: 0x%08x (D%d)\n",
+			    pmcsr, pmcsr & 3);
+
+			/* Force D0 */
+			if ((pmcsr & 3) != 0) {
+				bus_space_write_4(mt, h, 0x84,
+				    pmcsr & ~3);
+				DELAY(50000);
+				pmcsr = bus_space_read_4(mt, h, 0x84);
+				device_printf(dev,
+				    "  I2C1 PMCSR after D0: 0x%08x\n",
+				    pmcsr);
+			}
+			bus_space_unmap(mt, h, 0x300);
+
+			/* Now probe the codec */
+			sst_probe_i2c_codec(sc);
+		} else {
+			device_printf(dev,
+			    "  I2C1 private config map failed: %d\n",
+			    map_err);
+		}
+	}
+
+	/* ---- Phase 8: HDA Enablement Fallback ---- */
+	device_printf(dev,
+	    "=== BAR0 dead - trying HDA fallback ===\n");
+	{
+		int hda_err;
+
+		hda_err = sst_try_enable_hda(sc);
+		if (hda_err == 0) {
+			uint32_t hda_vid;
+
+			hda_vid = pci_cfgregread(0, PCH_HDA_BUS,
+			    PCH_HDA_DEV, PCH_HDA_FUNC, 0x00, 4);
+			if (hda_vid != 0xFFFFFFFF) {
+				device_printf(dev,
+				    "\n=== SUMMARY ===\n");
+				device_printf(dev,
+				    "HDA controller enabled at"
+				    " PCI 0:%x.%d!\n",
+				    PCH_HDA_DEV, PCH_HDA_FUNC);
+				device_printf(dev,
+				    "VID/DID: 0x%08x\n",
+				    hda_vid);
+				device_printf(dev,
+				    "Try: devctl rescan pci0\n");
+				device_printf(dev,
+				    "Then: cat /dev/sndstat\n");
+			}
+		} else {
+			device_printf(dev,
+			    "\n=== SUMMARY ===\n");
+			device_printf(dev,
+			    "BAR0 (DSP MMIO): INACCESSIBLE\n");
+			device_printf(dev,
+			    "HDA enable: FAILED\n");
+			device_printf(dev,
+			    "May need reboot after FD change.\n");
+		}
+	}
+
+	/* Stay attached for debugging */
+	sc->attached = true;
+	sc->state = SST_STATE_ATTACHED;
+	return (0);
+
+	/* ---- Full DSP Initialization Path ---- */
+dsp_init:
+	/* Allocate Interrupt */
 	sc->irq_rid = 0;
 	sc->irq_res = bus_alloc_resource_any(dev, SYS_RES_IRQ,
-					     &sc->irq_rid,
-					     RF_ACTIVE | RF_SHAREABLE);
-	if (sc->irq_res == NULL) {
-		device_printf(dev, "Warning: Failed to allocate IRQ resource\n");
-	} else {
-		device_printf(dev, "IRQ: %lu\n", rman_get_start(sc->irq_res));
-
-		/* Setup interrupt handler */
+	    &sc->irq_rid, RF_ACTIVE | RF_SHAREABLE);
+	if (sc->irq_res != NULL) {
 		error = bus_setup_intr(dev, sc->irq_res,
-				       INTR_TYPE_AV | INTR_MPSAFE,
-				       NULL, sst_intr, sc, &sc->irq_cookie);
+		    INTR_TYPE_AV | INTR_MPSAFE,
+		    NULL, sst_intr, sc, &sc->irq_cookie);
 		if (error) {
-			device_printf(dev, "Failed to setup interrupt: %d\n",
-				      error);
-			/* Non-fatal, continue */
+			device_printf(dev, "Failed to setup IRQ: %d\n", error);
 			sc->irq_cookie = NULL;
 		}
 	}
 
-	/* 4. Initialize IPC subsystem */
+	/* Initialize subsystems */
 	error = sst_ipc_init(sc);
 	if (error) {
-		device_printf(dev, "Failed to initialize IPC\n");
+		device_printf(dev, "IPC init failed\n");
 		goto fail;
 	}
 
-	/* 5. Initialize Firmware subsystem */
 	error = sst_fw_init(sc);
 	if (error) {
-		device_printf(dev, "Failed to initialize firmware subsystem\n");
+		device_printf(dev, "Firmware init failed\n");
 		goto fail;
 	}
 
-	/* 6. Initialize Hardware */
 	sst_init(sc);
 
-	/* 7. Initialize DMA controller */
 	error = sst_dma_init(sc);
 	if (error) {
-		device_printf(dev, "Failed to initialize DMA\n");
+		device_printf(dev, "DMA init failed\n");
 		goto fail;
 	}
 
-	/* 8. Initialize SSP (I2S) controller */
 	error = sst_ssp_init(sc);
 	if (error) {
-		device_printf(dev, "Failed to initialize SSP\n");
+		device_printf(dev, "SSP init failed\n");
 		goto fail;
 	}
 
-	/* 9. Initialize PCM subsystem */
 	error = sst_pcm_init(sc);
 	if (error) {
-		device_printf(dev, "Failed to initialize PCM\n");
+		device_printf(dev, "PCM init failed\n");
 		goto fail;
 	}
 
-	/* 10. Initialize Topology subsystem */
 	error = sst_topology_init(sc);
 	if (error) {
-		device_printf(dev, "Failed to initialize topology\n");
+		device_printf(dev, "Topology init failed\n");
 		goto fail;
 	}
 
-	/* 12. Load and boot firmware */
+	/* Load firmware */
 	error = sst_fw_load(sc);
 	if (error) {
 		device_printf(dev, "Firmware load failed: %d\n", error);
-		device_printf(dev, "Driver attached without firmware\n");
-		/* Non-fatal - driver still usable for debugging */
 		error = 0;
 	} else {
 		error = sst_fw_boot(sc);
 		if (error) {
 			device_printf(dev, "DSP boot failed: %d\n", error);
-			/* Non-fatal */
 			error = 0;
 		} else {
-			/* Get firmware version */
 			sst_ipc_get_fw_version(sc, NULL);
-
-			/* Load default topology */
-			error = sst_topology_load_default(sc);
-			if (error) {
-				device_printf(dev,
-				    "Topology load failed: %d\n", error);
-				/* Non-fatal */
-				error = 0;
-			}
+			sst_topology_load_default(sc);
 		}
 	}
 
-	/* 14. Register PCM device with sound(4) */
+	/* Register PCM device */
 	if (sc->fw.state == SST_FW_STATE_RUNNING) {
-		error = sst_pcm_register(sc);
-		if (error) {
-			device_printf(dev, "PCM registration failed: %d\n",
-			    error);
-			/* Non-fatal */
-			error = 0;
-		}
+		sst_pcm_register(sc);
 	}
 
-	/* 15. Initialize jack detection */
+	/* Jack detection */
 	error = sst_jack_init(sc);
-	if (error) {
-		device_printf(dev, "Jack detection init failed: %d\n", error);
-		/* Non-fatal */
-		error = 0;
-	} else {
+	if (error == 0) {
 		sst_jack_sysctl_init(sc);
 		sst_jack_enable(sc);
 	}
+	error = 0;
 
-	/* 16. Mark attached */
 	sc->attached = true;
 	sc->state = SST_STATE_ATTACHED;
-
 	device_printf(dev, "Intel SST DSP attached successfully\n");
-
 	return (0);
 
 fail:
@@ -1581,9 +2381,10 @@ fail:
 	return (error);
 }
 
-/**
- * @brief Detaches the driver, releasing resources.
- */
+/* ================================================================
+ * ACPI Detach
+ * ================================================================ */
+
 static int
 sst_acpi_detach(device_t dev)
 {
@@ -1591,113 +2392,77 @@ sst_acpi_detach(device_t dev)
 
 	sc = device_get_softc(dev);
 
-	/* Cleanup jack detection */
 	sst_jack_fini(sc);
-
-	/* Cleanup topology */
 	sst_topology_fini(sc);
-
-	/* Cleanup PCM */
 	sst_pcm_fini(sc);
-
-	/* Cleanup SSP */
 	sst_ssp_fini(sc);
-
-	/* Cleanup DMA */
 	sst_dma_fini(sc);
-
-	/* Unload firmware */
 	sst_fw_fini(sc);
-
-	/* Cleanup IPC */
 	sst_ipc_fini(sc);
 
-	/* Teardown interrupt */
 	if (sc->irq_cookie != NULL) {
 		bus_teardown_intr(dev, sc->irq_res, sc->irq_cookie);
 		sc->irq_cookie = NULL;
 	}
 
-	/* Release IRQ */
 	if (sc->irq_res != NULL) {
-		bus_release_resource(dev, SYS_RES_IRQ, sc->irq_rid, sc->irq_res);
+		bus_release_resource(dev, SYS_RES_IRQ, sc->irq_rid,
+		    sc->irq_res);
 		sc->irq_res = NULL;
 	}
 
-	/* Release SHIM Memory */
 	if (sc->shim_res != NULL) {
 		bus_release_resource(dev, SYS_RES_MEMORY, sc->shim_rid,
-				     sc->shim_res);
+		    sc->shim_res);
 		sc->shim_res = NULL;
 	}
 
-	/* Release DSP Memory */
 	if (sc->mem_res != NULL) {
 		bus_release_resource(dev, SYS_RES_MEMORY, sc->mem_rid,
-				     sc->mem_res);
+		    sc->mem_res);
 		sc->mem_res = NULL;
 	}
 
-	/* Destroy mutex */
 	if (mtx_initialized(&sc->sc_mtx))
 		mtx_destroy(&sc->sc_mtx);
 
-	/* Power down (_PS3) */
-	if (sc->handle != NULL) {
+	if (sc->handle != NULL)
 		acpi_pwr_switch_consumer(sc->handle, ACPI_STATE_D3);
-	}
 
 	return (0);
 }
 
-/**
- * @brief Suspend handler
- */
+/* ================================================================
+ * Suspend / Resume
+ * ================================================================ */
+
 static int
 sst_acpi_suspend(device_t dev)
 {
-	struct sst_softc *sc;
-
-	sc = device_get_softc(dev);
+	struct sst_softc *sc = device_get_softc(dev);
 
 	device_printf(dev, "Suspending...\n");
-
-	/* Reset DSP */
 	sst_reset(sc);
-
-	/* Power down */
 	acpi_pwr_switch_consumer(sc->handle, ACPI_STATE_D3);
-
 	sc->state = SST_STATE_SUSPENDED;
-
 	return (0);
 }
 
-/**
- * @brief Resume handler
- */
 static int
 sst_acpi_resume(device_t dev)
 {
-	struct sst_softc *sc;
+	struct sst_softc *sc = device_get_softc(dev);
 	int error;
 
-	sc = device_get_softc(dev);
-
 	device_printf(dev, "Resuming...\n");
-
-	/* Power up */
 	acpi_pwr_switch_consumer(sc->handle, ACPI_STATE_D0);
-	DELAY(10000); /* 10ms settle time */
+	DELAY(10000);
 
-	/* Reinitialize */
 	sst_init(sc);
 
-	/* Re-initialize IPC */
 	sc->ipc.ready = false;
 	sc->ipc.state = SST_IPC_STATE_IDLE;
 
-	/* Reload and boot firmware */
 	if (sc->fw.state == SST_FW_STATE_RUNNING) {
 		sc->fw.state = SST_FW_STATE_LOADED;
 		error = sst_fw_boot(sc);
@@ -1709,31 +2474,29 @@ sst_acpi_resume(device_t dev)
 	}
 
 	sc->state = SST_STATE_RUNNING;
-
 	return (0);
 }
 
-/* Device Method Table */
+/* ================================================================
+ * Driver Registration
+ * ================================================================ */
+
 static device_method_t sst_methods[] = {
-	/* Device interface */
 	DEVMETHOD(device_probe,		sst_acpi_probe),
 	DEVMETHOD(device_attach,	sst_acpi_attach),
 	DEVMETHOD(device_detach,	sst_acpi_detach),
 	DEVMETHOD(device_suspend,	sst_acpi_suspend),
 	DEVMETHOD(device_resume,	sst_acpi_resume),
-
 	DEVMETHOD_END
 };
 
-/* Driver Definition */
 static driver_t sst_driver = {
 	"acpi_intel_sst",
 	sst_methods,
 	sizeof(struct sst_softc),
 };
 
-/* Driver Module Request */
 DRIVER_MODULE(acpi_intel_sst, acpi, sst_driver, 0, 0);
 MODULE_DEPEND(acpi_intel_sst, acpi, 1, 1, 1);
 MODULE_DEPEND(acpi_intel_sst, firmware, 1, 1, 1);
-MODULE_VERSION(acpi_intel_sst, 5);
+MODULE_VERSION(acpi_intel_sst, 7);

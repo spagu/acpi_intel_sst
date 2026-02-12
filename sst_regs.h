@@ -259,4 +259,146 @@
 #define SST_RESET_DELAY_US	1000	/* 1ms */
 #define SST_STALL_DELAY_US	100	/* 100us */
 
+/*
+ * PCH RCBA (Root Complex Base Address) Register Definitions
+ * RCBA base is read from LPC bridge (00:1F.0) config offset 0xF0
+ */
+#define PCH_LPC_RCBA_REG	0xF0		/* LPC RCBA register */
+#define PCH_RCBA_ENABLE		(1 << 0)	/* RCBA Enable bit */
+#define PCH_RCBA_MASK		0xFFFFC000	/* RCBA address mask */
+#define PCH_RCBA_SIZE		0x4000		/* 16KB RCBA region */
+
+/* Function Disable (FD) register at RCBA + 0x3418
+ * Bit positions verified from DSDT OperationRegion RCRB field definitions:
+ *   Offset (0x3418), skip 1 bit, ADSD 1, SATD 1, SMBD 1, HDAD 1, ...
+ */
+#define PCH_RCBA_FD		0x3418		/* Function Disable */
+#define PCH_FD_ADSD		(1 << 1)	/* Audio DSP Disable (bit 1) */
+#define PCH_FD_SATD		(1 << 2)	/* SATA Disable (bit 2) */
+#define PCH_FD_SMBD		(1 << 3)	/* SMBus Disable (bit 3) */
+#define PCH_FD_HDAD		(1 << 4)	/* HD Audio Disable (bit 4) */
+
+/* Function Disable 2 (FD2) register at RCBA + 0x3428 */
+#define PCH_RCBA_FD2		0x3428
+
+/*
+ * IOBP (I/O Bridge Port) Sideband Interface
+ * Used to access internal PCH device configuration registers
+ * Source: coreboot src/southbridge/intel/lynxpoint/iobp.c
+ */
+#define PCH_IOBPIRI		0x2330		/* IOBP Index Register (target address) */
+#define PCH_IOBPD		0x2334		/* IOBP Data Register */
+#define PCH_IOBPS		0x2338		/* IOBP Status Register */
+#define PCH_IOBPU		0x233A		/* IOBP Undocumented/Magic Register */
+
+/* IOBP Status Register bits */
+#define PCH_IOBPS_READY		(1 << 0)	/* Transaction ready/busy */
+#define PCH_IOBPS_TX_MASK	(3 << 1)	/* Transaction status mask */
+#define PCH_IOBPS_READ		0x0600		/* Read opcode */
+#define PCH_IOBPS_WRITE		0x0700		/* Write opcode */
+#define PCH_IOBPU_MAGIC		0xF000		/* Magic value for writes */
+
+/*
+ * ADSP IOBP Register Addresses
+ * Source: coreboot src/soc/intel/broadwell/include/soc/adsp.h
+ */
+#define ADSP_IOBP_PCICFGCTL	0xd7000500	/* PCI Configuration Control */
+#define ADSP_IOBP_PMCTL	0xd70001e0	/* Power Management Control */
+#define ADSP_IOBP_VDLDAT1	0xd7000624	/* Voltage/Data Line Config 1 */
+#define ADSP_IOBP_VDLDAT2	0xd7000628	/* Voltage/Data Line Config 2 */
+
+/* PCICFGCTL bits */
+#define ADSP_PCICFGCTL_PCICD	(1 << 0)	/* PCI Config Disable */
+#define ADSP_PCICFGCTL_ACPIIE	(1 << 1)	/* ACPI Interrupt Enable */
+#define ADSP_PCICFGCTL_SPCBAD	(1 << 7)	/* Sideband PCH BAR Disable */
+
+/* ADSP IOBP default values (from coreboot) */
+#define ADSP_VDLDAT1_VALUE	0x00040100
+#define ADSP_PMCTL_VALUE	0x3f
+
+/* PSF Snoop enable at RCBA + 0x3350 */
+#define PCH_RCBA_PSF_SNOOP	0x3350
+#define PCH_PSF_SNOOP_ADSP	(1 << 10)	/* ADSP snoop to System Agent */
+
+/* LPC bridge PCI location */
+#define PCH_LPC_BUS		0
+#define PCH_LPC_DEV		0x1F
+#define PCH_LPC_FUNC		0
+
+/* GNVS (Global NVS Area) for reading BIOS configuration
+ * Address from custom DSDT: OperationRegion (GNVS, SystemMemory, 0xDB7EF000)
+ */
+#define PCH_GNVS_BASE		0xDB7EF000
+#define PCH_GNVS_SIZE		0x035B
+
+/* HDA controller PCI location */
+#define PCH_HDA_BUS		0
+#define PCH_HDA_DEV		0x1B
+#define PCH_HDA_FUNC		0
+#define PCH_HDA_VID		0x8086
+#define PCH_HDA_DID_WPT	0x9CA0		/* Wildcat Point-LP HD Audio */
+
+/*
+ * DesignWare I2C Controller Register Definitions
+ * Used for I2C1 at 0xFE105000 (codec communication)
+ */
+#define DW_IC_CON		0x00	/* I2C Control */
+#define DW_IC_TAR		0x04	/* Target Address */
+#define DW_IC_SAR		0x08	/* Slave Address */
+#define DW_IC_HS_MADDR		0x0C	/* HS Master Mode Code Address */
+#define DW_IC_DATA_CMD		0x10	/* Data Buffer and Command */
+#define DW_IC_SS_SCL_HCNT	0x14	/* Standard Speed SCL High Count */
+#define DW_IC_SS_SCL_LCNT	0x18	/* Standard Speed SCL Low Count */
+#define DW_IC_FS_SCL_HCNT	0x1C	/* Fast Speed SCL High Count */
+#define DW_IC_FS_SCL_LCNT	0x20	/* Fast Speed SCL Low Count */
+#define DW_IC_INTR_STAT		0x2C	/* Interrupt Status */
+#define DW_IC_INTR_MASK		0x30	/* Interrupt Mask */
+#define DW_IC_RAW_INTR_STAT	0x34	/* Raw Interrupt Status */
+#define DW_IC_RX_TL		0x38	/* Receive FIFO Threshold */
+#define DW_IC_TX_TL		0x3C	/* Transmit FIFO Threshold */
+#define DW_IC_CLR_INTR		0x40	/* Clear Combined Interrupt */
+#define DW_IC_CLR_TX_ABRT	0x54	/* Clear TX_ABRT Interrupt */
+#define DW_IC_ENABLE		0x6C	/* I2C Enable */
+#define DW_IC_STATUS		0x70	/* I2C Status */
+#define DW_IC_TXFLR		0x74	/* Transmit FIFO Level */
+#define DW_IC_RXFLR		0x78	/* Receive FIFO Level */
+#define DW_IC_TX_ABRT_SOURCE	0x80	/* TX Abort Source */
+#define DW_IC_ENABLE_STATUS	0x9C	/* I2C Enable Status */
+#define DW_IC_COMP_PARAM_1	0xF4	/* Component Parameters */
+#define DW_IC_COMP_TYPE		0xFC	/* Component Type */
+
+/* IC_CON bits */
+#define DW_IC_CON_MASTER	(1 << 0)	/* Master mode */
+#define DW_IC_CON_SPEED_SS	(1 << 1)	/* Standard speed (100kHz) */
+#define DW_IC_CON_SPEED_FS	(2 << 1)	/* Fast speed (400kHz) */
+#define DW_IC_CON_SPEED_MASK	(3 << 1)
+#define DW_IC_CON_SLAVE_DIS	(1 << 6)	/* Slave disable */
+#define DW_IC_CON_RESTART_EN	(1 << 5)	/* Restart enable */
+
+/* IC_DATA_CMD bits */
+#define DW_IC_DATA_CMD_READ	(1 << 8)	/* Read command */
+#define DW_IC_DATA_CMD_STOP	(1 << 9)	/* STOP after this byte */
+#define DW_IC_DATA_CMD_RESTART	(1 << 10)	/* RESTART before this byte */
+
+/* IC_STATUS bits */
+#define DW_IC_STATUS_ACTIVITY	(1 << 0)	/* I2C activity */
+#define DW_IC_STATUS_TFNF	(1 << 1)	/* TX FIFO not full */
+#define DW_IC_STATUS_TFE	(1 << 2)	/* TX FIFO empty */
+#define DW_IC_STATUS_RFNE	(1 << 3)	/* RX FIFO not empty */
+
+/* IC_COMP_TYPE expected value */
+#define DW_IC_COMP_TYPE_VALUE	0x44570140	/* DesignWare signature */
+
+/* I2C1 Physical Address (from rwdumps analysis) */
+#define SST_I2C1_BASE		0xFE105000
+#define SST_I2C1_SIZE		0x1000
+#define SST_I2C1_CODEC_ADDR	0x2C		/* RT286 I2C address */
+
+/* RT286 Codec I2C Verb Definitions */
+#define RT286_VENDOR_ID		0x10EC0286
+#define RT286_GET_PARAM		0xF0000		/* Get Parameter verb base */
+#define RT286_SET_POWER		0x70500		/* Set Power State verb */
+#define AC_NODE_ROOT		0x00		/* Root node */
+#define AC_PAR_VENDOR_ID	0x00		/* Vendor ID parameter */
+
 #endif /* _SST_REGS_H_ */
