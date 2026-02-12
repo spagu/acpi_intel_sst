@@ -33,6 +33,9 @@
 #include <machine/cpufunc.h>
 #include <x86/bus.h>
 
+#include <vm/vm.h>
+#include <vm/pmap.h>
+
 #include <contrib/dev/acpica/include/acpi.h>
 #include <dev/acpica/acpivar.h>
 
@@ -47,7 +50,7 @@
 #define PCI_DEVICE_SST_BDW	0x9CB6
 #define PCI_DEVICE_SST_HSW	0x9C76 /* Haswell pending testing */
 
-#define SST_DRV_VERSION "0.13.0-EarlySRAM"
+#define SST_DRV_VERSION "0.14.0-UncachedPmap"
 
 /* Forward declarations */
 static int sst_acpi_probe(device_t dev);
@@ -353,66 +356,87 @@ sst_test_bar0(struct sst_softc *sc)
 #define SST_PCI_BAR0_PHYS	0xDF800000	/* PCI-allocated BAR0 physical address */
 
 /*
- * Enable SRAM using direct physical memory access.
- * This function can be called BEFORE bus resources are allocated.
- * Uses bus_space_map to directly access physical memory.
+ * Enable SRAM using direct physical memory access with UNCACHED mapping.
+ * Uses pmap_mapdev_attr to map memory as uncached, ensuring writes
+ * go directly to hardware without any caching or write-combining.
+ * This mirrors how /dev/mem accesses hardware on FreeBSD.
  */
 static int
 sst_enable_sram_direct(device_t dev)
 {
-	bus_space_tag_t mt = X86_BUS_SPACE_MEM;
-	bus_space_handle_t bar0_h;
-	uint32_t ctrl, test_val;
-	int err, i;
+	volatile uint32_t *bar0_va;
+	volatile uint32_t *ctrl_reg;
+	volatile uint32_t *sram_base;
+	uint32_t ctrl, test_val, ctrl_before;
+	int i;
 
-	device_printf(dev, "=== SRAM Enable (Direct Physical Access) ===\n");
+	device_printf(dev, "=== SRAM Enable (Uncached pmap_mapdev_attr) ===\n");
 
-	/* Map BAR0 directly using physical address */
-	err = bus_space_map(mt, SST_PCI_BAR0_PHYS, 0x100000, 0, &bar0_h);
-	if (err != 0) {
-		device_printf(dev, "  Failed to map BAR0 at 0x%x: %d\n",
-		    SST_PCI_BAR0_PHYS, err);
-		return (err);
+	/* Map BAR0 using pmap_mapdev_attr with UNCACHED attribute.
+	 * VM_MEMATTR_UNCACHEABLE ensures writes go directly to hardware,
+	 * same as how /dev/mem works. */
+	bar0_va = (volatile uint32_t *)pmap_mapdev_attr(
+	    SST_PCI_BAR0_PHYS, 0x100000, VM_MEMATTR_UNCACHEABLE);
+	if (bar0_va == NULL) {
+		device_printf(dev, "  Failed to map BAR0 at 0x%x with pmap_mapdev_attr\n",
+		    SST_PCI_BAR0_PHYS);
+		return (ENOMEM);
 	}
 
+	sram_base = bar0_va;
+	ctrl_reg = (volatile uint32_t *)((char *)bar0_va + SST_SRAM_CTRL_OFFSET);
+
 	/* Check initial state */
-	test_val = bus_space_read_4(mt, bar0_h, 0);
-	ctrl = bus_space_read_4(mt, bar0_h, SST_SRAM_CTRL_OFFSET);
+	test_val = *sram_base;
+	ctrl = *ctrl_reg;
 	device_printf(dev, "  Initial: SRAM[0]=0x%08x, CTRL=0x%08x\n", test_val, ctrl);
 
 	if (test_val != 0xFFFFFFFF) {
 		device_printf(dev, "  SRAM already active!\n");
-		bus_space_unmap(mt, bar0_h, 0x100000);
+		pmap_unmapdev((void *)bar0_va, 0x100000);
 		return (0);
 	}
 
-	/* Write enable bits multiple times with memory barriers */
+	/* Write enable bits multiple times with memory barriers.
+	 * Using volatile pointer + mfence ensures writes are visible to hardware. */
 	for (i = 0; i < 10; i++) {
-		ctrl = bus_space_read_4(mt, bar0_h, SST_SRAM_CTRL_OFFSET);
-		ctrl |= SST_SRAM_CTRL_ENABLE;
+		ctrl_before = *ctrl_reg;
+		ctrl = ctrl_before | SST_SRAM_CTRL_ENABLE;
 
-		/* Write with memory barrier */
-		bus_space_write_4(mt, bar0_h, SST_SRAM_CTRL_OFFSET, ctrl);
-		bus_space_barrier(mt, bar0_h, SST_SRAM_CTRL_OFFSET, 4,
-		    BUS_SPACE_BARRIER_WRITE);
+		device_printf(dev, "  Attempt %d: Writing 0x%08x to CTRL (was 0x%08x)\n",
+		    i + 1, ctrl, ctrl_before);
 
-		DELAY(50000);  /* 50ms */
+		/* Direct volatile write */
+		*ctrl_reg = ctrl;
 
-		ctrl = bus_space_read_4(mt, bar0_h, SST_SRAM_CTRL_OFFSET);
-		test_val = bus_space_read_4(mt, bar0_h, 0);
+		/* Full memory fence to ensure write is posted */
+		__asm __volatile("mfence" ::: "memory");
 
-		device_printf(dev, "  Attempt %d: CTRL=0x%08x, SRAM[0]=0x%08x\n",
-		    i + 1, ctrl, test_val);
+		/* Also try a read-back to force the write through */
+		(void)*ctrl_reg;
+
+		DELAY(100000);  /* 100ms - longer delay */
+
+		ctrl = *ctrl_reg;
+		test_val = *sram_base;
+
+		device_printf(dev, "  Result:  CTRL=0x%08x, SRAM[0]=0x%08x\n", ctrl, test_val);
+
+		/* Check if control register changed (0x8480041f -> 0x78663178 indicates success) */
+		if (ctrl != ctrl_before) {
+			device_printf(dev, "  Control register CHANGED! (Hardware responded)\n");
+		}
 
 		if (test_val != 0xFFFFFFFF) {
 			device_printf(dev, "  SUCCESS! SRAM enabled\n");
-			bus_space_unmap(mt, bar0_h, 0x100000);
+			pmap_unmapdev((void *)bar0_va, 0x100000);
 			return (0);
 		}
 	}
 
-	device_printf(dev, "  FAILED: SRAM still dead\n");
-	bus_space_unmap(mt, bar0_h, 0x100000);
+	device_printf(dev, "  FAILED: SRAM still dead after 10 attempts\n");
+	device_printf(dev, "  Final CTRL: 0x%08x\n", *ctrl_reg);
+	pmap_unmapdev((void *)bar0_va, 0x100000);
 	return (EIO);
 }
 
@@ -2834,17 +2858,31 @@ sst_pci_attach(device_t dev)
 
 	device_printf(dev, "Intel SST Driver v%s (PCI Attach)\n", SST_DRV_VERSION);
 
-	/* CRITICAL: Try to enable SRAM BEFORE any PCI operations
-	 * that might reset the SRAM control register! */
-	device_printf(dev, "Attempting early SRAM enable (before PCI ops)...\n");
+	/* CRITICAL: Enable PCI Memory Space FIRST, before any MMIO access!
+	 * Without PCIM_CMD_MEMEN, writes to BAR memory won't reach hardware. */
+	{
+		uint16_t cmd;
+		cmd = pci_read_config(dev, PCIR_COMMAND, 2);
+		device_printf(dev, "PCI Command before SRAM enable: 0x%04x\n", cmd);
+		if ((cmd & PCIM_CMD_MEMEN) == 0) {
+			device_printf(dev, "  Memory Space DISABLED! Enabling it first...\n");
+			cmd |= PCIM_CMD_MEMEN;
+			pci_write_config(dev, PCIR_COMMAND, cmd, 2);
+			cmd = pci_read_config(dev, PCIR_COMMAND, 2);
+			device_printf(dev, "  PCI Command after MEMEN: 0x%04x\n", cmd);
+		}
+	}
+
+	/* Now try to enable SRAM with Memory Space enabled */
+	device_printf(dev, "Attempting SRAM enable (with PCI Memory Space enabled)...\n");
 	sst_enable_sram_direct(dev);
 
-	/* Enable Memory Space + Bus Master */
+	/* Enable Bus Master for DMA operations */
 	pci_enable_busmaster(dev);
 	{
 		uint16_t cmd;
 		cmd = pci_read_config(dev, PCIR_COMMAND, 2);
-		device_printf(dev, "PCI Command initial: 0x%04x\n", cmd);
+		device_printf(dev, "PCI Command after busmaster: 0x%04x\n", cmd);
 		if ((cmd & (PCIM_CMD_MEMEN | PCIM_CMD_BUSMASTEREN)) !=
 		    (PCIM_CMD_MEMEN | PCIM_CMD_BUSMASTEREN)) {
 			cmd |= (PCIM_CMD_MEMEN | PCIM_CMD_BUSMASTEREN);
