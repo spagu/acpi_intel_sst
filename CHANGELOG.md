@@ -5,6 +5,51 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.0] - 2026-02-12
+
+### BREAKTHROUGH: Rising Edge Trigger for SRAM Enable
+
+- **ROOT CAUSE FOUND** - Hardware requires a **rising edge (0→1 transition)** on enable bits
+  - Simply writing `0x8480041f` (with bits already set) does NOT trigger SRAM power-up
+  - Must first CLEAR bits 0-4, then SET them to create the rising edge
+  - This is why manual dd worked but driver writes didn't!
+
+- **Working Sequence**:
+  1. Read current CTRL value (0x8480041f)
+  2. Clear bits 0-4: write `0x84800400`
+  3. Wait 10ms
+  4. Set bits 0-4: write `0x8480041f`
+  5. Wait 100ms
+  6. SRAM becomes accessible! CTRL changes to 0x78663178
+
+- **Result**: SRAM[0] reads 0xc31883d6 instead of 0xFFFFFFFF - **DSP memory is ALIVE!**
+
+### Changed
+
+- `sst_enable_sram_direct()` now implements rising edge trigger sequence
+- Driver version bumped to 0.15.0-RisingEdge
+
+---
+
+## [0.14.0] - 2026-02-12
+
+### Critical Discovery: SRAM Enable via BAR0+0xFB000
+
+- **PCI SST Device Found** - SST is visible at PCI 00:13.0 (8086:9CB6) with BAR0 at 0xDF800000
+  - This is the REAL BAR0, not the ACPI-declared 0xFE000000 which is dead
+  - BAR1 at 0xDF900000 contains PCI config mirror / LPSS private registers
+
+- **SRAM Control Register Discovered** - BAR0+0xFB000 controls SRAM power
+  - Default value: 0x8480041f (SRAM disabled, returns 0xFFFFFFFF)
+  - After enable: 0x78663178 (hardware processed, SRAM accessible)
+  - Setting bits 0-4 (0x1F) triggers SRAM power-up sequence
+
+- **Uncached Memory Mapping** - switch from `bus_space_map` to `pmap_mapdev_attr`
+  - Uses `VM_MEMATTR_UNCACHEABLE` to ensure writes go directly to hardware
+  - Added `#include <vm/vm.h>` and `#include <vm/pmap.h>` for pmap functions
+
+---
+
 ## [0.8.0] - 2026-02-12
 
 ### Critical Bug Fixes

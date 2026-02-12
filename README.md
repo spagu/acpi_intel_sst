@@ -51,16 +51,22 @@ The SST DSP SRAM requires activation before memory access works:
 | SRAM Base | BAR0+0x0 | 0xFFFFFFFF | Dead (when disabled) |
 | SRAM Base | BAR0+0x0 | 0xc31883d6 | Alive (when enabled) |
 
-**Manual SRAM activation via `/dev/mem` works:**
+**SRAM activation requires RISING EDGE trigger (0→1 transition):**
 ```bash
-# Enable SRAM (bits 0-4 set)
-printf '\x1f\x04\x80\x84' | dd of=/dev/mem bs=1 seek=$((0xdf8fb000)) conv=notrunc
+# Step 1: CLEAR enable bits (bits 0-4)
+printf '\x00\x04\x80\x84' | dd of=/dev/mem bs=1 seek=$((0xdf8fb000)) conv=notrunc 2>/dev/null
+sleep 0.01
 
-# Verify - should show real data, not 0xFFFFFFFF
-dd if=/dev/mem bs=4 count=1 skip=$((0xdf800000/4)) 2>/dev/null | xxd
+# Step 2: SET enable bits (rising edge triggers hardware)
+printf '\x1f\x04\x80\x84' | dd of=/dev/mem bs=1 seek=$((0xdf8fb000)) conv=notrunc 2>/dev/null
+sleep 0.1
+
+# Verify - CTRL should change, SRAM should show real data
+dd if=/dev/mem bs=4 count=1 skip=$((0xdf8fb000/4)) 2>/dev/null | xxd  # Should NOT be 0x8480041f
+dd if=/dev/mem bs=4 count=1 skip=$((0xdf800000/4)) 2>/dev/null | xxd  # Should be 0xc31883d6
 ```
 
-**Driver writes don't trigger hardware state machine** - this is the current blocker being investigated.
+**Key insight**: Simply writing the enable value doesn't work - hardware needs to see the bits transition from 0 to 1.
 
 ---
 

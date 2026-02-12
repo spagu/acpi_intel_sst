@@ -50,7 +50,7 @@
 #define PCI_DEVICE_SST_BDW	0x9CB6
 #define PCI_DEVICE_SST_HSW	0x9C76 /* Haswell pending testing */
 
-#define SST_DRV_VERSION "0.14.0-UncachedPmap"
+#define SST_DRV_VERSION "0.15.0-RisingEdge"
 
 /* Forward declarations */
 static int sst_acpi_probe(device_t dev);
@@ -367,10 +367,10 @@ sst_enable_sram_direct(device_t dev)
 	void *bar0_va;
 	volatile uint32_t *ctrl_reg;
 	volatile uint32_t *sram_base;
-	uint32_t ctrl, test_val, ctrl_before;
+	uint32_t ctrl, test_val, ctrl_cleared;
 	int i;
 
-	device_printf(dev, "=== SRAM Enable (Uncached pmap_mapdev_attr) ===\n");
+	device_printf(dev, "=== SRAM Enable (Rising Edge Trigger) ===\n");
 
 	/* Map BAR0 using pmap_mapdev_attr with UNCACHED attribute.
 	 * VM_MEMATTR_UNCACHEABLE ensures writes go directly to hardware,
@@ -396,44 +396,45 @@ sst_enable_sram_direct(device_t dev)
 		return (0);
 	}
 
-	/* Write enable bits multiple times with memory barriers.
-	 * Using volatile pointer + mfence ensures writes are visible to hardware. */
-	for (i = 0; i < 10; i++) {
-		ctrl_before = *ctrl_reg;
-		ctrl = ctrl_before | SST_SRAM_CTRL_ENABLE;
+	/* KEY DISCOVERY: Hardware requires a RISING EDGE (0->1 transition) on
+	 * the enable bits to trigger the SRAM power-up sequence.
+	 * Simply writing with bits already set doesn't work.
+	 * We must: 1) CLEAR bits 0-4, 2) SET bits 0-4 */
+	for (i = 0; i < 3; i++) {
+		ctrl = *ctrl_reg;
+		device_printf(dev, "  Attempt %d: CTRL before=0x%08x\n", i + 1, ctrl);
 
-		device_printf(dev, "  Attempt %d: Writing 0x%08x to CTRL (was 0x%08x)\n",
-		    i + 1, ctrl, ctrl_before);
-
-		/* Direct volatile write */
-		*ctrl_reg = ctrl;
-
-		/* Full memory fence to ensure write is posted */
+		/* Step 1: CLEAR enable bits (write 0 to bits 0-4) */
+		ctrl_cleared = ctrl & ~SST_SRAM_CTRL_ENABLE;
+		device_printf(dev, "  Step 1: Clearing enable bits -> 0x%08x\n", ctrl_cleared);
+		*ctrl_reg = ctrl_cleared;
 		__asm __volatile("mfence" ::: "memory");
+		(void)*ctrl_reg;  /* Force write through */
+		DELAY(10000);  /* 10ms */
 
-		/* Also try a read-back to force the write through */
-		(void)*ctrl_reg;
+		/* Step 2: SET enable bits (write 1 to bits 0-4) - rising edge */
+		ctrl = ctrl_cleared | SST_SRAM_CTRL_ENABLE;
+		device_printf(dev, "  Step 2: Setting enable bits -> 0x%08x\n", ctrl);
+		*ctrl_reg = ctrl;
+		__asm __volatile("mfence" ::: "memory");
+		(void)*ctrl_reg;  /* Force write through */
 
-		DELAY(100000);  /* 100ms - longer delay */
+		/* Wait for hardware to process the rising edge */
+		DELAY(100000);  /* 100ms */
 
+		/* Check result */
 		ctrl = *ctrl_reg;
 		test_val = *sram_base;
-
-		device_printf(dev, "  Result:  CTRL=0x%08x, SRAM[0]=0x%08x\n", ctrl, test_val);
-
-		/* Check if control register changed (0x8480041f -> 0x78663178 indicates success) */
-		if (ctrl != ctrl_before) {
-			device_printf(dev, "  Control register CHANGED! (Hardware responded)\n");
-		}
+		device_printf(dev, "  Result: CTRL=0x%08x, SRAM[0]=0x%08x\n", ctrl, test_val);
 
 		if (test_val != 0xFFFFFFFF) {
-			device_printf(dev, "  SUCCESS! SRAM enabled\n");
+			device_printf(dev, "  SUCCESS! SRAM enabled via rising edge trigger\n");
 			pmap_unmapdev(bar0_va, 0x100000);
 			return (0);
 		}
 	}
 
-	device_printf(dev, "  FAILED: SRAM still dead after 10 attempts\n");
+	device_printf(dev, "  FAILED: SRAM still dead after rising edge attempts\n");
 	device_printf(dev, "  Final CTRL: 0x%08x\n", *ctrl_reg);
 	pmap_unmapdev(bar0_va, 0x100000);
 	return (EIO);
