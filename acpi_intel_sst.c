@@ -1162,14 +1162,70 @@ sst_acpi_attach(device_t dev)
 
 					/* Dump other potentially relevant RCBA registers */
 					device_printf(dev, "  Other RCBA regs:\n");
-					device_printf(dev, "    [0x2030] LPSS: 0x%08x\n",
-					    bus_space_read_4(mem_tag, rcba_handle, 0x2030));
+					uint32_t lpss = bus_space_read_4(mem_tag, rcba_handle, 0x2030);
+					device_printf(dev, "    [0x2030] LPSS: 0x%08x\n", lpss);
 					device_printf(dev, "    [0x2034]: 0x%08x\n",
 					    bus_space_read_4(mem_tag, rcba_handle, 0x2034));
 					device_printf(dev, "    [0x3410] CG: 0x%08x\n",
 					    bus_space_read_4(mem_tag, rcba_handle, 0x3410));
 					device_printf(dev, "    [0x3414]: 0x%08x\n",
 					    bus_space_read_4(mem_tag, rcba_handle, 0x3414));
+
+					/*
+					 * LPSS register 0x2030 = 0x82000004
+					 * Try modifying to enable memory decoder
+					 * Bit 31 = probably lock, Bit 2 = unknown enable
+					 */
+					device_printf(dev, "  === LPSS EXPERIMENTATION ===\n");
+
+					/* Scan RCBA 0x2000-0x2100 for audio-related regs */
+					device_printf(dev, "  RCBA 0x2000-0x2100 scan:\n");
+					int off;
+					for (off = 0x2000; off < 0x2100; off += 4) {
+						uint32_t v = bus_space_read_4(mem_tag, rcba_handle, off);
+						if (v != 0 && v != 0xFFFFFFFF) {
+							device_printf(dev, "    [0x%04x]: 0x%08x\n", off, v);
+						}
+					}
+
+					/* Try clearing LPSS bit 2 */
+					device_printf(dev, "  Trying LPSS &~0x04...\n");
+					bus_space_write_4(mem_tag, rcba_handle, 0x2030, lpss & ~0x04);
+					DELAY(10000);
+					device_printf(dev, "    LPSS now: 0x%08x\n",
+					    bus_space_read_4(mem_tag, rcba_handle, 0x2030));
+					if (bus_space_map(mem_tag, 0xfe000000, 0x1000, 0,
+					    &scan_handle) == 0) {
+						scan_val = bus_space_read_4(mem_tag, scan_handle, 0);
+						device_printf(dev, "    BAR0[0]: 0x%08x%s\n", scan_val,
+						    scan_val != 0xFFFFFFFF ? " <-- CHANGED!" : "");
+						bus_space_unmap(mem_tag, scan_handle, 0x1000);
+					}
+
+					/* Restore and try setting bit 0 (often enable) */
+					bus_space_write_4(mem_tag, rcba_handle, 0x2030, lpss | 0x01);
+					DELAY(10000);
+					device_printf(dev, "  Trying LPSS |0x01: 0x%08x\n",
+					    bus_space_read_4(mem_tag, rcba_handle, 0x2030));
+					if (bus_space_map(mem_tag, 0xfe000000, 0x1000, 0,
+					    &scan_handle) == 0) {
+						scan_val = bus_space_read_4(mem_tag, scan_handle, 0);
+						device_printf(dev, "    BAR0[0]: 0x%08x%s\n", scan_val,
+						    scan_val != 0xFFFFFFFF ? " <-- CHANGED!" : "");
+						bus_space_unmap(mem_tag, scan_handle, 0x1000);
+					}
+
+					/* Restore original */
+					bus_space_write_4(mem_tag, rcba_handle, 0x2030, lpss);
+
+					/* Scan RCBA 0x3400-0x3500 for more function disable */
+					device_printf(dev, "  RCBA 0x3400-0x3500 scan:\n");
+					for (off = 0x3400; off < 0x3500; off += 4) {
+						uint32_t v = bus_space_read_4(mem_tag, rcba_handle, off);
+						if (v != 0 && v != 0xFFFFFFFF) {
+							device_printf(dev, "    [0x%04x]: 0x%08x\n", off, v);
+						}
+					}
 
 					bus_space_unmap(mem_tag, rcba_handle, 0x4000);
 				} else {
