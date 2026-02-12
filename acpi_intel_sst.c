@@ -47,7 +47,7 @@
 #define PCI_DEVICE_SST_BDW	0x9CB6
 #define PCI_DEVICE_SST_HSW	0x9C76 /* Haswell pending testing */
 
-#define SST_DRV_VERSION "0.12.0-SRAM-MultiWrite"
+#define SST_DRV_VERSION "0.13.0-EarlySRAM"
 
 /* Forward declarations */
 static int sst_acpi_probe(device_t dev);
@@ -67,6 +67,7 @@ static void sst_acpi_power_up(struct sst_softc *sc);
 static int sst_wpt_power_up(struct sst_softc *sc);
 static bool sst_test_bar0(struct sst_softc *sc);
 static int sst_enable_sram(struct sst_softc *sc);
+static int sst_enable_sram_direct(device_t dev);
 static int sst_try_enable_hda(struct sst_softc *sc);
 static int sst_try_enable_adsp(struct sst_softc *sc) __unused;
 static void sst_probe_i2c_codec(struct sst_softc *sc);
@@ -349,6 +350,71 @@ sst_test_bar0(struct sst_softc *sc)
 
 #define SST_SRAM_CTRL_OFFSET	0xFB000
 #define SST_SRAM_CTRL_ENABLE	0x1F	/* Bits 0-4 enable SRAM */
+#define SST_PCI_BAR0_PHYS	0xDF800000	/* PCI-allocated BAR0 physical address */
+
+/*
+ * Enable SRAM using direct physical memory access.
+ * This function can be called BEFORE bus resources are allocated.
+ * Uses bus_space_map to directly access physical memory.
+ */
+static int
+sst_enable_sram_direct(device_t dev)
+{
+	bus_space_tag_t mt = X86_BUS_SPACE_MEM;
+	bus_space_handle_t bar0_h;
+	uint32_t ctrl, test_val;
+	int err, i;
+
+	device_printf(dev, "=== SRAM Enable (Direct Physical Access) ===\n");
+
+	/* Map BAR0 directly using physical address */
+	err = bus_space_map(mt, SST_PCI_BAR0_PHYS, 0x100000, 0, &bar0_h);
+	if (err != 0) {
+		device_printf(dev, "  Failed to map BAR0 at 0x%x: %d\n",
+		    SST_PCI_BAR0_PHYS, err);
+		return (err);
+	}
+
+	/* Check initial state */
+	test_val = bus_space_read_4(mt, bar0_h, 0);
+	ctrl = bus_space_read_4(mt, bar0_h, SST_SRAM_CTRL_OFFSET);
+	device_printf(dev, "  Initial: SRAM[0]=0x%08x, CTRL=0x%08x\n", test_val, ctrl);
+
+	if (test_val != 0xFFFFFFFF) {
+		device_printf(dev, "  SRAM already active!\n");
+		bus_space_unmap(mt, bar0_h, 0x100000);
+		return (0);
+	}
+
+	/* Write enable bits multiple times with memory barriers */
+	for (i = 0; i < 10; i++) {
+		ctrl = bus_space_read_4(mt, bar0_h, SST_SRAM_CTRL_OFFSET);
+		ctrl |= SST_SRAM_CTRL_ENABLE;
+
+		/* Write with memory barrier */
+		bus_space_write_4(mt, bar0_h, SST_SRAM_CTRL_OFFSET, ctrl);
+		bus_space_barrier(mt, bar0_h, SST_SRAM_CTRL_OFFSET, 4,
+		    BUS_SPACE_BARRIER_WRITE);
+
+		DELAY(50000);  /* 50ms */
+
+		ctrl = bus_space_read_4(mt, bar0_h, SST_SRAM_CTRL_OFFSET);
+		test_val = bus_space_read_4(mt, bar0_h, 0);
+
+		device_printf(dev, "  Attempt %d: CTRL=0x%08x, SRAM[0]=0x%08x\n",
+		    i + 1, ctrl, test_val);
+
+		if (test_val != 0xFFFFFFFF) {
+			device_printf(dev, "  SUCCESS! SRAM enabled\n");
+			bus_space_unmap(mt, bar0_h, 0x100000);
+			return (0);
+		}
+	}
+
+	device_printf(dev, "  FAILED: SRAM still dead\n");
+	bus_space_unmap(mt, bar0_h, 0x100000);
+	return (EIO);
+}
 
 static int
 sst_enable_sram(struct sst_softc *sc)
@@ -2767,6 +2833,11 @@ sst_pci_attach(device_t dev)
 	mtx_init(&sc->sc_mtx, "sst_sc", NULL, MTX_DEF);
 
 	device_printf(dev, "Intel SST Driver v%s (PCI Attach)\n", SST_DRV_VERSION);
+
+	/* CRITICAL: Try to enable SRAM BEFORE any PCI operations
+	 * that might reset the SRAM control register! */
+	device_printf(dev, "Attempting early SRAM enable (before PCI ops)...\n");
+	sst_enable_sram_direct(dev);
 
 	/* Enable Memory Space + Bus Master */
 	pci_enable_busmaster(dev);
