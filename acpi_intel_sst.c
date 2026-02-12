@@ -2657,7 +2657,10 @@ sst_pci_attach(device_t dev)
 {
 	struct sst_softc *sc;
 
-	int error = 0;
+	int error = 0, bar0_ok = 0;
+
+	device_printf(dev, "Intel SST Driver v0.9.0-PCI (PCI Attach)\n");
+	device_printf(dev, "Driver Build Time: %s %s\n", __DATE__, __TIME__); // VERIFY NEW BUILD
 	bool bar0_ok;
 
 	sc = device_get_softc(dev);
@@ -2745,19 +2748,21 @@ sst_pci_attach(device_t dev)
 		}
 	}
 
-	/* EXPERIMENTAL: Force Enable APLL in VDRTCTL2 (Offset 0xA8)
-	 * Analysis of functioning Windows dump shows VDRTCTL2 = 0x80000FFF.
-	 * This implies Bit 31 (APLL Select?) must be set.
+	/* EXPERIMENTAL PHASE 2: "The Windows Mirror"
+	 * 1. Force VDRTCTL2 to exact Windows value: 0x80000FFF
+	 *    (Bit 31=1 APLL, Bit 12=0, Bit 10=1)
+	 * 2. Force VDRTCTL0 to 0 (Power On)
+	 * 3. Force Register 0x80 to release Reset (Bit 1)
 	 */
+	
+	/* 1. VDRTCTL2 - Clock Configuration */
 	{
 		uint32_t valA8;
-		device_printf(dev, "Attempting to enable APLL in VDRTCTL2 (0xA8) with Bit 31...\n");
+		device_printf(dev, "Step 1: Setting VDRTCTL2 (0xA8) to Windows value 0x80000FFF...\n");
 		valA8 = bus_read_4(sc->shim_res, 0xA8);
 		device_printf(dev, "  VDRTCTL2 before: 0x%08x\n", valA8);
 		
-		valA8 |= (1 << 31); // Set Bit 31 (APLL Select)
-		// Windows has 0x80000FFF. We have 0x00000BFF.
-		// Let's try OR-ing Bit 31 only first.
+		valA8 = 0x80000FFF; // Exact match from dump
 		
 		bus_write_4(sc->shim_res, 0xA8, valA8);
 		DELAY(10000);
@@ -2766,16 +2771,34 @@ sst_pci_attach(device_t dev)
 		device_printf(dev, "  VDRTCTL2 after:  0x%08x\n", valA8);
 	}
 
-	/* Try Power Up (VDRTCTL0 = 0) again */
+	/* 2. VDRTCTL0 - Power Up */
 	{
 		uint32_t valA0 = bus_read_4(sc->shim_res, 0xA0);
-		device_printf(dev, "Attempting VDRTCTL0 Power Up after APLL fix via Bit 31...\n");
-		if ((valA0 & 0x3) != 0) {
+		device_printf(dev, "Step 2: Attempting VDRTCTL0 (0xA0) Power Up...\n");
+		if (1) { // Force try always
 			bus_write_4(sc->shim_res, 0xA0, 0x00000000);
-			DELAY(10000);
+			DELAY(50000);
 			valA0 = bus_read_4(sc->shim_res, 0xA0);
-			device_printf(dev, "  VDRTCTL0 after: 0x%08x\n", valA0);
+			device_printf(dev, "  VDRTCTL0 after:  0x%08x\n", valA0);
 		}
+	}
+
+	/* 3. Register 0x80 - DSP Reset Release */
+	{
+		uint32_t val80 = bus_read_4(sc->shim_res, 0x80);
+		device_printf(dev, "Step 3: Attempting to release DSP RESET (0x80)...\n");
+		device_printf(dev, "  Reg 0x80 before: 0x%08x\n", val80);
+		
+		// Bit 0 is Controller Reset? Bit 1 is Core Reset?
+		// Windows has 0x40030001 (Bit 0 set, Bit 1 clear).
+		// We want to try setting Bit 1 to see if it wakes up BAR0.
+		val80 |= 0x2; 
+		
+		bus_write_4(sc->shim_res, 0x80, val80);
+		DELAY(50000);
+		
+		val80 = bus_read_4(sc->shim_res, 0x80);
+		device_printf(dev, "  Reg 0x80 after:  0x%08x\n", val80);
 	}
 
 	/* WPT Power-Up Sequence - SKIPPED 
@@ -2784,9 +2807,10 @@ sst_pci_attach(device_t dev)
 	 */
 	// sst_wpt_power_up(sc);
 	
-	device_printf(dev, "Skipped WPT Power-Up. Checking state:\n");
+	device_printf(dev, "Skipped WPT Power-Up. Final State Check:\n");
 	device_printf(dev, "  VDRTCTL0: 0x%08x\n", bus_read_4(sc->shim_res, 0xA0));
 	device_printf(dev, "  VDRTCTL2: 0x%08x\n", bus_read_4(sc->shim_res, 0xA8));
+	device_printf(dev, "  Reg 0x80: 0x%08x\n", bus_read_4(sc->shim_res, 0x80));
 
 	/* Test BAR0 */
 	bar0_ok = sst_test_bar0(sc);
