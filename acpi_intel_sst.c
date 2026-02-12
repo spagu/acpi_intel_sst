@@ -2660,7 +2660,6 @@ sst_pci_attach(device_t dev)
 	int error = 0, bar0_ok = 0;
 
 	device_printf(dev, "Intel SST Driver v0.9.0-PCI (PCI Attach)\n");
-	device_printf(dev, "Driver Build Time: %s %s\n", __DATE__, __TIME__); // VERIFY NEW BUILD
 	// bool bar0_ok; (Removed due to redefinition)
 
 	sc = device_get_softc(dev);
@@ -2783,16 +2782,17 @@ sst_pci_attach(device_t dev)
 		}
 	}
 
-	/* 3. Register 0x80 - DSP Reset Release */
+	/* 3. Register 0x80 - DSP Reset Release (ATTEMPT 2)
+	 * Theory: 0x40030001 (Windows Dump) is SLEEP state (Reset Active).
+	 * To wake up, maybe we need to CLEAR the reset bits?
+	 * Let's try clearing Bit 0 and Bit 1.
+	 */
 	{
 		uint32_t val80 = bus_read_4(sc->shim_res, 0x80);
-		device_printf(dev, "Step 3: Attempting to release DSP RESET (0x80)...\n");
+		device_printf(dev, "Step 3: Attempting to CLEAR Reset Bits 0/1 in 0x80...\n");
 		device_printf(dev, "  Reg 0x80 before: 0x%08x\n", val80);
 		
-		// Bit 0 is Controller Reset? Bit 1 is Core Reset?
-		// Windows has 0x40030001 (Bit 0 set, Bit 1 clear).
-		// We want to try setting Bit 1 to see if it wakes up BAR0.
-		val80 |= 0x2; 
+		val80 &= ~(0x3); // Clear Bit 0 and Bit 1
 		
 		bus_write_4(sc->shim_res, 0x80, val80);
 		DELAY(50000);
@@ -2801,10 +2801,7 @@ sst_pci_attach(device_t dev)
 		device_printf(dev, "  Reg 0x80 after:  0x%08x\n", val80);
 	}
 
-	/* WPT Power-Up Sequence - SKIPPED 
-	 * This legacy sequence seems to break the state we just fixed.
-	 * Disabling it to see if VDRTCTL0 stays 0.
-	 */
+	/* WPT Power-Up Sequence - SKIPPED */
 	// sst_wpt_power_up(sc);
 	
 	device_printf(dev, "Skipped WPT Power-Up. Final State Check:\n");
