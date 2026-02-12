@@ -1284,6 +1284,89 @@ sst_acpi_attach(device_t dev)
 						}
 					}
 				}
+
+				/*
+				 * Try probing the memory address from RCBA [0x341c]
+				 * 0xfce00000 might be an alternative ADSP location
+				 */
+				device_printf(dev, "  === ALTERNATIVE MEMORY PROBE ===\n");
+				{
+					uint64_t alt_addrs[] = {
+						0xfce00000,  /* From RCBA [0x341c] */
+						0xfed04000,  /* From RCBA [0x3450] */
+						0xfe000004,  /* BAR0 + 4 (skip first dword) */
+						0xfe010000,  /* 64KB into BAR0 region */
+						0xfe080000,  /* IRAM area */
+						0xfe0c0000,  /* SHIM area */
+					};
+					int i;
+					bus_space_tag_t test_tag = X86_BUS_SPACE_MEM;
+					bus_space_handle_t test_h;
+
+					for (i = 0; i < sizeof(alt_addrs)/sizeof(alt_addrs[0]); i++) {
+						if (bus_space_map(test_tag, alt_addrs[i], 0x100, 0,
+						    &test_h) == 0) {
+							uint32_t v0 = bus_space_read_4(test_tag, test_h, 0);
+							uint32_t v4 = bus_space_read_4(test_tag, test_h, 4);
+							if (v0 != 0xFFFFFFFF || v4 != 0xFFFFFFFF) {
+								device_printf(dev, "    0x%llx: [0]=0x%08x [4]=0x%08x",
+								    (unsigned long long)alt_addrs[i], v0, v4);
+								if (v0 == 0x9CB68086)
+									device_printf(dev, " <-- SST!");
+								device_printf(dev, "\n");
+							}
+							bus_space_unmap(test_tag, test_h, 0x100);
+						}
+					}
+				}
+
+				/*
+				 * LAST RESORT: Try writing to PCI slot 19 config space
+				 * Maybe we can "create" the device by writing its VID/DID
+				 */
+				device_printf(dev, "  === SLOT 19 EXPERIMENTS ===\n");
+				{
+					/* Read extended config space of slot 19 */
+					uint32_t s19_cmd, s19_bar0, s19_bar1;
+
+					/* First, try to read/write command register */
+					s19_cmd = pci_cfgregread(0, 0, 19, 0, 0x04, 4);
+					device_printf(dev, "    Slot 19 CMD: 0x%08x\n", s19_cmd);
+
+					/* Check BAR registers */
+					s19_bar0 = pci_cfgregread(0, 0, 19, 0, 0x10, 4);
+					s19_bar1 = pci_cfgregread(0, 0, 19, 0, 0x14, 4);
+					device_printf(dev, "    Slot 19 BAR0: 0x%08x, BAR1: 0x%08x\n",
+					    s19_bar0, s19_bar1);
+
+					/* Try writing BAR0 address */
+					device_printf(dev, "    Writing 0xfe000000 to slot 19 BAR0...\n");
+					pci_cfgregwrite(0, 0, 19, 0, 0x10, 0xfe000000, 4);
+					pci_cfgregwrite(0, 0, 19, 0, 0x14, 0xfe100000, 4);
+					/* Enable memory space */
+					pci_cfgregwrite(0, 0, 19, 0, 0x04, 0x00000006, 4);
+
+					DELAY(10000);
+
+					/* Re-read */
+					device_printf(dev, "    After write: VID=0x%08x CMD=0x%08x\n",
+					    pci_cfgregread(0, 0, 19, 0, 0x00, 4),
+					    pci_cfgregread(0, 0, 19, 0, 0x04, 4));
+					device_printf(dev, "    BAR0=0x%08x BAR1=0x%08x\n",
+					    pci_cfgregread(0, 0, 19, 0, 0x10, 4),
+					    pci_cfgregread(0, 0, 19, 0, 0x14, 4));
+
+					/* Test BAR0 memory again */
+					bus_space_tag_t test_tag = X86_BUS_SPACE_MEM;
+					bus_space_handle_t test_h;
+					if (bus_space_map(test_tag, 0xfe000000, 0x1000, 0,
+					    &test_h) == 0) {
+						uint32_t v = bus_space_read_4(test_tag, test_h, 0);
+						device_printf(dev, "    BAR0[0] now: 0x%08x%s\n", v,
+						    v != 0xFFFFFFFF ? " <-- WORKING!" : "");
+						bus_space_unmap(test_tag, test_h, 0x1000);
+					}
+				}
 			}
 			}  /* End test block scope */
 		}
