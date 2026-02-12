@@ -50,7 +50,7 @@
 #define PCI_DEVICE_SST_BDW	0x9CB6
 #define PCI_DEVICE_SST_HSW	0x9C76 /* Haswell pending testing */
 
-#define SST_DRV_VERSION "0.21.1-ProbeCheck"
+#define SST_DRV_VERSION "0.21.2-AcpiCheck"
 
 /* Forward declarations */
 static int sst_acpi_probe(device_t dev);
@@ -2033,10 +2033,17 @@ sst_acpi_probe(device_t dev)
 {
 	int rv;
 
+	/* Check SRAM at ACPI probe entry */
+	sst_check_sram_immediate("ACPI_PROBE_ENTRY");
+
 	if (acpi_disabled("sst"))
 		return (ENXIO);
 
 	rv = ACPI_ID_PROBE(device_get_parent(dev), dev, sst_ids, NULL);
+
+	/* Check SRAM after ACPI_ID_PROBE */
+	sst_check_sram_immediate("ACPI_PROBE_AFTER_ID");
+
 	if (rv <= 0)
 		device_set_desc(dev, "Intel Broadwell-U Audio DSP (SST)");
 
@@ -2068,9 +2075,15 @@ sst_acpi_attach(device_t dev)
 	int error = 0;
 	bool bar0_ok;
 
+	/* Check SRAM at ACPI attach entry */
+	sst_check_sram_immediate("ACPI_ATTACH_ENTRY");
+
 	sc = device_get_softc(dev);
 	sc->dev = dev;
 	sc->handle = acpi_get_handle(dev);
+
+	/* Check SRAM after acpi_get_handle */
+	sst_check_sram_immediate("ACPI_AFTER_GET_HANDLE");
 	sc->mem_res = NULL;
 	sc->shim_res = NULL;
 	sc->irq_res = NULL;
