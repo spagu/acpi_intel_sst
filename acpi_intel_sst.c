@@ -2733,17 +2733,17 @@ sst_pci_attach(device_t dev)
 	{
 		uint32_t val;
 		device_printf(dev, "Attempting to enable APLL in VDRTCTL2 (0xA8)...\n");
-		val = bus_read_4(sc->shim_res, SST_WPT_VDRTCTL2);
+		val = bus_read_4(sc->shim_res, 0xA8);
 		device_printf(dev, "  VDRTCTL2 before: 0x%08x\n", val);
 		
 		val |= (1 << 12); // Set bit 12
 		val &= ~0xFFF;    // Clear frequency bits (try default/safe?) - optional, acts as reset
 		val |= 0xBFF;     // Restore default freq (from logs)
 		
-		bus_write_4(sc->shim_res, SST_WPT_VDRTCTL2, val);
+		bus_write_4(sc->shim_res, 0xA8, val);
 		DELAY(1000);
 		
-		val = bus_read_4(sc->shim_res, SST_WPT_VDRTCTL2);
+		val = bus_read_4(sc->shim_res, 0xA8);
 		device_printf(dev, "  VDRTCTL2 after:  0x%08x\n", val);
 	}
 
