@@ -1331,6 +1331,71 @@ sst_acpi_attach(device_t dev)
 				}
 
 				/*
+				 * Try to enable memory access via LPSS PCI config mirrors!
+				 * We found that PCI config works but operational memory doesn't.
+				 * Maybe we need to enable Memory Space bit in Command register.
+				 */
+				device_printf(dev, "  === LPSS PCI CONFIG ENABLE ===\n");
+				{
+					bus_space_tag_t cfg_tag = X86_BUS_SPACE_MEM;
+					bus_space_handle_t cfg_h;
+					struct {
+						uint64_t pci_cfg;
+						uint64_t mem_addr;
+						const char *name;
+					} lpss_devs[] = {
+						{ 0xfe100000, 0xfe000000, "SST" },
+						{ 0xfe104000, 0xfe103000, "I2C0" },
+						{ 0xfe106000, 0xfe105000, "I2C1" },
+					};
+					int d;
+
+					for (d = 0; d < 3; d++) {
+						if (bus_space_map(cfg_tag, lpss_devs[d].pci_cfg, 0x100, 0,
+						    &cfg_h) == 0) {
+							uint32_t vid = bus_space_read_4(cfg_tag, cfg_h, 0x00);
+							uint32_t cmd = bus_space_read_4(cfg_tag, cfg_h, 0x04);
+							uint32_t bar0 = bus_space_read_4(cfg_tag, cfg_h, 0x10);
+
+							device_printf(dev, "    %s: VID=0x%08x CMD=0x%08x BAR0=0x%08x\n",
+							    lpss_devs[d].name, vid, cmd, bar0);
+
+							/* Check if Memory Space Enable (bit 1) is set */
+							if (!(cmd & 0x02)) {
+								device_printf(dev, "      Memory Space DISABLED! Enabling...\n");
+								bus_space_write_4(cfg_tag, cfg_h, 0x04, cmd | 0x06);
+								DELAY(10000);
+								cmd = bus_space_read_4(cfg_tag, cfg_h, 0x04);
+								device_printf(dev, "      CMD after enable: 0x%08x\n", cmd);
+							}
+
+							/* If BAR0 is 0 or invalid, try setting it */
+							if (bar0 == 0 || bar0 == 0xFFFFFFFF) {
+								device_printf(dev, "      BAR0 invalid! Setting to 0x%llx...\n",
+								    (unsigned long long)lpss_devs[d].mem_addr);
+								bus_space_write_4(cfg_tag, cfg_h, 0x10,
+								    (uint32_t)lpss_devs[d].mem_addr);
+								DELAY(10000);
+								bar0 = bus_space_read_4(cfg_tag, cfg_h, 0x10);
+								device_printf(dev, "      BAR0 after write: 0x%08x\n", bar0);
+							}
+
+							bus_space_unmap(cfg_tag, cfg_h, 0x100);
+
+							/* Test if memory now works */
+							bus_space_handle_t mem_h;
+							if (bus_space_map(cfg_tag, lpss_devs[d].mem_addr, 0x100, 0,
+							    &mem_h) == 0) {
+								uint32_t mem_val = bus_space_read_4(cfg_tag, mem_h, 0);
+								device_printf(dev, "      Memory[0]: 0x%08x%s\n", mem_val,
+								    mem_val != 0xFFFFFFFF ? " <-- WORKING!" : " (still dead)");
+								bus_space_unmap(cfg_tag, mem_h, 0x100);
+							}
+						}
+					}
+				}
+
+				/*
 				 * LAST RESORT: Try writing to PCI slot 19 config space
 				 * Maybe we can "create" the device by writing its VID/DID
 				 */
