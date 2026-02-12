@@ -2710,11 +2710,9 @@ sst_pci_attach(device_t dev)
 	device_printf(dev, "BAR1: 0x%lx (size: 0x%lx)\n",
 	    rman_get_start(sc->shim_res), rman_get_size(sc->shim_res));
 
-	/* WPT Power-Up Sequence */
-	sst_wpt_power_up(sc);
-
 	/* CRITICAL FIX: Write BAR0 address to LPSS REMAP_ADDR (0x810)
-	 * This tells the LPSS logic where the MMIO window is located. */
+	 * This tells the LPSS logic where the MMIO window is located.
+	 * MOVED: Must be done BEFORE power-up sequence! */
 	{
 		uint32_t bar0_addr = rman_get_start(sc->mem_res);
 		uint32_t current_remap = bus_read_4(sc->shim_res, 0x810);
@@ -2728,6 +2726,9 @@ sst_pci_attach(device_t dev)
 			DELAY(1000);
 		}
 	}
+
+	/* WPT Power-Up Sequence */
+	sst_wpt_power_up(sc);
 
 	/* Test BAR0 */
 	bar0_ok = sst_test_bar0(sc);
