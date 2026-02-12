@@ -5,6 +5,40 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.17.0] - 2026-02-12
+
+### Changed: bus_space API with Explicit Barriers
+
+- **Problem Identified**: Driver volatile pointer byte writes produce `0x1c20001f` instead of `0x8480041f`
+  - Upper bytes are being corrupted: `0x1c2000xx` instead of `0x848004xx`
+  - This happens even with `VM_MEMATTR_UNCACHEABLE` mapping
+  - Manual `dd` byte writes work, but driver writes don't
+
+- **New Approach**: Use FreeBSD `bus_space` API for proper MMIO serialization
+  - `bus_space_map()` instead of `pmap_mapdev_attr()`
+  - `bus_space_write_1()` for byte-level writes
+  - `bus_space_barrier()` after EACH byte to force completion
+  - Read-back after each write to ensure hardware sees it
+  - 1ms DELAY between bytes for timing
+
+- **Key Insight**: The issue might be write combining or CPU reordering
+  - `bus_space_barrier(BUS_SPACE_BARRIER_WRITE)` should prevent this
+  - Read-back forces the write to complete before continuing
+
+---
+
+## [0.16.0] - 2026-02-12
+
+### Attempt: Byte-by-Byte Writes with pmap_mapdev_attr
+
+- Tried writing SRAM control register byte-by-byte using volatile pointers
+- Used `pmap_mapdev_attr()` with `VM_MEMATTR_UNCACHEABLE`
+- **Failed**: Writes produce corrupted values (`0x1c20001f` instead of `0x8480041f`)
+- Upper bytes are being reordered or combined incorrectly
+- Manual `dd if=/dev/mem` byte writes work, but driver writes don't
+
+---
+
 ## [0.15.0] - 2026-02-12
 
 ### BREAKTHROUGH: Rising Edge Trigger for SRAM Enable
