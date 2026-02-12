@@ -5,6 +5,73 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] - 2026-02-12
+
+### Critical Bug Fixes
+
+- **SRAM Power Gate Inversion** (root cause of BAR0 returning 0xFFFFFFFF)
+  - `sst_wpt_power_up()`: changed `|=` to `&= ~` for ISRAMPGE/DSRAMPGE masks
+  - Same fix applied in `sst_iobp_probe()`
+  - Old code **enabled** power gating (= turned SRAM OFF) instead of disabling it
+  - After fix: VDRTCTL0 = 0x00000003 (D3PGD + D3SRAMPGD set, PGE bits clear = SRAM ON)
+  - Evidence: VDRTCTL0 went from 0x00000001 (SRAM on) to 0x000FFFFF (SRAM off!) with old code
+
+- **I2C Codec on Wrong Bus** - driver was probing I2C1/0x2C (touchpad) instead of I2C0/0x1C (RT286)
+  - RT286/ALC3263 audio codec is at **I2C0 (iicbus6), address 0x1C** (INT343A)
+  - 0x2C on I2C1 is the Dell touchpad (DLL0665), NOT the audio codec
+  - Updated all I2C probe code to target I2C0 at 0xFE103000
+
+- **OSYS Too Low for LPSS Fabric** - DSDT requires OSYS >= 0x07DC (Windows 2012)
+  - FreeBSD reported OSYS = 0x07D9 (Windows 7), so DSDT never initialized LPSS fabric
+  - Fix: added `hw.acpi.install_interface="Windows 2012"` to /boot/loader.conf
+  - This makes DSDT set OSYS = 0x07DD, enabling LPSS memory routing to BAR0
+
+### Added
+
+- **Phase 0: PCI BAR Fixup** in attach - detects if PCI rescan relocated ADSP BARs
+  away from ACPI-declared addresses (0xFE000000/0xFE100000) and restores them
+- **HDA Manual Reset Sequence** - pre-initializes HDA controller before hdac(4) attaches
+  to prevent "stuck in reset" error when controller was just dynamically enabled
+  - Performs full HDA enter-reset / exit-reset / codec discovery sequence
+  - Reports STATESTS (which codec SDI lines responded)
+- **Phase 7: HDA Enable + BAR0 Re-test** - tries HDA enable via RCBA FD register
+  then re-tests BAR0 (HDA enable may activate address decoder as side effect)
+- **Phase 8: I2C0 Codec Probe** - probes RT286 codec on I2C0 after D0 transition
+- **Phase 9: Summary** - consolidated status report (BAR0, HDA, next steps)
+- **SHIM catpt Configuration** in dsp_init path:
+  - 24MHz SRAM bank clock via BAR1 CS1 register
+  - CLKCTL SMOS=2 (38.4kHz reference)
+  - Low Trunk Clock (LTRC) value
+  - Host DMA access enabled for all channels (HMDC)
+- **I2C0 register definitions** in sst_regs.h (SST_I2C0_BASE, SST_I2C0_CODEC_ADDR,
+  SST_I2C0_PRIV_BASE)
+
+### Key Discovery: HDA is a Dead End
+
+- hdac1 attaches at PCI 0:1B.0, controller works (CORB/RIRB OK)
+- **Zero codecs found** on HDA link - STATESTS = 0x0000
+- RT286/ALC3263 is on **I2S bus** (through SST DSP), NOT on HDA link
+- BIOS configured hardware for I2S mode exclusively
+- **Only path to audio = SST DSP** (BAR0 + firmware + I2S + I2C codec control)
+
+### Changed
+
+- Driver version bumped to 0.8.0
+- I2C probe targets I2C0/0x1C instead of I2C1/0x2C
+- Phase numbering updated (HDA enable moved to Phase 7, codec probe to Phase 8)
+
+### Technical Note: First Complete Boot Expected
+
+After reboot with all three fixes applied simultaneously:
+1. OSYS >= 0x07DC (LPSS fabric initialized by DSDT)
+2. SRAM powered ON (PGE bits cleared correctly)
+3. BAR addresses correct (Phase 0 fixup restores if relocated)
+
+If BAR0 becomes accessible, driver enters dsp_init path:
+IRQ allocation, IPC init, firmware load (IntcSST2.bin), DMA/SSP/PCM/topology init.
+
+---
+
 ## [Unreleased]
 
 ### Research Findings (v0.6.0)

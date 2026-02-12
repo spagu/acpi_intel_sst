@@ -389,10 +389,16 @@
 /* IC_COMP_TYPE expected value */
 #define DW_IC_COMP_TYPE_VALUE	0x44570140	/* DesignWare signature */
 
-/* I2C1 Physical Address (from rwdumps analysis) */
+/* I2C0 Physical Address - RT286 codec confirmed on iicbus6/ig4iic0 */
+#define SST_I2C0_BASE		0xFE103000
+#define SST_I2C0_SIZE		0x1000
+#define SST_I2C0_CODEC_ADDR	0x1C		/* RT286 I2C address on I2C0 */
+#define SST_I2C0_PRIV_BASE	0xFE104000	/* I2C0 LPSS private config */
+
+/* I2C1 Physical Address (touchpad DLL0665 at 0x2c, NOT codec) */
 #define SST_I2C1_BASE		0xFE105000
 #define SST_I2C1_SIZE		0x1000
-#define SST_I2C1_CODEC_ADDR	0x2C		/* RT286 I2C address */
+#define SST_I2C1_CODEC_ADDR	0x2C
 
 /* RT286 Codec I2C Verb Definitions */
 #define RT286_VENDOR_ID		0x10EC0286

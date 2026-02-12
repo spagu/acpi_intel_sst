@@ -14,8 +14,8 @@
  * 2. Fallback: Enable PCH HDA controller by modifying RCBA Function
  *    Disable register, allowing the standard hdac(4) driver to handle audio
  *
- * Additionally, it probes the I2C1 controller to verify communication
- * with the RT286/ALC3263 audio codec.
+ * Additionally, it probes the I2C0 controller to verify communication
+ * with the RT286/ALC3263 audio codec at address 0x1C.
  */
 
 #include <sys/param.h>
@@ -46,7 +46,7 @@
 #define PCI_VENDOR_INTEL	0x8086
 #define PCI_DEVICE_SST_BDW	0x9CB6
 
-#define SST_DRV_VERSION "0.7.0"
+#define SST_DRV_VERSION "0.8.0"
 
 /* Forward declarations */
 static int sst_acpi_probe(device_t dev);
@@ -63,7 +63,7 @@ static void sst_acpi_power_up(struct sst_softc *sc);
 static int sst_wpt_power_up(struct sst_softc *sc);
 static bool sst_test_bar0(struct sst_softc *sc);
 static int sst_try_enable_hda(struct sst_softc *sc);
-static int sst_try_enable_adsp(struct sst_softc *sc);
+static int sst_try_enable_adsp(struct sst_softc *sc) __unused;
 static void sst_probe_i2c_codec(struct sst_softc *sc);
 static void sst_dump_pci_config(struct sst_softc *sc);
 static void sst_dump_pch_state(struct sst_softc *sc);
@@ -271,10 +271,12 @@ sst_wpt_power_up(struct sst_softc *sc)
 	bus_write_4(sc->shim_res, SST_PCI_VDRTCTL0, vdrtctl0);
 	DELAY(50000);
 
-	/* Step 4: Power on ALL SRAM banks */
+	/* Step 4: Power on ALL SRAM banks
+	 * CLEAR the PGE bits to DISABLE power gating = power ON SRAM
+	 * (Set = power gate enabled = SRAM off, Clear = SRAM on) */
 	vdrtctl0 = bus_read_4(sc->shim_res, SST_PCI_VDRTCTL0);
-	vdrtctl0 |= SST_WPT_VDRTCTL0_ISRAMPGE_MASK;
-	vdrtctl0 |= SST_WPT_VDRTCTL0_DSRAMPGE_MASK;
+	vdrtctl0 &= ~SST_WPT_VDRTCTL0_ISRAMPGE_MASK;
+	vdrtctl0 &= ~SST_WPT_VDRTCTL0_DSRAMPGE_MASK;
 	bus_write_4(sc->shim_res, SST_PCI_VDRTCTL0, vdrtctl0);
 	DELAY(100);
 
@@ -464,6 +466,122 @@ sst_try_enable_hda(struct sst_softc *sc)
 			device_printf(sc->dev,
 			    "  VID/DID: 0x%08x, Class: 0x%06x\n",
 			    hda_vid, hda_class >> 8);
+
+			/* Manually init HDA before hdac(4) attaches.
+			 * The hdac driver fails with "stuck in reset"
+			 * when the controller was just dynamically
+			 * enabled.  We perform the HDA reset sequence
+			 * here so hdac finds a clean controller. */
+			{
+				uint32_t hda_bar, hda_cmd;
+				bus_space_tag_t ht = X86_BUS_SPACE_MEM;
+				bus_space_handle_t hh;
+				int herr, htimeout;
+
+				/* Read and program HDA BAR */
+				hda_bar = pci_cfgregread(0, PCH_HDA_BUS,
+				    PCH_HDA_DEV, PCH_HDA_FUNC, 0x10, 4);
+				if (hda_bar == 0 ||
+				    hda_bar == 0xFFFFFFFF) {
+					hda_bar = 0xDF900000;
+					pci_cfgregwrite(0, PCH_HDA_BUS,
+					    PCH_HDA_DEV, PCH_HDA_FUNC,
+					    0x10, hda_bar, 4);
+					DELAY(10000);
+				}
+				hda_bar &= ~0xF; /* mask type bits */
+
+				/* Enable MEM + Bus Master */
+				hda_cmd = pci_cfgregread(0, PCH_HDA_BUS,
+				    PCH_HDA_DEV, PCH_HDA_FUNC, 0x04, 2);
+				if ((hda_cmd & 0x06) != 0x06) {
+					pci_cfgregwrite(0, PCH_HDA_BUS,
+					    PCH_HDA_DEV, PCH_HDA_FUNC,
+					    0x04, hda_cmd | 0x06, 2);
+					DELAY(10000);
+				}
+
+				device_printf(sc->dev,
+				    "  HDA BAR: 0x%08x, CMD: 0x%04x\n",
+				    hda_bar, hda_cmd | 0x06);
+
+				/* Map HDA MMIO */
+				herr = bus_space_map(ht, hda_bar,
+				    0x4000, 0, &hh);
+				if (herr == 0) {
+					uint32_t gcap, gctl, statests;
+
+					gcap = bus_space_read_4(ht, hh,
+					    0x00);
+					gctl = bus_space_read_4(ht, hh,
+					    0x08);
+					device_printf(sc->dev,
+					    "  HDA GCAP: 0x%08x,"
+					    " GCTL: 0x%08x\n",
+					    gcap, gctl);
+
+					/* HDA Reset: enter reset */
+					bus_space_write_4(ht, hh, 0x08,
+					    gctl & ~1);
+					for (htimeout = 100;
+					    htimeout > 0; htimeout--) {
+						DELAY(1000);
+						gctl = bus_space_read_4(ht,
+						    hh, 0x08);
+						if ((gctl & 1) == 0)
+							break;
+					}
+					device_printf(sc->dev,
+					    "  HDA in reset: GCTL=0x%08x"
+					    " (%s)\n", gctl,
+					    (gctl & 1) == 0 ? "OK" :
+					    "FAILED");
+
+					/* Exit reset */
+					DELAY(1000);
+					bus_space_write_4(ht, hh, 0x08,
+					    gctl | 1);
+					for (htimeout = 100;
+					    htimeout > 0; htimeout--) {
+						DELAY(1000);
+						gctl = bus_space_read_4(ht,
+						    hh, 0x08);
+						if (gctl & 1)
+							break;
+					}
+					device_printf(sc->dev,
+					    "  HDA out of reset:"
+					    " GCTL=0x%08x (%s)\n", gctl,
+					    (gctl & 1) ? "OK" : "FAILED");
+
+					/* Wait for codec discovery */
+					DELAY(500000); /* 500ms */
+
+					/* Check STATESTS for codecs */
+					statests = bus_space_read_2(ht,
+					    hh, 0x0E);
+					device_printf(sc->dev,
+					    "  HDA STATESTS: 0x%04x"
+					    " (codecs: %s%s%s%s)\n",
+					    statests,
+					    (statests & 1) ? "SDI0 " : "",
+					    (statests & 2) ? "SDI1 " : "",
+					    (statests & 4) ? "SDI2 " : "",
+					    statests == 0 ? "NONE" : "");
+
+					gcap = bus_space_read_4(ht, hh,
+					    0x00);
+					device_printf(sc->dev,
+					    "  HDA GCAP after: 0x%08x\n",
+					    gcap);
+
+					bus_space_unmap(ht, hh, 0x4000);
+				} else {
+					device_printf(sc->dev,
+					    "  HDA map failed: %d\n",
+					    herr);
+				}
+			}
 
 			/* Trigger PCI bus rescan so hdac(4)
 			 * discovers the new device */
@@ -665,7 +783,7 @@ sst_try_enable_adsp(struct sst_softc *sc)
  * I2C Codec Probe
  *
  * The I2C1 controller at 0xFE105000 is a DesignWare I2C that talks
- * to the RT286/ALC3263 audio codec at address 0x2C.
+ * to the RT286/ALC3263 audio codec at address 0x1C on I2C0.
  * We probe it to verify the codec is alive.
  * ================================================================ */
 
@@ -679,13 +797,14 @@ sst_probe_i2c_codec(struct sst_softc *sc)
 	int error;
 	int timeout;
 
-	device_printf(sc->dev, "=== I2C Codec Probe ===\n");
+	device_printf(sc->dev, "=== I2C0 Codec Probe (addr 0x%02x) ===\n",
+	    SST_I2C0_CODEC_ADDR);
 
 	mem_tag = X86_BUS_SPACE_MEM;
-	error = bus_space_map(mem_tag, SST_I2C1_BASE, SST_I2C1_SIZE,
+	error = bus_space_map(mem_tag, SST_I2C0_BASE, SST_I2C0_SIZE,
 	    0, &i2c_handle);
 	if (error != 0) {
-		device_printf(sc->dev, "  Failed to map I2C1: %d\n", error);
+		device_printf(sc->dev, "  Failed to map I2C0: %d\n", error);
 		return;
 	}
 
@@ -718,13 +837,13 @@ sst_probe_i2c_codec(struct sst_softc *sc)
 	device_printf(sc->dev, "  IC_PARAM:  0x%08x\n", comp_param);
 
 	/* Verify target address */
-	if ((ic_tar & 0x3FF) != SST_I2C1_CODEC_ADDR) {
+	if ((ic_tar & 0x3FF) != SST_I2C0_CODEC_ADDR) {
 		device_printf(sc->dev,
 		    "  Target addr 0x%x != expected 0x%x\n",
-		    ic_tar & 0x3FF, SST_I2C1_CODEC_ADDR);
+		    ic_tar & 0x3FF, SST_I2C0_CODEC_ADDR);
 	} else {
 		device_printf(sc->dev,
-		    "  Target addr 0x2C confirmed (RT286 codec)\n");
+		    "  Target addr 0x1C confirmed (RT286 codec)\n");
 	}
 
 	/* Try to communicate with the codec */
@@ -748,7 +867,7 @@ sst_probe_i2c_codec(struct sst_softc *sc)
 
 	/* Set target address to RT286 */
 	bus_space_write_4(mem_tag, i2c_handle, DW_IC_TAR,
-	    SST_I2C1_CODEC_ADDR);
+	    SST_I2C0_CODEC_ADDR);
 
 	/* Disable all interrupts */
 	bus_space_write_4(mem_tag, i2c_handle, DW_IC_INTR_MASK, 0);
@@ -898,7 +1017,7 @@ disable_out:
 	DELAY(10000);
 
 out:
-	bus_space_unmap(mem_tag, i2c_handle, SST_I2C1_SIZE);
+	bus_space_unmap(mem_tag, i2c_handle, SST_I2C0_SIZE);
 }
 
 /* ================================================================
@@ -1127,14 +1246,20 @@ sst_iobp_probe(struct sst_softc *sc)
 		DELAY(10000);
 	}
 
-	/* Clear PCICD to restore PCI visibility */
-	if (pcicfgctl & ADSP_PCICFGCTL_PCICD) {
+	/* Clear PCICD + ACPIIE + bit8 to restore full PCI mode.
+	 * PCICD hides the device from PCI config space.
+	 * ACPIIE routes interrupts via ACPI instead of PCI.
+	 * bit 8 is undocumented but may gate BAR0 decode.
+	 * Clearing all three gives the best chance of BAR0 working. */
+	{
 		uint32_t new_cfg, verify;
 
 		new_cfg = pcicfgctl & ~(ADSP_PCICFGCTL_PCICD |
-		    ADSP_PCICFGCTL_SPCBAD);
+		    ADSP_PCICFGCTL_ACPIIE |
+		    ADSP_PCICFGCTL_SPCBAD |
+		    0x100);
 		device_printf(sc->dev,
-		    "  Clearing PCICD (restoring PCI)...\n");
+		    "  Clearing PCICD+ACPIIE+bit8 for full PCI mode...\n");
 		device_printf(sc->dev,
 		    "  PCICFGCTL: 0x%08x -> 0x%08x\n",
 		    pcicfgctl, new_cfg);
@@ -1345,8 +1470,8 @@ sst_iobp_probe(struct sst_softc *sc)
 				    0x13, 0, 0xA0, 4);
 				v0 |= SST_WPT_VDRTCTL0_D3PGD |
 				    SST_WPT_VDRTCTL0_D3SRAMPGD;
-				v0 |= SST_WPT_VDRTCTL0_ISRAMPGE_MASK;
-				v0 |= SST_WPT_VDRTCTL0_DSRAMPGE_MASK;
+				v0 &= ~SST_WPT_VDRTCTL0_ISRAMPGE_MASK;
+				v0 &= ~SST_WPT_VDRTCTL0_DSRAMPGE_MASK;
 				pci_cfgregwrite(0, 0, 0x13, 0,
 				    0xA0, v0, 4);
 				DELAY(50000);
@@ -1370,12 +1495,35 @@ sst_iobp_probe(struct sst_softc *sc)
 				    0x13, 0, 0xA8, 4));
 			}
 
+			/* Trigger PCI rescan so chipset registers
+			 * the ADSP BARs in the address decoder */
+			{
+				device_t acpi_dev, pcib_dev, pci_dev;
+
+				acpi_dev = device_get_parent(sc->dev);
+				pcib_dev = device_find_child(
+				    acpi_dev, "pcib", 0);
+				if (pcib_dev != NULL) {
+					pci_dev = device_find_child(
+					    pcib_dev, "pci", 0);
+					if (pci_dev != NULL) {
+						device_printf(sc->dev,
+						    "  PCI rescan after"
+						    " IOBP clear...\n");
+						bus_topo_lock();
+						BUS_RESCAN(pci_dev);
+						bus_topo_unlock();
+						DELAY(200000);
+					}
+				}
+			}
+
 			/* Test BAR0 again */
 			if (sc->mem_res != NULL) {
 				uint32_t v = bus_read_4(
 				    sc->mem_res, 0);
 				device_printf(sc->dev,
-				    "  BAR0[0] after IOBP:"
+				    "  BAR0[0] after IOBP+rescan:"
 				    " 0x%08x%s\n",
 				    v,
 				    v != 0xFFFFFFFF ?
@@ -1694,6 +1842,48 @@ sst_acpi_attach(device_t dev)
 	mtx_init(&sc->sc_mtx, "sst_sc", NULL, MTX_DEF);
 
 	device_printf(dev, "Intel SST Driver v%s loading\n", SST_DRV_VERSION);
+
+	/* ---- Phase 0: PCI BAR Fixup ----
+	 * A previous PCI rescan (e.g. from HDA enable) may have relocated
+	 * the ADSP BARs away from the ACPI-declared addresses.  Read the
+	 * current PCI config and restore them so ACPI resource allocation
+	 * maps to memory that the hardware is actually decoding. */
+	{
+		uint32_t pci_bar0, pci_bar1, pci_cmd;
+
+		pci_bar0 = pci_cfgregread(0, 0, 0x13, 0, 0x10, 4);
+		pci_bar1 = pci_cfgregread(0, 0, 0x13, 0, 0x14, 4);
+		pci_cmd  = pci_cfgregread(0, 0, 0x13, 0, 0x04, 4);
+
+		device_printf(dev, "PCI BAR fixup: BAR0=0x%08x BAR1=0x%08x CMD=0x%04x\n",
+		    pci_bar0, pci_bar1, pci_cmd & 0xFFFF);
+
+		/* Expected ACPI addresses */
+		if (pci_bar0 != 0xFE000000 || pci_bar1 != 0xFE100000) {
+			device_printf(dev,
+			    "  BARs relocated! Restoring ACPI defaults...\n");
+
+			/* Disable memory decode while reprogramming */
+			pci_cfgregwrite(0, 0, 0x13, 0, 0x04,
+			    (pci_cmd & 0xFFFF) & ~0x06, 2);
+			DELAY(1000);
+
+			pci_cfgregwrite(0, 0, 0x13, 0, 0x10, 0xFE000000, 4);
+			pci_cfgregwrite(0, 0, 0x13, 0, 0x14, 0xFE100000, 4);
+			DELAY(1000);
+
+			/* Re-enable memory + bus master */
+			pci_cfgregwrite(0, 0, 0x13, 0, 0x04,
+			    (pci_cmd & 0xFFFF) | 0x06, 2);
+			DELAY(10000);
+
+			pci_bar0 = pci_cfgregread(0, 0, 0x13, 0, 0x10, 4);
+			pci_bar1 = pci_cfgregread(0, 0, 0x13, 0, 0x14, 4);
+			device_printf(dev,
+			    "  After fixup: BAR0=0x%08x BAR1=0x%08x\n",
+			    pci_bar0, pci_bar1);
+		}
+	}
 
 	/* ---- Phase 1: ACPI Power-Up ---- */
 	sst_acpi_power_up(sc);
@@ -2204,22 +2394,78 @@ sst_acpi_attach(device_t dev)
 	if (bar0_ok)
 		goto dsp_init;
 
-	/* ---- Phase 7: I2C1 Codec Probe ---- */
-	/* Transition I2C1 to D0 first, then probe codec */
+	/* ---- Phase 7: HDA Enable + BAR0 Re-test ---- */
+	/* The HDA enable triggers a PCI rescan which may activate
+	 * the address decoder for BAR0 as a side effect. */
+	device_printf(dev,
+	    "=== Phase 7: HDA enable + BAR0 re-test ===\n");
+	{
+		(void)sst_try_enable_hda(sc);
+
+		/* After HDA enable + PCI rescan, re-test BAR0 */
+		DELAY(200000);
+		bar0_ok = sst_test_bar0(sc);
+		device_printf(dev, "BAR0 after HDA+rescan: %s\n",
+		    bar0_ok ? "*** ACCESSIBLE! ***" : "still dead");
+
+		if (!bar0_ok) {
+			/* Try direct memory map as last resort */
+			bus_space_tag_t bmt = X86_BUS_SPACE_MEM;
+			bus_space_handle_t bh;
+
+			if (bus_space_map(bmt, 0xFE000000,
+			    0x100000, 0, &bh) == 0) {
+				uint32_t shim_val;
+
+				shim_val = bus_space_read_4(bmt, bh,
+				    SST_SHIM_OFFSET);
+				device_printf(dev,
+				    "  Direct SHIM: 0x%08x%s\n",
+				    shim_val,
+				    shim_val != 0xFFFFFFFF ?
+				    " *** ALIVE! ***" : " dead");
+
+				if (shim_val != 0xFFFFFFFF) {
+					device_printf(dev,
+					    "  BAR0 alive via direct map"
+					    " - re-acquiring resource\n");
+					bus_release_resource(dev,
+					    SYS_RES_MEMORY,
+					    sc->mem_rid, sc->mem_res);
+					sc->mem_rid = 0;
+					sc->mem_res =
+					    bus_alloc_resource_any(dev,
+					    SYS_RES_MEMORY,
+					    &sc->mem_rid, RF_ACTIVE);
+					if (sc->mem_res != NULL)
+						bar0_ok =
+						    sst_test_bar0(sc);
+				}
+				bus_space_unmap(bmt, bh, 0x100000);
+			}
+		}
+
+		if (bar0_ok)
+			goto dsp_init;
+	}
+
+	/* ---- Phase 8: I2C0 Codec Probe ---- */
+	/* Transition I2C0 to D0 first, then probe codec */
 	{
 		bus_space_tag_t mt = X86_BUS_SPACE_MEM;
 		bus_space_handle_t h;
 		int map_err;
 
 		device_printf(dev,
-		    "=== I2C1 D0 Transition + Codec Probe ===\n");
-		map_err = bus_space_map(mt, 0xFE106000, 0x300, 0, &h);
+		    "=== Phase 8: I2C0 Codec Probe ===\n");
+		map_err = bus_space_map(mt, SST_I2C0_PRIV_BASE,
+		    0x300, 0, &h);
 		if (map_err == 0) {
 			uint32_t pmcsr;
 
 			pmcsr = bus_space_read_4(mt, h, 0x84);
 			device_printf(dev,
-			    "  I2C1 PMCSR: 0x%08x (D%d)\n",
+			    "  I2C0 PMCSR: 0x%08x (D%d)\n",
 			    pmcsr, pmcsr & 3);
 
 			/* Force D0 */
@@ -2229,57 +2475,37 @@ sst_acpi_attach(device_t dev)
 				DELAY(50000);
 				pmcsr = bus_space_read_4(mt, h, 0x84);
 				device_printf(dev,
-				    "  I2C1 PMCSR after D0: 0x%08x\n",
+				    "  I2C0 PMCSR after D0: 0x%08x\n",
 				    pmcsr);
 			}
 			bus_space_unmap(mt, h, 0x300);
 
-			/* Now probe the codec */
+			/* Now probe the codec on I2C0 */
 			sst_probe_i2c_codec(sc);
 		} else {
 			device_printf(dev,
-			    "  I2C1 private config map failed: %d\n",
+			    "  I2C0 private config map failed: %d\n",
 			    map_err);
 		}
 	}
 
-	/* ---- Phase 8: HDA Enablement Fallback ---- */
-	device_printf(dev,
-	    "=== BAR0 dead - trying HDA fallback ===\n");
+	/* ---- Phase 9: Summary ---- */
 	{
-		int hda_err;
+		uint32_t hda_vid = pci_cfgregread(0, PCH_HDA_BUS,
+		    PCH_HDA_DEV, PCH_HDA_FUNC, 0x00, 4);
 
-		hda_err = sst_try_enable_hda(sc);
-		if (hda_err == 0) {
-			uint32_t hda_vid;
-
-			hda_vid = pci_cfgregread(0, PCH_HDA_BUS,
-			    PCH_HDA_DEV, PCH_HDA_FUNC, 0x00, 4);
-			if (hda_vid != 0xFFFFFFFF) {
-				device_printf(dev,
-				    "\n=== SUMMARY ===\n");
-				device_printf(dev,
-				    "HDA controller enabled at"
-				    " PCI 0:%x.%d!\n",
-				    PCH_HDA_DEV, PCH_HDA_FUNC);
-				device_printf(dev,
-				    "VID/DID: 0x%08x\n",
-				    hda_vid);
-				device_printf(dev,
-				    "Try: devctl rescan pci0\n");
-				device_printf(dev,
-				    "Then: cat /dev/sndstat\n");
-			}
-		} else {
+		device_printf(dev, "\n=== SUMMARY ===\n");
+		device_printf(dev, "BAR0 (DSP MMIO): %s\n",
+		    sst_test_bar0(sc) ? "ACCESSIBLE" : "DEAD");
+		device_printf(dev, "HDA controller: %s\n",
+		    hda_vid != 0xFFFFFFFF ? "ENABLED" : "ABSENT");
+		if (hda_vid != 0xFFFFFFFF) {
 			device_printf(dev,
-			    "\n=== SUMMARY ===\n");
-			device_printf(dev,
-			    "BAR0 (DSP MMIO): INACCESSIBLE\n");
-			device_printf(dev,
-			    "HDA enable: FAILED\n");
-			device_printf(dev,
-			    "May need reboot after FD change.\n");
+			    "  VID/DID: 0x%08x at PCI 0:%x.%d\n",
+			    hda_vid, PCH_HDA_DEV, PCH_HDA_FUNC);
 		}
+		device_printf(dev,
+		    "Audio path: requires reboot or MCHBAR fix.\n");
 	}
 
 	/* Stay attached for debugging */
@@ -2317,6 +2543,28 @@ dsp_init:
 	}
 
 	sst_init(sc);
+
+	/* Configure SHIM for Broadwell-U (catpt) mode */
+	{
+		uint32_t cs1;
+
+		/* Set 24MHz SRAM bank clock via BAR1 */
+		cs1 = bus_read_4(sc->shim_res, SST_PCI_CS1);
+		cs1 &= ~SST_CS1_SBCS_MASK;
+		cs1 |= SST_CS1_SBCS_24MHZ;
+		bus_write_4(sc->shim_res, SST_PCI_CS1, cs1);
+
+		/* Set CLKCTL SMOS=2 */
+		sst_shim_write(sc, SST_SHIM_CLKCTL, SST_CLKCTL_DEFAULT);
+
+		/* Set Low Trunk Clock */
+		sst_shim_write(sc, SST_SHIM_LTRC, SST_LTRC_VAL);
+
+		/* Enable Host DMA access to all channels */
+		sst_shim_write(sc, SST_SHIM_HMDC, SST_HMDC_HDDA_ALL);
+
+		device_printf(dev, "SHIM configured (catpt mode)\n");
+	}
 
 	error = sst_dma_init(sc);
 	if (error) {
