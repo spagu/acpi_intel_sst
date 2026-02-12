@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.18.0] - 2026-02-12
+
+### Changed: Atomic 32-bit Writes with mfence
+
+- **v0.17.0 bus_space FAILED** - Still getting corrupted values (`0x1c200000` instead of `0x84800400`)
+  - Even with `bus_space_barrier()` after each byte, writes are corrupted
+  - The byte-by-byte approach fundamentally doesn't work from kernel
+
+- **New Approach**: Single atomic 32-bit writes
+  - Use `pmap_mapdev_attr()` with `VM_MEMATTR_UNCACHEABLE`
+  - Write entire 32-bit value in one operation via volatile pointer
+  - Use `__asm __volatile("mfence")` for full memory barriers
+  - Theory: Hardware might require atomic 32-bit writes, not byte writes
+
+- **Key Observation**: Manual `dd` byte writes work, driver byte writes don't
+  - `/dev/mem` path has some special property we can't replicate
+  - dd writes go through userspace → kernel → uiomove → hardware
+  - Driver writes go directly to hardware but get corrupted
+
+---
+
 ## [0.17.0] - 2026-02-12
 
 ### Changed: bus_space API with Explicit Barriers

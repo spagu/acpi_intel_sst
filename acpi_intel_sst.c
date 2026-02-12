@@ -50,7 +50,7 @@
 #define PCI_DEVICE_SST_BDW	0x9CB6
 #define PCI_DEVICE_SST_HSW	0x9C76 /* Haswell pending testing */
 
-#define SST_DRV_VERSION "0.17.0-BusSpace"
+#define SST_DRV_VERSION "0.18.0-Atomic32"
 
 /* Forward declarations */
 static int sst_acpi_probe(device_t dev);
@@ -356,111 +356,103 @@ sst_test_bar0(struct sst_softc *sc)
 #define SST_PCI_BAR0_PHYS	0xDF800000	/* PCI-allocated BAR0 physical address */
 
 /*
- * Enable SRAM using bus_space API with explicit barriers.
- * Uses bus_space_map and bus_space_write_1 for byte-level access
- * with bus_space_barrier to ensure each write completes before the next.
- * This is the proper FreeBSD way to do serialized MMIO byte writes.
+ * Enable SRAM using atomic 32-bit writes.
+ * Previous attempts with byte-by-byte writes failed - hardware corrupts values.
+ * Now trying single atomic 32-bit writes to see if that's what hardware expects.
  */
 static int
 sst_enable_sram_direct(device_t dev)
 {
-	bus_space_tag_t bst;
-	bus_space_handle_t bsh;
+	void *bar0_va;
+	volatile uint32_t *ctrl_reg;
+	volatile uint32_t *sram_base;
 	uint32_t ctrl, test_val;
-	int attempt, i;
-	uint8_t clear_bytes[4] = {0x00, 0x04, 0x80, 0x84};
-	uint8_t set_bytes[4] = {0x1f, 0x04, 0x80, 0x84};
+	int attempt;
+	const uint32_t clear_val = 0x84800400;  /* bits 0-4 cleared */
+	const uint32_t set_val = 0x8480041f;    /* bits 0-4 set */
 
-	device_printf(dev, "=== SRAM Enable (bus_space with barriers) ===\n");
+	device_printf(dev, "=== SRAM Enable (Atomic 32-bit writes) ===\n");
 
-	/* Use memory bus space tag for x86 */
-	bst = X86_BUS_SPACE_MEM;
-
-	/* Map BAR0 region - 1MB starting at PCI BAR0 */
-	if (bus_space_map(bst, SST_PCI_BAR0_PHYS, 0x100000, 0, &bsh) != 0) {
+	/* Map with UNCACHED attribute for direct hardware access */
+	bar0_va = pmap_mapdev_attr(SST_PCI_BAR0_PHYS, 0x100000, VM_MEMATTR_UNCACHEABLE);
+	if (bar0_va == NULL) {
 		device_printf(dev, "  Failed to map BAR0 at 0x%x\n", SST_PCI_BAR0_PHYS);
 		return (ENOMEM);
 	}
 
-	/* Read initial state */
-	bus_space_barrier(bst, bsh, 0, 0x100000, BUS_SPACE_BARRIER_READ);
-	test_val = bus_space_read_4(bst, bsh, 0);
-	ctrl = bus_space_read_4(bst, bsh, SST_SRAM_CTRL_OFFSET);
+	sram_base = (volatile uint32_t *)bar0_va;
+	ctrl_reg = (volatile uint32_t *)((char *)bar0_va + SST_SRAM_CTRL_OFFSET);
+
+	/* Memory barrier before reads */
+	__asm __volatile("mfence" ::: "memory");
+
+	test_val = *sram_base;
+	ctrl = *ctrl_reg;
 	device_printf(dev, "  Initial: SRAM[0]=0x%08x, CTRL=0x%08x\n", test_val, ctrl);
 
 	if (test_val != 0xFFFFFFFF) {
 		device_printf(dev, "  SRAM is ACTIVE! Proceeding with DSP init.\n");
-		bus_space_unmap(bst, bsh, 0x100000);
+		pmap_unmapdev(bar0_va, 0x100000);
 		return (0);
 	}
 
-	/* Try rising edge trigger with bus_space byte writes */
+	/* Try atomic 32-bit writes with rising edge trigger */
 	for (attempt = 1; attempt <= 3; attempt++) {
-		device_printf(dev, "  Attempt %d:\n", attempt);
+		device_printf(dev, "  Attempt %d (atomic 32-bit):\n", attempt);
 
-		/* Step 1: Clear enable bits (byte-by-byte with barriers) */
-		device_printf(dev, "    Writing clear bytes [0x%02x,0x%02x,0x%02x,0x%02x]\n",
-		    clear_bytes[0], clear_bytes[1], clear_bytes[2], clear_bytes[3]);
-		for (i = 0; i < 4; i++) {
-			bus_space_write_1(bst, bsh, SST_SRAM_CTRL_OFFSET + i, clear_bytes[i]);
-			bus_space_barrier(bst, bsh, SST_SRAM_CTRL_OFFSET + i, 1,
-			    BUS_SPACE_BARRIER_WRITE);
-			/* Read back to force completion */
-			(void)bus_space_read_1(bst, bsh, SST_SRAM_CTRL_OFFSET + i);
-			DELAY(1000); /* 1ms between bytes */
-		}
+		/* Step 1: Clear enable bits with single 32-bit write */
+		device_printf(dev, "    Writing 0x%08x (clear bits 0-4)\n", clear_val);
+		__asm __volatile("mfence" ::: "memory");
+		*ctrl_reg = clear_val;
+		__asm __volatile("mfence" ::: "memory");
 
-		bus_space_barrier(bst, bsh, SST_SRAM_CTRL_OFFSET, 4, BUS_SPACE_BARRIER_READ);
-		ctrl = bus_space_read_4(bst, bsh, SST_SRAM_CTRL_OFFSET);
-		device_printf(dev, "    After clear: CTRL=0x%08x (expected 0x84800400)\n", ctrl);
+		/* Force write to complete with read */
+		ctrl = *ctrl_reg;
+		device_printf(dev, "    After clear: CTRL=0x%08x (expected 0x%08x)\n", ctrl, clear_val);
 
 		DELAY(10000); /* 10ms wait */
 
-		/* Step 2: Set enable bits (byte-by-byte with barriers) */
-		device_printf(dev, "    Writing set bytes [0x%02x,0x%02x,0x%02x,0x%02x]\n",
-		    set_bytes[0], set_bytes[1], set_bytes[2], set_bytes[3]);
-		for (i = 0; i < 4; i++) {
-			bus_space_write_1(bst, bsh, SST_SRAM_CTRL_OFFSET + i, set_bytes[i]);
-			bus_space_barrier(bst, bsh, SST_SRAM_CTRL_OFFSET + i, 1,
-			    BUS_SPACE_BARRIER_WRITE);
-			/* Read back to force completion */
-			(void)bus_space_read_1(bst, bsh, SST_SRAM_CTRL_OFFSET + i);
-			DELAY(1000); /* 1ms between bytes */
-		}
+		/* Step 2: Set enable bits with single 32-bit write */
+		device_printf(dev, "    Writing 0x%08x (set bits 0-4)\n", set_val);
+		__asm __volatile("mfence" ::: "memory");
+		*ctrl_reg = set_val;
+		__asm __volatile("mfence" ::: "memory");
 
 		DELAY(100000); /* 100ms for hardware to process */
 
-		bus_space_barrier(bst, bsh, 0, 4, BUS_SPACE_BARRIER_READ);
-		test_val = bus_space_read_4(bst, bsh, 0);
-		ctrl = bus_space_read_4(bst, bsh, SST_SRAM_CTRL_OFFSET);
+		/* Read result */
+		__asm __volatile("mfence" ::: "memory");
+		test_val = *sram_base;
+		ctrl = *ctrl_reg;
 		device_printf(dev, "    Result: CTRL=0x%08x, SRAM[0]=0x%08x\n", ctrl, test_val);
 
 		if (test_val != 0xFFFFFFFF) {
 			device_printf(dev, "  SUCCESS! SRAM is now ACTIVE.\n");
-			bus_space_unmap(bst, bsh, 0x100000);
+			pmap_unmapdev(bar0_va, 0x100000);
 			return (0);
 		}
 
-		/* Check if CTRL changed - hardware may need more time */
-		if (ctrl != 0x8480041f && ctrl != 0x1c20001f) {
+		/* If CTRL changed, hardware responded - give more time */
+		if (ctrl != set_val && ctrl != 0x1c20001f) {
 			device_printf(dev, "    CTRL changed to 0x%08x, extended wait...\n", ctrl);
 			DELAY(500000); /* 500ms extra wait */
-			test_val = bus_space_read_4(bst, bsh, 0);
+			test_val = *sram_base;
 			if (test_val != 0xFFFFFFFF) {
 				device_printf(dev, "  SUCCESS after extended wait!\n");
-				bus_space_unmap(bst, bsh, 0x100000);
+				pmap_unmapdev(bar0_va, 0x100000);
 				return (0);
 			}
 		}
 	}
 
-	device_printf(dev, "  FAILED: SRAM still dead after 3 attempts.\n");
-	device_printf(dev, "  If manual dd works, try before loading driver:\n");
+	device_printf(dev, "  FAILED: SRAM still dead after atomic 32-bit writes.\n");
+	device_printf(dev, "  Manual dd still works - there's something special about /dev/mem path.\n");
+	device_printf(dev, "  Before loading driver, run:\n");
 	device_printf(dev, "    printf '\\x00\\x04\\x80\\x84' | dd of=/dev/mem bs=1 seek=$((0xdf8fb000)) conv=notrunc\n");
 	device_printf(dev, "    sleep 0.1\n");
 	device_printf(dev, "    printf '\\x1f\\x04\\x80\\x84' | dd of=/dev/mem bs=1 seek=$((0xdf8fb000)) conv=notrunc\n");
 
-	bus_space_unmap(bst, bsh, 0x100000);
+	pmap_unmapdev(bar0_va, 0x100000);
 	return (EIO);
 }
 
