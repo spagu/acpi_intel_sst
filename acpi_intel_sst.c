@@ -50,7 +50,7 @@
 #define PCI_DEVICE_SST_BDW	0x9CB6
 #define PCI_DEVICE_SST_HSW	0x9C76 /* Haswell pending testing */
 
-#define SST_DRV_VERSION "0.22.0-PciOnly"
+#define SST_DRV_VERSION "0.24.0-PCI-Full"
 
 /* Forward declarations */
 static int sst_acpi_probe(device_t dev);
@@ -140,11 +140,8 @@ sst_acpi_power_up(struct sst_softc *sc)
 	ACPI_STATUS status;
 	UINT32 sta;
 
-	sst_check_sram_immediate("POWER_UP_ENTRY");
-
 	/* Check _STA */
 	status = acpi_GetInteger(sc->handle, "_STA", &sta);
-	sst_check_sram_immediate("AFTER_STA");
 	if (ACPI_SUCCESS(status)) {
 		device_printf(sc->dev, "ACPI _STA: 0x%x (%s%s%s%s)\n", sta,
 		    (sta & 0x01) ? "Present " : "",
@@ -153,20 +150,15 @@ sst_acpi_power_up(struct sst_softc *sc)
 		    (sta & 0x08) ? "Functional" : "");
 	}
 
-	/* _PS0 (D0 power state) - THIS MAY RESET SRAM! */
-	sst_check_sram_immediate("BEFORE_PS0");
+	/* _PS0 (D0 power state) */
 	status = AcpiEvaluateObject(sc->handle, "_PS0", NULL, NULL);
-	sst_check_sram_immediate("AFTER_PS0");
 	if (ACPI_SUCCESS(status)) {
 		device_printf(sc->dev, "Called _PS0 successfully\n");
 		DELAY(100000);
 	}
-	sst_check_sram_immediate("AFTER_PS0_DELAY");
 
 	/* acpi_pwr_switch_consumer */
-	sst_check_sram_immediate("BEFORE_PWR_SWITCH");
 	acpi_pwr_switch_consumer(sc->handle, ACPI_STATE_D0);
-	sst_check_sram_immediate("AFTER_PWR_SWITCH");
 
 	/* _DSM (Device Specific Method) */
 	{
@@ -508,20 +500,16 @@ sst_enable_sram(struct sst_softc *sc)
 
 	device_printf(sc->dev, "=== SRAM Power Enable Sequence ===\n");
 	device_printf(sc->dev, "  Using BAR0 at: 0x%lx\n", rman_get_start(sc->mem_res));
-	sst_check_sram_immediate("SRAM_ENABLE_ENTRY");
 
 	/* Check if SRAM is already accessible */
 	test_val = bus_read_4(sc->mem_res, 0);
-	sst_check_sram_immediate("AFTER_BUS_READ_SRAM0");
 	if (test_val != SST_INVALID_REG_VALUE) {
 		device_printf(sc->dev, "  SRAM already accessible: 0x%08x\n", test_val);
 		return (0);
 	}
 
 	/* Read current control register value */
-	sst_check_sram_immediate("BEFORE_BUS_READ_CTRL");
 	ctrl = bus_read_4(sc->mem_res, SST_SRAM_CTRL_OFFSET);
-	sst_check_sram_immediate("AFTER_BUS_READ_CTRL");
 	device_printf(sc->dev, "  SRAM_CTRL (0x%x) before: 0x%08x\n",
 	    SST_SRAM_CTRL_OFFSET, ctrl);
 
@@ -2047,16 +2035,10 @@ sst_acpi_probe(device_t dev)
 {
 	int rv;
 
-	/* Check SRAM at ACPI probe entry */
-	sst_check_sram_immediate("ACPI_PROBE_ENTRY");
-
 	if (acpi_disabled("sst"))
 		return (ENXIO);
 
 	rv = ACPI_ID_PROBE(device_get_parent(dev), dev, sst_ids, NULL);
-
-	/* Check SRAM after ACPI_ID_PROBE */
-	sst_check_sram_immediate("ACPI_PROBE_AFTER_ID");
 
 	if (rv <= 0)
 		device_set_desc(dev, "Intel Broadwell-U Audio DSP (SST)");
@@ -2069,8 +2051,6 @@ sst_pci_probe(device_t dev)
 {
 	if (pci_get_vendor(dev) == PCI_VENDOR_INTEL &&
 	    pci_get_device(dev) == PCI_DEVICE_SST_BDW) {
-		/* Check SRAM status during probe - BEFORE attach */
-		sst_check_sram_immediate("PCI_PROBE");
 		device_set_desc(dev, "Intel Broadwell-U Audio DSP (PCI Mode)");
 		return (BUS_PROBE_DEFAULT);
 	}
@@ -2089,15 +2069,9 @@ sst_acpi_attach(device_t dev)
 	int error = 0;
 	bool bar0_ok;
 
-	/* Check SRAM at ACPI attach entry */
-	sst_check_sram_immediate("ACPI_ATTACH_ENTRY");
-
 	sc = device_get_softc(dev);
 	sc->dev = dev;
 	sc->handle = acpi_get_handle(dev);
-
-	/* Check SRAM after acpi_get_handle */
-	sst_check_sram_immediate("ACPI_AFTER_GET_HANDLE");
 	sc->mem_res = NULL;
 	sc->shim_res = NULL;
 	sc->irq_res = NULL;
@@ -2108,8 +2082,6 @@ sst_acpi_attach(device_t dev)
 	mtx_init(&sc->sc_mtx, "sst_sc", NULL, MTX_DEF);
 
 	device_printf(dev, "Intel SST Driver v%s loading\n", SST_DRV_VERSION);
-
-	sst_check_sram_immediate("ACPI_BEFORE_POWER_UP");
 
 	/* ---- Phase 0: PCI BAR Fixup (DISABLED for PCI Mode) ----
 	 * The ACPI driver should NOT interfere with BAR addresses if we want
@@ -2157,16 +2129,12 @@ sst_acpi_attach(device_t dev)
 #endif
 
 	/* ---- Phase 1: ACPI Power-Up ---- */
-	sst_check_sram_immediate("ACPI_BEFORE_POWER_UP_CALL");
 	sst_acpi_power_up(sc);
-	sst_check_sram_immediate("ACPI_AFTER_POWER_UP_CALL");
 
 	/* ---- Phase 2: Allocate BAR1 (PCI config mirror) ---- */
-	sst_check_sram_immediate("BEFORE_BAR1_ALLOC");
 	sc->shim_rid = 1;
 	sc->shim_res = bus_alloc_resource_any(dev, SYS_RES_MEMORY,
 	    &sc->shim_rid, RF_ACTIVE);
-	sst_check_sram_immediate("AFTER_BAR1_ALLOC");
 	if (sc->shim_res == NULL) {
 		device_printf(dev, "Failed to allocate BAR1 resource\n");
 		error = ENXIO;
@@ -2176,12 +2144,9 @@ sst_acpi_attach(device_t dev)
 	    rman_get_start(sc->shim_res), rman_get_size(sc->shim_res));
 
 	/* Dump PCI config via BAR1 */
-	sst_check_sram_immediate("BEFORE_PCI_DUMP");
 	sst_dump_pci_config(sc);
-	sst_check_sram_immediate("AFTER_PCI_DUMP");
 
 	/* Force enable Memory Space + Bus Master via BAR1 */
-	sst_check_sram_immediate("BEFORE_MEMEN_WRITE");
 	{
 		uint16_t cmd16 = bus_read_2(sc->shim_res, 0x04);
 		if ((cmd16 & 0x06) != 0x06) {
@@ -2190,19 +2155,14 @@ sst_acpi_attach(device_t dev)
 			DELAY(10000);
 		}
 	}
-	sst_check_sram_immediate("AFTER_MEMEN_WRITE");
 
 	/* ---- Phase 3: WPT Power-Up Sequence ---- */
-	sst_check_sram_immediate("BEFORE_WPT_POWER_UP");
 	sst_wpt_power_up(sc);
-	sst_check_sram_immediate("AFTER_WPT_POWER_UP");
 
 	/* ---- Phase 4: Allocate and Test BAR0 ---- */
-	sst_check_sram_immediate("BEFORE_BAR0_ALLOC");
 	sc->mem_rid = 0;
 	sc->mem_res = bus_alloc_resource_any(dev, SYS_RES_MEMORY,
 	    &sc->mem_rid, RF_ACTIVE);
-	sst_check_sram_immediate("AFTER_BAR0_ALLOC");
 	if (sc->mem_res == NULL) {
 		device_printf(dev, "Failed to allocate BAR0 resource\n");
 		error = ENXIO;
@@ -2211,18 +2171,14 @@ sst_acpi_attach(device_t dev)
 	device_printf(dev, "BAR0: 0x%lx (size: 0x%lx)\n",
 	    rman_get_start(sc->mem_res), rman_get_size(sc->mem_res));
 
-	/* === NEW: Enable SRAM power via control register === */
-	sst_check_sram_immediate("BEFORE_SRAM_ENABLE");
+	/* Enable SRAM power via control register */
 	error = sst_enable_sram(sc);
-	sst_check_sram_immediate("AFTER_SRAM_ENABLE");
 	if (error != 0) {
 		device_printf(dev, "SRAM enable returned %d, continuing anyway\n", error);
 	}
 
 	/* Test BAR0 */
-	sst_check_sram_immediate("BEFORE_BAR0_TEST");
 	bar0_ok = sst_test_bar0(sc);
-	sst_check_sram_immediate("AFTER_BAR0_TEST");
 	device_printf(dev, "BAR0 test: %s\n",
 	    bar0_ok ? "ACCESSIBLE" : "DEAD (0xFFFFFFFF)");
 
@@ -2934,17 +2890,9 @@ sst_pci_attach(device_t dev)
 
 	int error = 0, bar0_ok = 0;
 
-	/* === CHECKPOINT 1: IMMEDIATE SRAM CHECK ===
-	 * This is the VERY FIRST thing we do, before ANY device operation.
-	 * If SRAM is already dead here, the reset happened in FreeBSD PCI subsystem
-	 * before our attach was even called. */
-	sst_check_sram_immediate("ATTACH_ENTRY");
-
 	device_printf(dev, "Intel SST Driver v%s (PCI Attach)\n", SST_DRV_VERSION);
 
-	/* === CHECKPOINT 2: After device_get_softc === */
 	sc = device_get_softc(dev);
-	sst_check_sram_immediate("AFTER_SOFTC");
 
 	sc->dev = dev;
 	sc->handle = NULL; /* Not using ACPI handle directly in PCI mode */
@@ -2955,35 +2903,21 @@ sst_pci_attach(device_t dev)
 	sc->attached = false;
 	sc->state = SST_STATE_NONE;
 
-	/* === CHECKPOINT 3: After mtx_init === */
 	mtx_init(&sc->sc_mtx, "sst_sc", NULL, MTX_DEF);
-	sst_check_sram_immediate("AFTER_MTX_INIT");
 
 	/* CRITICAL: Enable PCI Memory Space FIRST, before any MMIO access!
 	 * Without PCIM_CMD_MEMEN, writes to BAR memory won't reach hardware. */
 	{
 		uint16_t cmd;
 
-		/* === CHECKPOINT 4: Before pci_read_config === */
-		sst_check_sram_immediate("BEFORE_PCI_READ");
-
 		cmd = pci_read_config(dev, PCIR_COMMAND, 2);
-
-		/* === CHECKPOINT 5: After pci_read_config === */
-		sst_check_sram_immediate("AFTER_PCI_READ");
 
 		device_printf(dev, "PCI Command register: 0x%04x\n", cmd);
 		if ((cmd & PCIM_CMD_MEMEN) == 0) {
 			device_printf(dev, "  Memory Space DISABLED! Enabling it first...\n");
 
-			/* === CHECKPOINT 6: Before pci_write_config === */
-			sst_check_sram_immediate("BEFORE_PCI_WRITE");
-
 			cmd |= PCIM_CMD_MEMEN;
 			pci_write_config(dev, PCIR_COMMAND, cmd, 2);
-
-			/* === CHECKPOINT 7: After pci_write_config === */
-			sst_check_sram_immediate("AFTER_PCI_WRITE");
 
 			cmd = pci_read_config(dev, PCIR_COMMAND, 2);
 			device_printf(dev, "  PCI Command after MEMEN: 0x%04x\n", cmd);
@@ -3152,12 +3086,111 @@ sst_pci_attach(device_t dev)
 		    SST_SHIM_OFFSET,
 		    bus_read_4(sc->mem_res, SST_SHIM_OFFSET));
 
-		/* Init DSP */
+		/* Initialize IPC subsystem */
+		error = sst_ipc_init(sc);
+		if (error) {
+			device_printf(dev, "IPC init failed\n");
+			goto fail;
+		}
+
+		/* Initialize firmware subsystem */
+		error = sst_fw_init(sc);
+		if (error) {
+			device_printf(dev, "Firmware init failed\n");
+			goto fail;
+		}
+
+		/* Basic DSP init (mask interrupts, reset) */
 		sst_init(sc);
+
+		/* Configure SHIM for Broadwell-U (catpt) mode */
+		{
+			uint32_t cs1;
+
+			/* Set 24MHz SRAM bank clock via BAR1 */
+			cs1 = bus_read_4(sc->shim_res, SST_PCI_CS1);
+			cs1 &= ~SST_CS1_SBCS_MASK;
+			cs1 |= SST_CS1_SBCS_24MHZ;
+			bus_write_4(sc->shim_res, SST_PCI_CS1, cs1);
+
+			/* Set CLKCTL SMOS=2 */
+			sst_shim_write(sc, SST_SHIM_CLKCTL, SST_CLKCTL_DEFAULT);
+
+			/* Set Low Trunk Clock */
+			sst_shim_write(sc, SST_SHIM_LTRC, SST_LTRC_VAL);
+
+			/* Enable Host DMA access to all channels */
+			sst_shim_write(sc, SST_SHIM_HMDC, SST_HMDC_HDDA_ALL);
+
+			device_printf(dev, "SHIM configured (catpt mode)\n");
+		}
+
+		/* Initialize DMA subsystem */
+		error = sst_dma_init(sc);
+		if (error) {
+			device_printf(dev, "DMA init failed\n");
+			goto fail;
+		}
+
+		/* Initialize SSP (I2S) subsystem */
+		error = sst_ssp_init(sc);
+		if (error) {
+			device_printf(dev, "SSP init failed\n");
+			goto fail;
+		}
+
+		/* Initialize PCM subsystem */
+		error = sst_pcm_init(sc);
+		if (error) {
+			device_printf(dev, "PCM init failed\n");
+			goto fail;
+		}
+
+		/* Initialize topology (audio pipeline) */
+		error = sst_topology_init(sc);
+		if (error) {
+			device_printf(dev, "Topology init failed\n");
+			goto fail;
+		}
+
+		/* Load firmware */
+		error = sst_fw_load(sc);
+		if (error) {
+			device_printf(dev, "Firmware load failed: %d\n", error);
+			error = 0; /* Continue without firmware for debugging */
+		} else {
+			/* Boot DSP with loaded firmware */
+			error = sst_fw_boot(sc);
+			if (error) {
+				device_printf(dev, "DSP boot failed: %d\n", error);
+				error = 0; /* Continue for debugging */
+			} else {
+				/* Get firmware version */
+				sst_ipc_get_fw_version(sc, NULL);
+				/* Load default audio topology */
+				sst_topology_load_default(sc);
+			}
+		}
+
+		/* Register PCM device if firmware is running */
+		if (sc->fw.state == SST_FW_STATE_RUNNING) {
+			sst_pcm_register(sc);
+		}
+
+		/* Jack detection */
+		error = sst_jack_init(sc);
+		if (error == 0) {
+			sst_jack_sysctl_init(sc);
+			sst_jack_enable(sc);
+		}
+		error = 0;
+
 		sc->attached = true;
+		sc->state = SST_STATE_ATTACHED;
+		device_printf(dev, "Intel SST DSP attached successfully\n");
 	} else {
 		device_printf(dev, "PCI Attach: BAR0 still dead. Hardware is tough.\n");
-		/* Don't fail, keepattached to allow inspection */
+		/* Don't fail, keep attached to allow inspection */
 		sc->attached = true;
 	}
 
@@ -3179,15 +3212,34 @@ sst_pci_detach(device_t dev)
 {
 	struct sst_softc *sc = device_get_softc(dev);
 
-	if (sc->irq_cookie)
+	/* Cleanup subsystems in reverse order of initialization */
+	sst_jack_fini(sc);
+	sst_topology_fini(sc);
+	sst_pcm_fini(sc);
+	sst_ssp_fini(sc);
+	sst_dma_fini(sc);
+	sst_fw_fini(sc);
+	sst_ipc_fini(sc);
+
+	if (sc->irq_cookie) {
 		bus_teardown_intr(dev, sc->irq_res, sc->irq_cookie);
-	if (sc->irq_res)
+		sc->irq_cookie = NULL;
+	}
+	if (sc->irq_res) {
 		bus_release_resource(dev, SYS_RES_IRQ, sc->irq_rid, sc->irq_res);
-	if (sc->shim_res)
+		sc->irq_res = NULL;
+	}
+	if (sc->shim_res) {
 		bus_release_resource(dev, SYS_RES_MEMORY, sc->shim_rid, sc->shim_res);
-	if (sc->mem_res)
+		sc->shim_res = NULL;
+	}
+	if (sc->mem_res) {
 		bus_release_resource(dev, SYS_RES_MEMORY, sc->mem_rid, sc->mem_res);
-	mtx_destroy(&sc->sc_mtx);
+		sc->mem_res = NULL;
+	}
+
+	if (mtx_initialized(&sc->sc_mtx))
+		mtx_destroy(&sc->sc_mtx);
 
 	return (0);
 }

@@ -5,6 +5,45 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.24.0] - 2026-02-12
+
+### Full DSP Initialization in PCI Mode
+
+- **Added**: Complete DSP initialization sequence to `sst_pci_attach()`
+  - IPC subsystem initialization (`sst_ipc_init`)
+  - Firmware subsystem initialization (`sst_fw_init`)
+  - SHIM configuration for Broadwell-U (catpt) mode
+  - DMA subsystem initialization (`sst_dma_init`)
+  - SSP (I2S) subsystem initialization (`sst_ssp_init`)
+  - PCM subsystem initialization (`sst_pcm_init`)
+  - Topology (audio pipeline) initialization (`sst_topology_init`)
+
+- **Added**: Firmware loading and DSP boot in PCI mode
+  - `sst_fw_load()` - Loads firmware from `/boot/firmware/intel/IntcSST2.bin`
+  - `sst_fw_boot()` - Boots DSP with loaded firmware
+  - `sst_ipc_get_fw_version()` - Gets firmware version
+  - `sst_topology_load_default()` - Loads default audio topology
+
+- **Added**: Audio subsystem registration
+  - `sst_pcm_register()` - Registers PCM device when firmware is running
+  - `sst_jack_init()` / `sst_jack_enable()` - Jack detection
+
+- **Fixed**: `sst_pci_detach()` now properly cleans up all subsystems
+  - Calls all `*_fini()` functions in reverse order
+  - Properly nullifies released resources
+
+---
+
+## [0.23.0] - 2026-02-12
+
+### Cleanup: Removed SRAM Checkpoint Diagnostics
+
+- Removed 38 `sst_check_sram_immediate()` checkpoint calls
+- Driver code cleaned up for production readiness
+- Kept `sst_check_sram_immediate()` function for future debugging if needed
+
+---
+
 ## [0.22.0] - 2026-02-12
 
 ### SUCCESS: SRAM Survives Driver Load!
