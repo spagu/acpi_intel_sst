@@ -50,7 +50,7 @@
 #define PCI_DEVICE_SST_BDW	0x9CB6
 #define PCI_DEVICE_SST_HSW	0x9C76 /* Haswell pending testing */
 
-#define SST_DRV_VERSION "0.21.2-AcpiCheck"
+#define SST_DRV_VERSION "0.21.3-PowerUpCheck"
 
 /* Forward declarations */
 static int sst_acpi_probe(device_t dev);
@@ -139,8 +139,11 @@ sst_acpi_power_up(struct sst_softc *sc)
 	ACPI_STATUS status;
 	UINT32 sta;
 
+	sst_check_sram_immediate("POWER_UP_ENTRY");
+
 	/* Check _STA */
 	status = acpi_GetInteger(sc->handle, "_STA", &sta);
+	sst_check_sram_immediate("AFTER_STA");
 	if (ACPI_SUCCESS(status)) {
 		device_printf(sc->dev, "ACPI _STA: 0x%x (%s%s%s%s)\n", sta,
 		    (sta & 0x01) ? "Present " : "",
@@ -149,15 +152,20 @@ sst_acpi_power_up(struct sst_softc *sc)
 		    (sta & 0x08) ? "Functional" : "");
 	}
 
-	/* _PS0 (D0 power state) */
+	/* _PS0 (D0 power state) - THIS MAY RESET SRAM! */
+	sst_check_sram_immediate("BEFORE_PS0");
 	status = AcpiEvaluateObject(sc->handle, "_PS0", NULL, NULL);
+	sst_check_sram_immediate("AFTER_PS0");
 	if (ACPI_SUCCESS(status)) {
 		device_printf(sc->dev, "Called _PS0 successfully\n");
 		DELAY(100000);
 	}
+	sst_check_sram_immediate("AFTER_PS0_DELAY");
 
 	/* acpi_pwr_switch_consumer */
+	sst_check_sram_immediate("BEFORE_PWR_SWITCH");
 	acpi_pwr_switch_consumer(sc->handle, ACPI_STATE_D0);
+	sst_check_sram_immediate("AFTER_PWR_SWITCH");
 
 	/* _DSM (Device Specific Method) */
 	{
@@ -2095,6 +2103,8 @@ sst_acpi_attach(device_t dev)
 
 	device_printf(dev, "Intel SST Driver v%s loading\n", SST_DRV_VERSION);
 
+	sst_check_sram_immediate("ACPI_BEFORE_POWER_UP");
+
 	/* ---- Phase 0: PCI BAR Fixup (DISABLED for PCI Mode) ----
 	 * The ACPI driver should NOT interfere with BAR addresses if we want
 	 * the kernel PCI subsystem to handle resource allocation naturally.
@@ -2141,7 +2151,9 @@ sst_acpi_attach(device_t dev)
 #endif
 
 	/* ---- Phase 1: ACPI Power-Up ---- */
+	sst_check_sram_immediate("ACPI_BEFORE_POWER_UP_CALL");
 	sst_acpi_power_up(sc);
+	sst_check_sram_immediate("ACPI_AFTER_POWER_UP_CALL");
 
 	/* ---- Phase 2: Allocate BAR1 (PCI config mirror) ---- */
 	sc->shim_rid = 1;
