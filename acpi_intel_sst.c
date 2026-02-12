@@ -47,7 +47,7 @@
 #define PCI_DEVICE_SST_BDW	0x9CB6
 #define PCI_DEVICE_SST_HSW	0x9C76 /* Haswell pending testing */
 
-#define SST_DRV_VERSION "0.10.0-SRAM"
+#define SST_DRV_VERSION "0.11.0-SRAM-NoD3"
 
 /* Forward declarations */
 static int sst_acpi_probe(device_t dev);
@@ -2807,23 +2807,17 @@ sst_pci_attach(device_t dev)
 		    bus_read_4(sc->shim_res, offset + 12));
 	}
 
-	/* Explicitly toggle PCI Power State D0 -> D3 -> D0
-	 * This aims to reset the internal DSP power management logic.
+	/* SKIP D3->D0 cycling - it RESETS the SRAM control register!
+	 * Discovered through RWEverything experiments: D3->D0 cycle
+	 * resets 0xFB000 control register back to 0x8480040e,
+	 * which turns off SRAM power.
 	 */
-	{
-		uint32_t cmd;
-		device_printf(dev, "Cycling PCI Power State: D0 -> D3 -> D0\n");
-		pci_set_powerstate(dev, PCI_POWERSTATE_D3);
-		DELAY(20000);
-		pci_set_powerstate(dev, PCI_POWERSTATE_D0);
-		DELAY(20000); // Wait for D0 transition
-		
-		/* Re-read Command register to ensure MEM/BM are set after D0 transition */
-		cmd = pci_read_config(dev, PCIR_COMMAND, 2);
-		if (!(cmd & PCIM_CMD_MEMEN) || !(cmd & PCIM_CMD_BUSMASTEREN)) {
-			device_printf(dev, "Restoring PCI Command after D3 cycle: 0x%04x -> MEM|BM\n", cmd);
-			pci_write_config(dev, PCIR_COMMAND, cmd | PCIM_CMD_MEMEN | PCIM_CMD_BUSMASTEREN, 2);
-		}
+	device_printf(dev, "Skipping D3->D0 cycle (would reset SRAM control)\n");
+
+	/* === CRITICAL: Enable SRAM FIRST before any other operations === */
+	error = sst_enable_sram(sc);
+	if (error != 0) {
+		device_printf(dev, "SRAM enable returned %d\n", error);
 	}
 
 	/* EXPERIMENTAL PHASE 2: "The Windows Mirror"
@@ -2888,11 +2882,7 @@ sst_pci_attach(device_t dev)
 	device_printf(dev, "  VDRTCTL2: 0x%08x\n", bus_read_4(sc->shim_res, 0xA8));
 	device_printf(dev, "  Reg 0x80: 0x%08x\n", bus_read_4(sc->shim_res, 0x80));
 
-	/* === NEW: Enable SRAM power via control register === */
-	error = sst_enable_sram(sc);
-	if (error != 0) {
-		device_printf(dev, "SRAM enable returned %d, continuing anyway\n", error);
-	}
+	/* SRAM enable already called above - no duplicate needed */
 
 	/* Test BAR0 */
 	bar0_ok = sst_test_bar0(sc);
