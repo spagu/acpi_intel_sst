@@ -2778,8 +2778,15 @@ sst_pci_attach(device_t dev)
 		}
 	}
 
-	/* WPT Power-Up Sequence */
-	sst_wpt_power_up(sc);
+	/* WPT Power-Up Sequence - SKIPPED 
+	 * This legacy sequence seems to break the state we just fixed.
+	 * Disabling it to see if VDRTCTL0 stays 0.
+	 */
+	// sst_wpt_power_up(sc);
+	
+	device_printf(dev, "Skipped WPT Power-Up. Checking state:\n");
+	device_printf(dev, "  VDRTCTL0: 0x%08x\n", bus_read_4(sc->shim_res, 0xA0));
+	device_printf(dev, "  VDRTCTL2: 0x%08x\n", bus_read_4(sc->shim_res, 0xA8));
 
 	/* Test BAR0 */
 	bar0_ok = sst_test_bar0(sc);
