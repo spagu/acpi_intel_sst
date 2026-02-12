@@ -50,7 +50,7 @@
 #define PCI_DEVICE_SST_BDW	0x9CB6
 #define PCI_DEVICE_SST_HSW	0x9C76 /* Haswell pending testing */
 
-#define SST_DRV_VERSION "0.20.0-PreActivate"
+#define SST_DRV_VERSION "0.21.0-EarlyCheck"
 
 /* Forward declarations */
 static int sst_acpi_probe(device_t dev);
@@ -354,6 +354,43 @@ sst_test_bar0(struct sst_softc *sc)
 #define SST_SRAM_CTRL_OFFSET	0xFB000
 #define SST_SRAM_CTRL_ENABLE	0x1F	/* Bits 0-4 enable SRAM */
 #define SST_PCI_BAR0_PHYS	0xDF800000	/* PCI-allocated BAR0 physical address */
+
+/*
+ * Immediate SRAM status check - can be called without any device setup.
+ * This is for diagnosing WHEN the SRAM gets reset during driver load.
+ * Returns: 1 if SRAM is alive, 0 if dead
+ */
+static int
+sst_check_sram_immediate(const char *checkpoint)
+{
+	void *bar0_va;
+	volatile uint32_t *sram_base;
+	volatile uint32_t *ctrl_reg;
+	uint32_t sram_val, ctrl_val;
+	int alive;
+
+	bar0_va = pmap_mapdev_attr(SST_PCI_BAR0_PHYS, 0x100000, VM_MEMATTR_UNCACHEABLE);
+	if (bar0_va == NULL) {
+		printf("sst: [%s] Failed to map BAR0\n", checkpoint);
+		return 0;
+	}
+
+	sram_base = (volatile uint32_t *)bar0_va;
+	ctrl_reg = (volatile uint32_t *)((char *)bar0_va + SST_SRAM_CTRL_OFFSET);
+
+	__asm __volatile("mfence" ::: "memory");
+	sram_val = *sram_base;
+	ctrl_val = *ctrl_reg;
+
+	alive = (sram_val != 0xFFFFFFFF);
+
+	printf("sst: [%s] SRAM[0]=0x%08x CTRL=0x%08x => %s\n",
+	    checkpoint, sram_val, ctrl_val,
+	    alive ? "ALIVE" : "DEAD");
+
+	pmap_unmapdev(bar0_va, 0x100000);
+	return alive;
+}
 
 /*
  * Check if SRAM is active and try to enable it.
@@ -2850,10 +2887,18 @@ sst_pci_attach(device_t dev)
 
 	int error = 0, bar0_ok = 0;
 
-	device_printf(dev, "Intel SST Driver v0.9.0-PCI (PCI Attach)\n");
-	// bool bar0_ok; (Removed due to redefinition)
+	/* === CHECKPOINT 1: IMMEDIATE SRAM CHECK ===
+	 * This is the VERY FIRST thing we do, before ANY device operation.
+	 * If SRAM is already dead here, the reset happened in FreeBSD PCI subsystem
+	 * before our attach was even called. */
+	sst_check_sram_immediate("ATTACH_ENTRY");
 
+	device_printf(dev, "Intel SST Driver v%s (PCI Attach)\n", SST_DRV_VERSION);
+
+	/* === CHECKPOINT 2: After device_get_softc === */
 	sc = device_get_softc(dev);
+	sst_check_sram_immediate("AFTER_SOFTC");
+
 	sc->dev = dev;
 	sc->handle = NULL; /* Not using ACPI handle directly in PCI mode */
 	sc->mem_res = NULL;
@@ -2863,27 +2908,43 @@ sst_pci_attach(device_t dev)
 	sc->attached = false;
 	sc->state = SST_STATE_NONE;
 
+	/* === CHECKPOINT 3: After mtx_init === */
 	mtx_init(&sc->sc_mtx, "sst_sc", NULL, MTX_DEF);
-
-	device_printf(dev, "Intel SST Driver v%s (PCI Attach)\n", SST_DRV_VERSION);
+	sst_check_sram_immediate("AFTER_MTX_INIT");
 
 	/* CRITICAL: Enable PCI Memory Space FIRST, before any MMIO access!
 	 * Without PCIM_CMD_MEMEN, writes to BAR memory won't reach hardware. */
 	{
 		uint16_t cmd;
+
+		/* === CHECKPOINT 4: Before pci_read_config === */
+		sst_check_sram_immediate("BEFORE_PCI_READ");
+
 		cmd = pci_read_config(dev, PCIR_COMMAND, 2);
-		device_printf(dev, "PCI Command before SRAM enable: 0x%04x\n", cmd);
+
+		/* === CHECKPOINT 5: After pci_read_config === */
+		sst_check_sram_immediate("AFTER_PCI_READ");
+
+		device_printf(dev, "PCI Command register: 0x%04x\n", cmd);
 		if ((cmd & PCIM_CMD_MEMEN) == 0) {
 			device_printf(dev, "  Memory Space DISABLED! Enabling it first...\n");
+
+			/* === CHECKPOINT 6: Before pci_write_config === */
+			sst_check_sram_immediate("BEFORE_PCI_WRITE");
+
 			cmd |= PCIM_CMD_MEMEN;
 			pci_write_config(dev, PCIR_COMMAND, cmd, 2);
+
+			/* === CHECKPOINT 7: After pci_write_config === */
+			sst_check_sram_immediate("AFTER_PCI_WRITE");
+
 			cmd = pci_read_config(dev, PCIR_COMMAND, 2);
 			device_printf(dev, "  PCI Command after MEMEN: 0x%04x\n", cmd);
 		}
 	}
 
 	/* Now try to enable SRAM with Memory Space enabled */
-	device_printf(dev, "Attempting SRAM enable (with PCI Memory Space enabled)...\n");
+	device_printf(dev, "Attempting SRAM enable...\n");
 	sst_enable_sram_direct(dev);
 
 	/* Enable Bus Master for DMA operations */

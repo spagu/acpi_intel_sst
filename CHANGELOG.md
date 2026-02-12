@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.21.0] - 2026-02-12
+
+### Investigation: SRAM Reset During Driver Load
+
+- **Critical Discovery**: Pre-activated SRAM is reset before driver code runs
+  - User activates SRAM via `dd` → verified working (reads `0xc31883d6`)
+  - User runs `kldload acpi_intel_sst`
+  - By the time driver's first line executes, SRAM is dead (`0xffffffff`)
+
+- **Hypothesis**: FreeBSD PCI subsystem resets device during attach
+  - Could be: PCI probe, BAR setup, power state transition
+  - Could be: ACPI _PS0 method, _DSM method, or power resource
+  - Need to identify exact point where reset occurs
+
+- **Diagnostic Approach**: Added checkpoint-based SRAM monitoring
+  - `sst_check_sram_immediate()` - direct SRAM status check without device setup
+  - Checkpoints at: ATTACH_ENTRY, AFTER_SOFTC, AFTER_MTX_INIT, BEFORE_PCI_READ, AFTER_PCI_READ, BEFORE_PCI_WRITE, AFTER_PCI_WRITE
+  - Will identify exact operation that causes SRAM reset
+
+- **Technical Findings**:
+  - SRAM control register at BAR0+0xFB000 (physical 0xDF8FB000)
+  - SRAM alive state: reads non-0xFFFFFFFF from SRAM[0], CTRL shows 0x78663178 or similar
+  - SRAM dead state: reads 0xFFFFFFFF from SRAM[0], CTRL shows 0x8480040e
+
+---
+
 ## [0.20.0] - 2026-02-12
 
 ### CONCLUSION: Manual SRAM Activation Required
