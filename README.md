@@ -68,27 +68,36 @@ dd if=/dev/mem bs=4 count=1 skip=$((0xdf800000/4)) 2>/dev/null | xxd  # Should b
 
 **Key insight**: Simply writing the enable value doesn't work - hardware needs to see the bits transition from 0 to 1.
 
-### Current Investigation: SRAM Reset During Driver Load
+### SOLVED: Dual Driver Conflict (v0.22.0)
 
-**Problem discovered**: Pre-activated SRAM is reset before driver code executes!
+**Root Cause Found**: Having both ACPI and PCI drivers active caused SRAM reset!
 
-| Timeline | SRAM State | Notes |
-|----------|------------|-------|
-| After `dd` activation | ALIVE (0xc31883d6) | Verified with `dd if=/dev/mem` |
-| `kldload` starts | ??? | FreeBSD PCI subsystem runs |
-| Driver attach begins | DEAD (0xFFFFFFFF) | SRAM was reset somewhere! |
+| Driver | Status | SRAM State |
+|--------|--------|------------|
+| ACPI driver (INT3438) | Attaches first | ALIVE throughout |
+| *Something resets SRAM* | Between drivers | - |
+| PCI driver (00:13.0) | Attaches second | DEAD on entry |
 
-**v0.21.0-EarlyCheck** adds checkpoint-based SRAM monitoring to identify the exact operation that resets SRAM:
-- ATTACH_ENTRY - very first line of driver
-- AFTER_SOFTC, AFTER_MTX_INIT - internal setup
-- BEFORE/AFTER_PCI_READ - PCI config access
-- BEFORE/AFTER_PCI_WRITE - PCI MEMEN enable
+**Solution**: Disabled ACPI driver, PCI-only mode
+- v0.22.0 comments out `DRIVER_MODULE(acpi_intel_sst, acpi, ...)`
+- Only PCI driver remains active
+- SRAM now survives driver load!
 
-**Likely culprits**:
-1. FreeBSD PCI probe before attach is called
-2. ACPI _PS0 power state transition
-3. ACPI _DSM method execution
-4. PCI BAR setup/remapping
+**Working sequence**:
+```bash
+# 1. Pre-activate SRAM
+printf '\x00\x04\x80\x84' | dd of=/dev/mem bs=1 seek=$((0xdf8fb000)) conv=notrunc 2>/dev/null
+sleep 0.1
+printf '\x1f\x04\x80\x84' | dd of=/dev/mem bs=1 seek=$((0xdf8fb000)) conv=notrunc 2>/dev/null
+sleep 0.1
+
+# 2. Load PCI-only driver
+kldload acpi_intel_sst
+
+# 3. Verify SRAM survived
+dd if=/dev/mem bs=4 count=1 skip=$((0xdf800000/4)) 2>/dev/null | xxd
+# Should show: d683 18c3 (0xc31883d6)
+```
 
 ---
 

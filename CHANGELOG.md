@@ -7,29 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.22.0] - 2026-02-12
 
-### ROOT CAUSE FOUND: Dual Driver Conflict
+### SUCCESS: SRAM Survives Driver Load!
 
-- **Problem Identified**: Having BOTH ACPI and PCI drivers causes SRAM reset
-  - Module registers two drivers: `acpi_intel_sst` (ACPI) and `sst_pci` (PCI)
-  - ACPI driver attaches first → SRAM stays ALIVE throughout
-  - Something resets SRAM between ACPI attach completion and PCI probe
-  - PCI driver sees DEAD SRAM
+- **Problem Solved**: Dual driver conflict was causing SRAM reset
+  - Module had two drivers: `acpi_intel_sst` (ACPI) and `sst_pci` (PCI)
+  - Something between ACPI attach completion and PCI probe reset SRAM
+  - Disabling ACPI driver fixes the issue!
 
-- **Solution**: Disabled ACPI driver, PCI driver only
+- **Solution**: PCI driver only mode
   - Commented out `DRIVER_MODULE(acpi_intel_sst, acpi, ...)`
+  - Commented out `sst_driver` and `sst_methods` (unused)
   - Only PCI driver remains active
-  - PCI driver uses correct BAR0 at 0xDF800000
 
-- **Checkpoint Evidence**:
+- **Verified Working**:
   ```
-  [AFTER_SRAM_ENABLE] SRAM=0xc31883d6 => ALIVE  ← ACPI driver finishes
-  [SRAM_ENABLE_ENTRY] SRAM=0xffffffff => DEAD   ← PCI driver starts
+  sst: [PCI_PROBE] SRAM[0]=0xc31883d6 CTRL=0xdf000078 => ALIVE
+  sst: [ATTACH_ENTRY] SRAM[0]=0xc31883d6 CTRL=0xdf000078 => ALIVE
+  sst: [SRAM_ENABLE_ENTRY] SRAM[0]=0xc31883d6 CTRL=0xdf000078 => ALIVE
   ```
 
-- **Theory**: FreeBSD bus subsystem does something between ACPI and PCI attachment
-  - Possibly: PCI device power state transition
-  - Possibly: Resource allocation conflict
-  - Possibly: ACPI method triggered by PCI probe
+- **Working Workflow**:
+  1. Pre-activate SRAM via `dd` (rising edge trigger)
+  2. Load driver: `kldload acpi_intel_sst`
+  3. Driver sees SRAM as ALIVE and can work with DSP memory
 
 ---
 
