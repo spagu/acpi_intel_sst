@@ -1,0 +1,15 @@
+Root System Description Pointer: 0x00000000000EF1B0
+
+52 53 44 20 50 54 52 20 13 44 45 4C 4C 20 20 02	RSD PTR .DELL  .
+28 80 E9 DA 24 00 00 00 C0 80 E9 DA 00 00 00 00	(...$...........
+D9 00 00 00                                    	....            
+
+Signature	"RSD PTR "
+Checksum	0x13 (19)
+OEM ID	"DELL  "
+Revision	0x02 (2) - ACPI 2.0
+RSDT Address	0xDAE98028
+Length	0x00000024
+XsdtAddress	0x00000000DAE980C0
+Extended Checksum	0xD9 (217)
+Reserved	0x00 0x00 0x00 
