@@ -299,12 +299,11 @@ sst_ipc_wait_ready(struct sst_softc *sc, int timeout_ms)
 void
 sst_ipc_intr(struct sst_softc *sc)
 {
-	uint32_t isr, ipcd, ipcx;
+	uint32_t isr, ipcd;
 
 	/* Read interrupt status */
 	isr = sst_shim_read(sc, SST_SHIM_ISRX);
 	ipcd = sst_shim_read(sc, SST_SHIM_IPCD);
-	ipcx = sst_shim_read(sc, SST_SHIM_IPCX);
 
 	/* Check for notification from DSP (BUSY in IPCD) */
 	if (ipcd & SST_IPC_BUSY) {
