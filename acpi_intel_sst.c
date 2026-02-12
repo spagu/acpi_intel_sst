@@ -50,7 +50,7 @@
 #define PCI_DEVICE_SST_BDW	0x9CB6
 #define PCI_DEVICE_SST_HSW	0x9C76 /* Haswell pending testing */
 
-#define SST_DRV_VERSION "0.21.5-SramEnableCheck"
+#define SST_DRV_VERSION "0.22.0-PciOnly"
 
 /* Forward declarations */
 static int sst_acpi_probe(device_t dev);
@@ -3325,10 +3325,14 @@ static driver_t sst_pci_driver = {
 	sizeof(struct sst_softc),
 };
 
-/* Register both ACPI and PCI drivers */
-DRIVER_MODULE(acpi_intel_sst, acpi, sst_driver, 0, 0);
+/* Register PCI driver ONLY - ACPI driver causes SRAM reset!
+ * When both drivers are active, the ACPI driver attaches first (SRAM alive),
+ * but something resets the SRAM before PCI driver can attach.
+ * Disabling ACPI driver allows PCI driver to work with pre-activated SRAM.
+ */
+/* DISABLED: DRIVER_MODULE(acpi_intel_sst, acpi, sst_driver, 0, 0); */
 DRIVER_MODULE(sst_pci, pci, sst_pci_driver, 0, 0);
-MODULE_DEPEND(acpi_intel_sst, acpi, 1, 1, 1);
+/* DISABLED: MODULE_DEPEND(acpi_intel_sst, acpi, 1, 1, 1); */
 MODULE_DEPEND(acpi_intel_sst, pci, 1, 1, 1);
 MODULE_DEPEND(acpi_intel_sst, firmware, 1, 1, 1);
 MODULE_VERSION(acpi_intel_sst, 8);

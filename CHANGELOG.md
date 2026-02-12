@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.22.0] - 2026-02-12
+
+### ROOT CAUSE FOUND: Dual Driver Conflict
+
+- **Problem Identified**: Having BOTH ACPI and PCI drivers causes SRAM reset
+  - Module registers two drivers: `acpi_intel_sst` (ACPI) and `sst_pci` (PCI)
+  - ACPI driver attaches first → SRAM stays ALIVE throughout
+  - Something resets SRAM between ACPI attach completion and PCI probe
+  - PCI driver sees DEAD SRAM
+
+- **Solution**: Disabled ACPI driver, PCI driver only
+  - Commented out `DRIVER_MODULE(acpi_intel_sst, acpi, ...)`
+  - Only PCI driver remains active
+  - PCI driver uses correct BAR0 at 0xDF800000
+
+- **Checkpoint Evidence**:
+  ```
+  [AFTER_SRAM_ENABLE] SRAM=0xc31883d6 => ALIVE  ← ACPI driver finishes
+  [SRAM_ENABLE_ENTRY] SRAM=0xffffffff => DEAD   ← PCI driver starts
+  ```
+
+- **Theory**: FreeBSD bus subsystem does something between ACPI and PCI attachment
+  - Possibly: PCI device power state transition
+  - Possibly: Resource allocation conflict
+  - Possibly: ACPI method triggered by PCI probe
+
+---
+
 ## [0.21.0] - 2026-02-12
 
 ### Investigation: SRAM Reset During Driver Load
