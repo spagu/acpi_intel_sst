@@ -68,6 +68,28 @@ dd if=/dev/mem bs=4 count=1 skip=$((0xdf800000/4)) 2>/dev/null | xxd  # Should b
 
 **Key insight**: Simply writing the enable value doesn't work - hardware needs to see the bits transition from 0 to 1.
 
+### Current Investigation: SRAM Reset During Driver Load
+
+**Problem discovered**: Pre-activated SRAM is reset before driver code executes!
+
+| Timeline | SRAM State | Notes |
+|----------|------------|-------|
+| After `dd` activation | ALIVE (0xc31883d6) | Verified with `dd if=/dev/mem` |
+| `kldload` starts | ??? | FreeBSD PCI subsystem runs |
+| Driver attach begins | DEAD (0xFFFFFFFF) | SRAM was reset somewhere! |
+
+**v0.21.0-EarlyCheck** adds checkpoint-based SRAM monitoring to identify the exact operation that resets SRAM:
+- ATTACH_ENTRY - very first line of driver
+- AFTER_SOFTC, AFTER_MTX_INIT - internal setup
+- BEFORE/AFTER_PCI_READ - PCI config access
+- BEFORE/AFTER_PCI_WRITE - PCI MEMEN enable
+
+**Likely culprits**:
+1. FreeBSD PCI probe before attach is called
+2. ACPI _PS0 power state transition
+3. ACPI _DSM method execution
+4. PCI BAR setup/remapping
+
 ---
 
 ## Quick Start

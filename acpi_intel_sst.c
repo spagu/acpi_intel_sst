@@ -50,7 +50,7 @@
 #define PCI_DEVICE_SST_BDW	0x9CB6
 #define PCI_DEVICE_SST_HSW	0x9C76 /* Haswell pending testing */
 
-#define SST_DRV_VERSION "0.21.0-EarlyCheck"
+#define SST_DRV_VERSION "0.21.1-ProbeCheck"
 
 /* Forward declarations */
 static int sst_acpi_probe(device_t dev);
@@ -2048,6 +2048,8 @@ sst_pci_probe(device_t dev)
 {
 	if (pci_get_vendor(dev) == PCI_VENDOR_INTEL &&
 	    pci_get_device(dev) == PCI_DEVICE_SST_BDW) {
+		/* Check SRAM status during probe - BEFORE attach */
+		sst_check_sram_immediate("PCI_PROBE");
 		device_set_desc(dev, "Intel Broadwell-U Audio DSP (PCI Mode)");
 		return (BUS_PROBE_DEFAULT);
 	}
