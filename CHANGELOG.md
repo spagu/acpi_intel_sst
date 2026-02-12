@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Brute Force Memory Scanner** - when BAR0 returns 0xFFFFFFFF, scan memory regions
+  - Scans common LPSS addresses (0xf0000000-0xfe000000 range)
+  - Looks for SST DevID (0x9CB68086) or firmware magic ($SST)
+  - Scans around working BAR1 address to find alternative mappings
+  - Helps identify if DSP is mapped at different address than ACPI reports
 - **Complete IPC Stream Allocation API** (`sst_ipc.c`) - full DSP stream management
   - `sst_ipc_alloc_stream()` - allocate audio stream on DSP
   - `sst_ipc_free_stream()` - release DSP stream resources

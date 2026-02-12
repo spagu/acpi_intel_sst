@@ -12,6 +12,32 @@
 
 ---
 
+## 🎯 Project Goals
+
+| Goal | Status |
+|------|--------|
+| **Enable native I2S/SST audio** on Dell XPS 13 9343 | 🔄 In Progress |
+| **No USB audio** - only internal speakers/headphone jack | ✅ Requirement |
+| **No HDMI audio** - dedicated analog audio | ✅ Requirement |
+| **FreeBSD sound(4) integration** | 🔄 In Progress |
+
+### Current Research Areas
+
+1. **BAR0 Memory Access** - PCH not decoding 0xfe000000 (DSP memory)
+2. **LPSS Enable** - Find PCH register to enable Low Power SubSystem
+3. **Windows Driver Analysis** - Reverse engineer IntcADSP.sys init sequence
+4. **Brute Force Scanning** - Find where DSP is actually mapped
+
+### Known Facts
+
+- ✅ Windows audio works on this hardware
+- ✅ ACPI device enabled (_STA = 0xF)
+- ✅ SRAM power gates enabled (VDRTCTL0 = 0x000FFFFF)
+- ❌ BAR0 returns 0xFFFFFFFF (memory not accessible)
+- ❌ SST not visible as PCI device (device 19 missing)
+
+---
+
 ## Quick Start
 
 ```bash

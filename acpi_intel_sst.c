@@ -798,6 +798,65 @@ sst_acpi_attach(device_t dev)
 	/* Sanity check */
 	if (csr == SST_INVALID_REG_VALUE) {
 		device_printf(dev, "Error: Registers read 0xFFFFFFFF\n");
+
+		/*
+		 * BRUTE FORCE: Try to find DSP at different memory addresses
+		 * The ACPI-provided address might not be where the hardware
+		 * is actually mapped. Scan common LPSS memory regions.
+		 */
+		device_printf(dev, "=== BRUTE FORCE MEMORY SCAN ===\n");
+		{
+			bus_space_tag_t mem_tag = X86_BUS_SPACE_MEM;
+			bus_space_handle_t scan_handle;
+			uint32_t scan_val;
+			uint64_t scan_addrs[] = {
+				0xf0000000, 0xf0100000, 0xf0200000, 0xf0500000,
+				0xf7200000, 0xf7210000, 0xf7218000, 0xf7220000,
+				0xf8000000, 0xf9000000, 0xfa000000, 0xfb000000,
+				0xfc000000, 0xfd000000, 0xfe000000, 0xfe100000,
+				0xfe200000, 0xfe300000, 0xfed00000, 0xfee00000
+			};
+			int i;
+
+			for (i = 0; i < sizeof(scan_addrs) / sizeof(scan_addrs[0]); i++) {
+				if (bus_space_map(mem_tag, scan_addrs[i], 0x1000, 0,
+				    &scan_handle) == 0) {
+					scan_val = bus_space_read_4(mem_tag, scan_handle, 0);
+					/* Look for:
+					 * - DevID/VenID: 0x9CB68086
+					 * - Non-0xFFFFFFFF value
+					 * - SST firmware magic: 0x54535324 ("$SST")
+					 */
+					if (scan_val != 0xFFFFFFFF && scan_val != 0x00000000) {
+						device_printf(dev, "  0x%08llx: 0x%08x",
+						    (unsigned long long)scan_addrs[i], scan_val);
+						if (scan_val == 0x9CB68086)
+							device_printf(dev, " <-- SST DevID!");
+						else if (scan_val == 0x54535324)
+							device_printf(dev, " <-- $SST magic!");
+						device_printf(dev, "\n");
+					}
+					bus_space_unmap(mem_tag, scan_handle, 0x1000);
+				}
+			}
+
+			/* Also scan near BAR1 which works */
+			device_printf(dev, "Scanning near working BAR1 (0xfe100000):\n");
+			for (i = 0; i < 16; i++) {
+				uint64_t addr = 0xfe100000 + (i * 0x10000);
+				if (bus_space_map(mem_tag, addr, 0x1000, 0,
+				    &scan_handle) == 0) {
+					scan_val = bus_space_read_4(mem_tag, scan_handle, 0);
+					if (scan_val != 0xFFFFFFFF) {
+						device_printf(dev, "  0x%08llx: 0x%08x\n",
+						    (unsigned long long)addr, scan_val);
+					}
+					bus_space_unmap(mem_tag, scan_handle, 0x1000);
+				}
+			}
+		}
+		device_printf(dev, "=== END BRUTE FORCE SCAN ===\n");
+
 		error = ENXIO;
 		goto fail;
 	}

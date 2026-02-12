@@ -15,7 +15,22 @@ This document details the investigation into enabling Intel Smart Sound Technolo
 
 **Key Finding:** The entire LPSS (Low Power SubSystem) memory region at 0xFE000000-0xFE0FFFFF is inaccessible from FreeBSD, affecting not only the SST DSP but also I2C controllers (ig4iic0) in the same region.
 
-**Status:** Hardware/firmware limitation - requires proprietary initialization not available outside Windows.
+**Status:** IN PROGRESS - searching for BAR0 address or PCH configuration method.
+
+---
+
+## PROJECT GOALS
+
+1. **Primary Goal:** Enable native SST audio on Dell XPS 13 9343 under FreeBSD
+2. **NOT Acceptable Solutions:**
+   - USB audio card
+   - HDMI audio
+   - Any external audio device
+3. **Research Areas:**
+   - Find correct BAR0 address (brute force memory scanning)
+   - Analyze Windows driver for PCH enable sequence
+   - Find PCH register that enables LPSS memory decoder
+4. **Current Hypothesis:** BIOS/SMM enables LPSS memory decoder only for Windows
 
 ---
 
