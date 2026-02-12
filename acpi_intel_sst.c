@@ -50,7 +50,7 @@
 #define PCI_DEVICE_SST_BDW	0x9CB6
 #define PCI_DEVICE_SST_HSW	0x9C76 /* Haswell pending testing */
 
-#define SST_DRV_VERSION "0.18.0-Atomic32"
+#define SST_DRV_VERSION "0.18.1-LongDelay"
 
 /* Forward declarations */
 static int sst_acpi_probe(device_t dev);
@@ -410,7 +410,7 @@ sst_enable_sram_direct(device_t dev)
 		ctrl = *ctrl_reg;
 		device_printf(dev, "    After clear: CTRL=0x%08x (expected 0x%08x)\n", ctrl, clear_val);
 
-		DELAY(10000); /* 10ms wait */
+		DELAY(500000); /* 500ms wait - hardware needs time to process clear */
 
 		/* Step 2: Set enable bits with single 32-bit write */
 		device_printf(dev, "    Writing 0x%08x (set bits 0-4)\n", set_val);
@@ -418,7 +418,7 @@ sst_enable_sram_direct(device_t dev)
 		*ctrl_reg = set_val;
 		__asm __volatile("mfence" ::: "memory");
 
-		DELAY(100000); /* 100ms for hardware to process */
+		DELAY(500000); /* 500ms for hardware to process */
 
 		/* Read result */
 		__asm __volatile("mfence" ::: "memory");
@@ -426,22 +426,28 @@ sst_enable_sram_direct(device_t dev)
 		ctrl = *ctrl_reg;
 		device_printf(dev, "    Result: CTRL=0x%08x, SRAM[0]=0x%08x\n", ctrl, test_val);
 
+		/* Check if hardware processed (CTRL should change to ~0x78663178) */
+		if (ctrl != set_val) {
+			device_printf(dev, "    CTRL changed from 0x%08x to 0x%08x! Hardware responded.\n",
+			    set_val, ctrl);
+		}
+
 		if (test_val != 0xFFFFFFFF) {
 			device_printf(dev, "  SUCCESS! SRAM is now ACTIVE.\n");
 			pmap_unmapdev(bar0_va, 0x100000);
 			return (0);
 		}
 
-		/* If CTRL changed, hardware responded - give more time */
-		if (ctrl != set_val && ctrl != 0x1c20001f) {
-			device_printf(dev, "    CTRL changed to 0x%08x, extended wait...\n", ctrl);
-			DELAY(500000); /* 500ms extra wait */
-			test_val = *sram_base;
-			if (test_val != 0xFFFFFFFF) {
-				device_printf(dev, "  SUCCESS after extended wait!\n");
-				pmap_unmapdev(bar0_va, 0x100000);
-				return (0);
-			}
+		/* Hardware might need even more time */
+		device_printf(dev, "    SRAM still dead, waiting 1 more second...\n");
+		DELAY(1000000); /* 1 second extra wait */
+		test_val = *sram_base;
+		ctrl = *ctrl_reg;
+		device_printf(dev, "    After extended wait: CTRL=0x%08x, SRAM[0]=0x%08x\n", ctrl, test_val);
+		if (test_val != 0xFFFFFFFF) {
+			device_printf(dev, "  SUCCESS after extended wait!\n");
+			pmap_unmapdev(bar0_va, 0x100000);
+			return (0);
 		}
 	}
 
