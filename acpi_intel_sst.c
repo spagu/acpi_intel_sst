@@ -913,8 +913,100 @@ sst_acpi_attach(device_t dev)
 			DELAY(1000);
 			uint32_t bar0_restored = bus_read_4(sc->shim_res, 0x10);
 			device_printf(dev, "  BAR0 restored: 0x%08x\n", bar0_restored);
+
+			/* Experiment with unknown register 0xF8 */
+			device_printf(dev, "=== TESTING UNKNOWN REGISTERS ===\n");
+			uint32_t reg_f8 = bus_read_4(sc->shim_res, 0xF8);
+			uint32_t reg_fc = bus_read_4(sc->shim_res, 0xFC);
+			device_printf(dev, "  [0xF8]: 0x%08x\n", reg_f8);
+			device_printf(dev, "  [0xFC]: 0x%08x\n", reg_fc);
+
+			/* Check VDRTCTL1 and VDRTCTL3 */
+			uint32_t vdrtctl1 = bus_read_4(sc->shim_res, 0xA4);
+			uint32_t vdrtctl3 = bus_read_4(sc->shim_res, 0xAC);
+			device_printf(dev, "  VDRTCTL1 [0xA4]: 0x%08x\n", vdrtctl1);
+			device_printf(dev, "  VDRTCTL3 [0xAC]: 0x%08x\n", vdrtctl3);
+
+			/* Try setting various enable bits in 0xF8 */
+			device_printf(dev, "Trying to flip bits in 0xF8...\n");
+
+			/* Try setting bit 0 (often enable bit) */
+			bus_write_4(sc->shim_res, 0xF8, reg_f8 | 0x01);
+			DELAY(10000);
+			device_printf(dev, "  After |0x01: 0x%08x\n",
+			    bus_read_4(sc->shim_res, 0xF8));
+
+			/* Test BAR0 memory after each change */
+			if (bus_space_map(mem_tag, 0xfe000000, 0x1000, 0,
+			    &scan_handle) == 0) {
+				scan_val = bus_space_read_4(mem_tag, scan_handle, 0);
+				device_printf(dev, "  BAR0[0] now: 0x%08x%s\n", scan_val,
+				    scan_val != 0xFFFFFFFF ? " <-- CHANGED!" : "");
+				bus_space_unmap(mem_tag, scan_handle, 0x1000);
+			}
+
+			/* Try clearing bit 27 (might be disable) */
+			bus_write_4(sc->shim_res, 0xF8, reg_f8 & ~0x08000000);
+			DELAY(10000);
+			device_printf(dev, "  After &~0x08000000: 0x%08x\n",
+			    bus_read_4(sc->shim_res, 0xF8));
+
+			if (bus_space_map(mem_tag, 0xfe000000, 0x1000, 0,
+			    &scan_handle) == 0) {
+				scan_val = bus_space_read_4(mem_tag, scan_handle, 0);
+				device_printf(dev, "  BAR0[0] now: 0x%08x%s\n", scan_val,
+				    scan_val != 0xFFFFFFFF ? " <-- CHANGED!" : "");
+				bus_space_unmap(mem_tag, scan_handle, 0x1000);
+			}
+
+			/* Try setting all low enable bits */
+			bus_write_4(sc->shim_res, 0xF8, reg_f8 | 0xFF);
+			DELAY(10000);
+			device_printf(dev, "  After |0xFF: 0x%08x\n",
+			    bus_read_4(sc->shim_res, 0xF8));
+
+			if (bus_space_map(mem_tag, 0xfe000000, 0x1000, 0,
+			    &scan_handle) == 0) {
+				scan_val = bus_space_read_4(mem_tag, scan_handle, 0);
+				device_printf(dev, "  BAR0[0] now: 0x%08x%s\n", scan_val,
+				    scan_val != 0xFFFFFFFF ? " <-- CHANGED!" : "");
+				bus_space_unmap(mem_tag, scan_handle, 0x1000);
+			}
+
+			/* Restore original 0xF8 */
+			bus_write_4(sc->shim_res, 0xF8, reg_f8);
+
+			/* Try VDRTCTL3 - might have enable bits */
+			device_printf(dev, "Trying VDRTCTL3...\n");
+			bus_write_4(sc->shim_res, 0xAC, 0x00000001);
+			DELAY(10000);
+			device_printf(dev, "  VDRTCTL3 after: 0x%08x\n",
+			    bus_read_4(sc->shim_res, 0xAC));
+
+			if (bus_space_map(mem_tag, 0xfe000000, 0x1000, 0,
+			    &scan_handle) == 0) {
+				scan_val = bus_space_read_4(mem_tag, scan_handle, 0);
+				device_printf(dev, "  BAR0[0] now: 0x%08x%s\n", scan_val,
+				    scan_val != 0xFFFFFFFF ? " <-- CHANGED!" : "");
+				bus_space_unmap(mem_tag, scan_handle, 0x1000);
+			}
+
+			/* Try VDRTCTL1 */
+			device_printf(dev, "Trying VDRTCTL1...\n");
+			bus_write_4(sc->shim_res, 0xA4, 0x00000001);
+			DELAY(10000);
+			device_printf(dev, "  VDRTCTL1 after: 0x%08x\n",
+			    bus_read_4(sc->shim_res, 0xA4));
+
+			if (bus_space_map(mem_tag, 0xfe000000, 0x1000, 0,
+			    &scan_handle) == 0) {
+				scan_val = bus_space_read_4(mem_tag, scan_handle, 0);
+				device_printf(dev, "  BAR0[0] now: 0x%08x%s\n", scan_val,
+				    scan_val != 0xFFFFFFFF ? " <-- CHANGED!" : "");
+				bus_space_unmap(mem_tag, scan_handle, 0x1000);
+			}
 		}
-		device_printf(dev, "=== END FULL PCI CONFIG DUMP ===\n");
+		device_printf(dev, "=== END EXPERIMENTS ===\n");
 
 		error = ENXIO;
 		goto fail;
