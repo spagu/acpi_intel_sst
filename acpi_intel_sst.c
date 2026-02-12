@@ -2726,27 +2726,37 @@ sst_pci_attach(device_t dev)
 		    bus_read_4(sc->shim_res, offset + 12));
 	}
 
-	/* EXPERIMENTAL: IDMA/LPSS Reset Release (Offset 0x80)
-	 * Current value: 0x40030001.
-	 * Bit 0 is set (Reset 0 released?). Bit 1 is CLEAR (Reset 1 asserted?).
-	 * Try setting Bit 1 to release secondary reset.
+	/* Explicitly toggle PCI Power State D0 -> D3 -> D0
+	 * This aims to reset the internal DSP power management logic.
 	 */
+	device_printf(dev, "Cycling PCI Power State: D0 -> D3 -> D0\n");
+	pci_set_powerstate(dev, PCI_POWERSTATE_D3);
+	DELAY(20000);
+	pci_set_powerstate(dev, PCI_POWERSTATE_D0);
+	DELAY(20000); // Wait for D0 transition
+	
+	/* Re-read Command register to ensure MEM/BM are set after D0 transition */
+	cmd = pci_read_config(dev, PCIR_COMMAND, 2);
+	if (!(cmd & PCIM_CMD_MEMEN) || !(cmd & PCIM_CMD_BUSMASTEREN)) {
+		device_printf(dev, "Restoring PCI Command after D3 cycle: 0x%04x -> MEM|BM\n", cmd);
+		pci_write_config(dev, PCIR_COMMAND, cmd | PCIM_CMD_MEMEN | PCIM_CMD_BUSMASTEREN, 2);
+	}
+
+	/* EXPERIMENTAL: Force Enable APLL in VDRTCTL2 (Keep this, it worked!) */
 	{
 		uint32_t val;
-		device_printf(dev, "Checking LPSS Reset Register (0x80)...\n");
-		val = bus_read_4(sc->shim_res, 0x80);
-		device_printf(dev, "  Reg 0x80 before: 0x%08x\n", val);
+		device_printf(dev, "Attempting to enable APLL in VDRTCTL2 (0xA8)...\n");
+		val = bus_read_4(sc->shim_res, 0xA8);
 		
-		if ((val & 0x3) != 0x3) {
-			device_printf(dev, "  Asserting Bit 1 to release reset...\n");
-			val |= 0x3; // Ensure both Bit 0 and Bit 1 are set
-			bus_write_4(sc->shim_res, 0x80, val);
-			DELAY(1000);
-			val = bus_read_4(sc->shim_res, 0x80);
-			device_printf(dev, "  Reg 0x80 after:  0x%08x\n", val);
-		} else {
-			device_printf(dev, "  Reset bits already set (0x3).\n");
-		}
+		val |= (1 << 12); // Set bit 12
+		val &= ~0xFFF;
+		val |= 0xBFF;
+		
+		bus_write_4(sc->shim_res, 0xA8, val);
+		DELAY(1000);
+		
+		val = bus_read_4(sc->shim_res, 0xA8);
+		device_printf(dev, "  VDRTCTL2 after:  0x%08x\n", val);
 	}
 
 	/* WPT Power-Up Sequence */
