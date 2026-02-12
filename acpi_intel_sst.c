@@ -50,7 +50,7 @@
 #define PCI_DEVICE_SST_BDW	0x9CB6
 #define PCI_DEVICE_SST_HSW	0x9C76 /* Haswell pending testing */
 
-#define SST_DRV_VERSION "0.21.4-BarAllocCheck"
+#define SST_DRV_VERSION "0.21.5-SramEnableCheck"
 
 /* Forward declarations */
 static int sst_acpi_probe(device_t dev);
@@ -507,16 +507,21 @@ sst_enable_sram(struct sst_softc *sc)
 	}
 
 	device_printf(sc->dev, "=== SRAM Power Enable Sequence ===\n");
+	device_printf(sc->dev, "  Using BAR0 at: 0x%lx\n", rman_get_start(sc->mem_res));
+	sst_check_sram_immediate("SRAM_ENABLE_ENTRY");
 
 	/* Check if SRAM is already accessible */
 	test_val = bus_read_4(sc->mem_res, 0);
+	sst_check_sram_immediate("AFTER_BUS_READ_SRAM0");
 	if (test_val != SST_INVALID_REG_VALUE) {
 		device_printf(sc->dev, "  SRAM already accessible: 0x%08x\n", test_val);
 		return (0);
 	}
 
 	/* Read current control register value */
+	sst_check_sram_immediate("BEFORE_BUS_READ_CTRL");
 	ctrl = bus_read_4(sc->mem_res, SST_SRAM_CTRL_OFFSET);
+	sst_check_sram_immediate("AFTER_BUS_READ_CTRL");
 	device_printf(sc->dev, "  SRAM_CTRL (0x%x) before: 0x%08x\n",
 	    SST_SRAM_CTRL_OFFSET, ctrl);
 
@@ -2207,13 +2212,17 @@ sst_acpi_attach(device_t dev)
 	    rman_get_start(sc->mem_res), rman_get_size(sc->mem_res));
 
 	/* === NEW: Enable SRAM power via control register === */
+	sst_check_sram_immediate("BEFORE_SRAM_ENABLE");
 	error = sst_enable_sram(sc);
+	sst_check_sram_immediate("AFTER_SRAM_ENABLE");
 	if (error != 0) {
 		device_printf(dev, "SRAM enable returned %d, continuing anyway\n", error);
 	}
 
 	/* Test BAR0 */
+	sst_check_sram_immediate("BEFORE_BAR0_TEST");
 	bar0_ok = sst_test_bar0(sc);
+	sst_check_sram_immediate("AFTER_BAR0_TEST");
 	device_printf(dev, "BAR0 test: %s\n",
 	    bar0_ok ? "ACCESSIBLE" : "DEAD (0xFFFFFFFF)");
 
