@@ -47,7 +47,7 @@
 #define PCI_DEVICE_SST_BDW	0x9CB6
 #define PCI_DEVICE_SST_HSW	0x9C76 /* Haswell pending testing */
 
-#define SST_DRV_VERSION "0.11.0-SRAM-NoD3"
+#define SST_DRV_VERSION "0.12.0-SRAM-MultiWrite"
 
 /* Forward declarations */
 static int sst_acpi_probe(device_t dev);
@@ -354,7 +354,7 @@ static int
 sst_enable_sram(struct sst_softc *sc)
 {
 	uint32_t ctrl, ctrl_after, test_val;
-	int retries;
+	int retries, write_attempts;
 
 	if (sc->mem_res == NULL) {
 		device_printf(sc->dev, "SRAM Enable: BAR0 not allocated\n");
@@ -363,11 +363,6 @@ sst_enable_sram(struct sst_softc *sc)
 
 	device_printf(sc->dev, "=== SRAM Power Enable Sequence ===\n");
 
-	/* Read current control register value */
-	ctrl = bus_read_4(sc->mem_res, SST_SRAM_CTRL_OFFSET);
-	device_printf(sc->dev, "  SRAM_CTRL (0x%x) before: 0x%08x\n",
-	    SST_SRAM_CTRL_OFFSET, ctrl);
-
 	/* Check if SRAM is already accessible */
 	test_val = bus_read_4(sc->mem_res, 0);
 	if (test_val != SST_INVALID_REG_VALUE) {
@@ -375,38 +370,56 @@ sst_enable_sram(struct sst_softc *sc)
 		return (0);
 	}
 
-	/* Set enable bits 0-4 */
-	ctrl |= SST_SRAM_CTRL_ENABLE;
-	bus_write_4(sc->mem_res, SST_SRAM_CTRL_OFFSET, ctrl);
+	/* Read current control register value */
+	ctrl = bus_read_4(sc->mem_res, SST_SRAM_CTRL_OFFSET);
+	device_printf(sc->dev, "  SRAM_CTRL (0x%x) before: 0x%08x\n",
+	    SST_SRAM_CTRL_OFFSET, ctrl);
 
-	/* Wait for SRAM to power up */
-	DELAY(1000);
+	/* Hardware quirk: sometimes need multiple writes to trigger state change.
+	 * When control register changes from 0x8480041f to 0x78663178,
+	 * the SRAM becomes accessible. */
+	for (write_attempts = 0; write_attempts < 5; write_attempts++) {
+		/* Set enable bits 0-4 */
+		ctrl = bus_read_4(sc->mem_res, SST_SRAM_CTRL_OFFSET);
+		ctrl |= SST_SRAM_CTRL_ENABLE;
+		bus_write_4(sc->mem_res, SST_SRAM_CTRL_OFFSET, ctrl);
 
-	/* Read back control register */
-	ctrl_after = bus_read_4(sc->mem_res, SST_SRAM_CTRL_OFFSET);
-	device_printf(sc->dev, "  SRAM_CTRL after write:  0x%08x\n", ctrl_after);
+		/* Wait for hardware to process */
+		DELAY(10000);  /* 10ms */
 
-	/* Verify SRAM is now accessible with retries */
-	for (retries = 0; retries < 10; retries++) {
+		/* Read back control register */
+		ctrl_after = bus_read_4(sc->mem_res, SST_SRAM_CTRL_OFFSET);
+		device_printf(sc->dev, "  Write %d: SRAM_CTRL = 0x%08x\n",
+		    write_attempts + 1, ctrl_after);
+
+		/* Check if control register changed (indicates hardware processed request) */
+		if (ctrl_after != ctrl && ctrl_after != 0xFFFFFFFF) {
+			device_printf(sc->dev, "  Control register changed! Checking SRAM...\n");
+
+			/* Verify SRAM is now accessible with retries */
+			for (retries = 0; retries < 10; retries++) {
+				test_val = bus_read_4(sc->mem_res, 0);
+				if (test_val != SST_INVALID_REG_VALUE) {
+					device_printf(sc->dev, "  SRAM enabled! First DWORD: 0x%08x\n",
+					    test_val);
+					device_printf(sc->dev, "  Control region (0xF0000): 0x%08x\n",
+					    bus_read_4(sc->mem_res, 0xF0000));
+					return (0);
+				}
+				DELAY(1000);
+			}
+		}
+
+		/* Also check SRAM directly after each write */
 		test_val = bus_read_4(sc->mem_res, 0);
 		if (test_val != SST_INVALID_REG_VALUE) {
-			device_printf(sc->dev, "  SRAM enabled! First DWORD: 0x%08x (retry %d)\n",
-			    test_val, retries);
-
-			/* Dump some control registers from the working region */
-			device_printf(sc->dev, "  Control region (0xF0000): 0x%08x\n",
-			    bus_read_4(sc->mem_res, 0xF0000));
-			device_printf(sc->dev, "  Control region (0xF2000): 0x%08x\n",
-			    bus_read_4(sc->mem_res, 0xF2000));
-			device_printf(sc->dev, "  DMA region (0xFE000):     0x%08x\n",
-			    bus_read_4(sc->mem_res, 0xFE000));
-
+			device_printf(sc->dev, "  SRAM accessible after write %d: 0x%08x\n",
+			    write_attempts + 1, test_val);
 			return (0);
 		}
-		DELAY(1000);
 	}
 
-	device_printf(sc->dev, "  SRAM enable FAILED - still reading 0xFFFFFFFF\n");
+	device_printf(sc->dev, "  SRAM enable FAILED after %d attempts\n", write_attempts);
 	device_printf(sc->dev, "  Final SRAM_CTRL: 0x%08x\n",
 	    bus_read_4(sc->mem_res, SST_SRAM_CTRL_OFFSET));
 
