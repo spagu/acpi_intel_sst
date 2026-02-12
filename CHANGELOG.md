@@ -5,6 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.25.0] - 2026-02-12
+
+### CRITICAL FIX: SHIM Register Access
+
+- **Root Cause Found**: SHIM registers were being read from wrong location!
+  - Old code: `sst_shim_read(sc, reg)` → BAR0 + 0xC0000 + reg
+  - CSR was reading garbage SRAM data (`0xce6b5ffb`)
+  - This is why DSP control never worked!
+
+- **Fix**: For Broadwell-U (catpt), SHIM is in **BAR1** (not BAR0+offset)
+  - `sst_shim_read/write` now uses `sc->shim_res` (BAR1) directly
+  - DSP control register is at BAR1 + 0x80 (CSR2), not 0x00
+  - BAR1 offset 0x00-0x7F is PCI config mirror
+
+- **Key Discovery from BAR1 Dump**:
+  | Offset | Value | Meaning |
+  |--------|-------|---------|
+  | 0x00 | 0x9cb68086 | PCI VID/DID (config mirror) |
+  | 0x80 | 0x40030001 | **CSR2** (bit 0 = STALL = 1) |
+  | 0xA0 | 0x00000000 | VDRTCTL0 |
+  | 0xA8 | 0x80000FFF | VDRTCTL2 |
+
+- **Updated**: All CSR access changed from `SST_SHIM_CSR` (0x00) to `SST_SHIM_CSR2` (0x80)
+  - `sst_reset()` - uses CSR2
+  - `sst_fw_boot()` - uses CSR2 for all boot steps
+  - IPC polling diagnostic - shows CSR2
+
+---
+
 ## [0.24.2] - 2026-02-12
 
 ### Added: IPC Polling Mode and Boot Diagnostics

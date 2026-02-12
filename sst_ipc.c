@@ -229,13 +229,13 @@ sst_ipc_wait_ready(struct sst_softc *sc, int timeout_ms)
 			if (sc->ipc.ready)
 				return (0);
 
-			/* Also check SHIM CSR for DSP status */
+			/* Also check SHIM CSR2 for DSP status */
 			if (elapsed % 1000 == 0) {
-				uint32_t csr = sst_shim_read(sc, SST_SHIM_CSR);
+				uint32_t csr = sst_shim_read(sc, SST_SHIM_CSR2);
 				uint32_t isr = sst_shim_read(sc, SST_SHIM_ISRX);
 				uint32_t ipcd = sst_shim_read(sc, SST_SHIM_IPCD);
 				device_printf(sc->dev,
-				    "IPC poll: CSR=0x%08x ISR=0x%08x IPCD=0x%08x\n",
+				    "IPC poll: CSR2=0x%08x ISR=0x%08x IPCD=0x%08x\n",
 				    csr, isr, ipcd);
 			}
 
