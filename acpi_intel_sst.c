@@ -2745,21 +2745,37 @@ sst_pci_attach(device_t dev)
 		}
 	}
 
-	/* EXPERIMENTAL: Force Enable APLL in VDRTCTL2 (Keep this, it worked!) */
+	/* EXPERIMENTAL: Force Enable APLL in VDRTCTL2 (Offset 0xA8)
+	 * Analysis of functioning Windows dump shows VDRTCTL2 = 0x80000FFF.
+	 * This implies Bit 31 (APLL Select?) must be set.
+	 */
 	{
-		uint32_t val;
-		device_printf(dev, "Attempting to enable APLL in VDRTCTL2 (0xA8)...\n");
-		val = bus_read_4(sc->shim_res, 0xA8);
+		uint32_t valA8;
+		device_printf(dev, "Attempting to enable APLL in VDRTCTL2 (0xA8) with Bit 31...\n");
+		valA8 = bus_read_4(sc->shim_res, 0xA8);
+		device_printf(dev, "  VDRTCTL2 before: 0x%08x\n", valA8);
 		
-		val |= (1 << 12); // Set bit 12
-		val &= ~0xFFF;
-		val |= 0xBFF;
+		valA8 |= (1 << 31); // Set Bit 31 (APLL Select)
+		// Windows has 0x80000FFF. We have 0x00000BFF.
+		// Let's try OR-ing Bit 31 only first.
 		
-		bus_write_4(sc->shim_res, 0xA8, val);
-		DELAY(1000);
+		bus_write_4(sc->shim_res, 0xA8, valA8);
+		DELAY(10000);
 		
-		val = bus_read_4(sc->shim_res, 0xA8);
-		device_printf(dev, "  VDRTCTL2 after:  0x%08x\n", val);
+		valA8 = bus_read_4(sc->shim_res, 0xA8);
+		device_printf(dev, "  VDRTCTL2 after:  0x%08x\n", valA8);
+	}
+
+	/* Try Power Up (VDRTCTL0 = 0) again */
+	{
+		uint32_t valA0 = bus_read_4(sc->shim_res, 0xA0);
+		device_printf(dev, "Attempting VDRTCTL0 Power Up after APLL fix via Bit 31...\n");
+		if ((valA0 & 0x3) != 0) {
+			bus_write_4(sc->shim_res, 0xA0, 0x00000000);
+			DELAY(10000);
+			valA0 = bus_read_4(sc->shim_res, 0xA0);
+			device_printf(dev, "  VDRTCTL0 after: 0x%08x\n", valA0);
+		}
 	}
 
 	/* WPT Power-Up Sequence */
