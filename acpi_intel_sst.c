@@ -364,7 +364,7 @@ sst_test_bar0(struct sst_softc *sc)
 static int
 sst_enable_sram_direct(device_t dev)
 {
-	volatile uint32_t *bar0_va;
+	void *bar0_va;
 	volatile uint32_t *ctrl_reg;
 	volatile uint32_t *sram_base;
 	uint32_t ctrl, test_val, ctrl_before;
@@ -375,15 +375,14 @@ sst_enable_sram_direct(device_t dev)
 	/* Map BAR0 using pmap_mapdev_attr with UNCACHED attribute.
 	 * VM_MEMATTR_UNCACHEABLE ensures writes go directly to hardware,
 	 * same as how /dev/mem works. */
-	bar0_va = (volatile uint32_t *)pmap_mapdev_attr(
-	    SST_PCI_BAR0_PHYS, 0x100000, VM_MEMATTR_UNCACHEABLE);
+	bar0_va = pmap_mapdev_attr(SST_PCI_BAR0_PHYS, 0x100000, VM_MEMATTR_UNCACHEABLE);
 	if (bar0_va == NULL) {
 		device_printf(dev, "  Failed to map BAR0 at 0x%x with pmap_mapdev_attr\n",
 		    SST_PCI_BAR0_PHYS);
 		return (ENOMEM);
 	}
 
-	sram_base = bar0_va;
+	sram_base = (volatile uint32_t *)bar0_va;
 	ctrl_reg = (volatile uint32_t *)((char *)bar0_va + SST_SRAM_CTRL_OFFSET);
 
 	/* Check initial state */
@@ -393,7 +392,7 @@ sst_enable_sram_direct(device_t dev)
 
 	if (test_val != 0xFFFFFFFF) {
 		device_printf(dev, "  SRAM already active!\n");
-		pmap_unmapdev((void *)bar0_va, 0x100000);
+		pmap_unmapdev(bar0_va, 0x100000);
 		return (0);
 	}
 
@@ -429,14 +428,14 @@ sst_enable_sram_direct(device_t dev)
 
 		if (test_val != 0xFFFFFFFF) {
 			device_printf(dev, "  SUCCESS! SRAM enabled\n");
-			pmap_unmapdev((void *)bar0_va, 0x100000);
+			pmap_unmapdev(bar0_va, 0x100000);
 			return (0);
 		}
 	}
 
 	device_printf(dev, "  FAILED: SRAM still dead after 10 attempts\n");
 	device_printf(dev, "  Final CTRL: 0x%08x\n", *ctrl_reg);
-	pmap_unmapdev((void *)bar0_va, 0x100000);
+	pmap_unmapdev(bar0_va, 0x100000);
 	return (EIO);
 }
 

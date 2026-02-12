@@ -35,9 +35,32 @@
 - ✅ LPSS private configs ALIVE (0xFE100000-0xFE106FFF decoded)
 - ✅ I2C0 comes alive after D3-to-D0 transition (DesignWare controller confirmed)
 - ✅ SDMA BAR0 accessible (0xFE101000 responds)
-- ❌ BAR0 (0xFE000000) returns 0xFFFFFFFF (separate 1MB decode window)
-- ❌ SST not visible as PCI device (hidden by IOBP PCICFGCTL PCICD bit)
+- ✅ **PCI BAR0 at 0xDF800000** - SST visible as PCI device 00:13.0 (8086:9CB6)
+- ✅ **SRAM can be enabled** via control register at BAR0+0xFB000
+- ❌ BAR0 (0xFE000000) - ACPI address returns 0xFFFFFFFF (not the real BAR)
 - ❌ HDA controller disabled by BIOS (FD bit 4 = 1)
+
+### Critical Discovery: SRAM Enable Mechanism
+
+The SST DSP SRAM requires activation before memory access works:
+
+| Register | Address | Value | Description |
+|----------|---------|-------|-------------|
+| SRAM Control | BAR0+0xFB000 | 0x8480041f | SRAM disabled (default) |
+| SRAM Control | BAR0+0xFB000 | 0x78663178 | SRAM enabled (hardware processed) |
+| SRAM Base | BAR0+0x0 | 0xFFFFFFFF | Dead (when disabled) |
+| SRAM Base | BAR0+0x0 | 0xc31883d6 | Alive (when enabled) |
+
+**Manual SRAM activation via `/dev/mem` works:**
+```bash
+# Enable SRAM (bits 0-4 set)
+printf '\x1f\x04\x80\x84' | dd of=/dev/mem bs=1 seek=$((0xdf8fb000)) conv=notrunc
+
+# Verify - should show real data, not 0xFFFFFFFF
+dd if=/dev/mem bs=4 count=1 skip=$((0xdf800000/4)) 2>/dev/null | xxd
+```
+
+**Driver writes don't trigger hardware state machine** - this is the current blocker being investigated.
 
 ---
 
