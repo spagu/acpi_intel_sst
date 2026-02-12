@@ -2726,25 +2726,27 @@ sst_pci_attach(device_t dev)
 		    bus_read_4(sc->shim_res, offset + 12));
 	}
 
-	/* EXPERIMENTAL: Force Enable APLL in VDRTCTL2
-	 * BAR0 might be dead because the DSP clock is not running.
-	 * VDRTCTL2 [0xA8] controls the clock. Bit 12 is often APLL Select.
+	/* EXPERIMENTAL: IDMA/LPSS Reset Release (Offset 0x80)
+	 * Current value: 0x40030001.
+	 * Bit 0 is set (Reset 0 released?). Bit 1 is CLEAR (Reset 1 asserted?).
+	 * Try setting Bit 1 to release secondary reset.
 	 */
 	{
 		uint32_t val;
-		device_printf(dev, "Attempting to enable APLL in VDRTCTL2 (0xA8)...\n");
-		val = bus_read_4(sc->shim_res, 0xA8);
-		device_printf(dev, "  VDRTCTL2 before: 0x%08x\n", val);
+		device_printf(dev, "Checking LPSS Reset Register (0x80)...\n");
+		val = bus_read_4(sc->shim_res, 0x80);
+		device_printf(dev, "  Reg 0x80 before: 0x%08x\n", val);
 		
-		val |= (1 << 12); // Set bit 12
-		val &= ~0xFFF;    // Clear frequency bits (try default/safe?) - optional, acts as reset
-		val |= 0xBFF;     // Restore default freq (from logs)
-		
-		bus_write_4(sc->shim_res, 0xA8, val);
-		DELAY(1000);
-		
-		val = bus_read_4(sc->shim_res, 0xA8);
-		device_printf(dev, "  VDRTCTL2 after:  0x%08x\n", val);
+		if ((val & 0x3) != 0x3) {
+			device_printf(dev, "  Asserting Bit 1 to release reset...\n");
+			val |= 0x3; // Ensure both Bit 0 and Bit 1 are set
+			bus_write_4(sc->shim_res, 0x80, val);
+			DELAY(1000);
+			val = bus_read_4(sc->shim_res, 0x80);
+			device_printf(dev, "  Reg 0x80 after:  0x%08x\n", val);
+		} else {
+			device_printf(dev, "  Reset bits already set (0x3).\n");
+		}
 	}
 
 	/* WPT Power-Up Sequence */
