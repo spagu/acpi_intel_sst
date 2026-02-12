@@ -26,10 +26,15 @@
 #define SST_DRAM_OFFSET		0x80000		/* Data RAM */
 #define SST_DRAM_SIZE		0x28000		/* 160KB */
 /*
- * SHIM registers at offset 0xC0000 within LPE memory (BAR0)
+ * SHIM registers within LPE memory (BAR0)
  * Note: Power gating must be disabled first via PCI config (VDRTCTL0)
+ *
+ * SHIM offset varies by platform:
+ *   - Haswell (HSW): 0x0       (SHIM at beginning of BAR0)
+ *   - Broadwell-U (WPT): 0xE7000 (from Linux catpt driver wpt_spec)
+ *   - Skylake+: 0xC0000
  */
-#define SST_SHIM_OFFSET		0xC0000		/* SHIM registers */
+#define SST_SHIM_OFFSET		0xE7000		/* WPT/Broadwell-U SHIM offset */
 
 /*
  * PCI Extended Config registers (accessed via BAR1 / shim_res)

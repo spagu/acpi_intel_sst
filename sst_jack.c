@@ -38,7 +38,7 @@ sst_jack_gpio_read(struct sst_softc *sc, int gpio)
 	 */
 
 	/* Read GPIO data register from SHIM area */
-	val = sst_shim_read(sc, SST_SHIM_CSR2);
+	val = sst_shim_read(sc, SST_SHIM_CSR);
 
 	/* Extract GPIO bit */
 	return ((val >> (gpio + 8)) & 1);
@@ -55,7 +55,7 @@ sst_jack_gpio_write(struct sst_softc *sc, int gpio, int value)
 	mask = 1U << (gpio + 8);
 	val = value ? mask : 0;
 
-	sst_shim_update_bits(sc, SST_SHIM_CSR2, mask, val);
+	sst_shim_update_bits(sc, SST_SHIM_CSR, mask, val);
 }
 
 /*

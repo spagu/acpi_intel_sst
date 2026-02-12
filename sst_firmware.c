@@ -379,26 +379,26 @@ sst_fw_boot(struct sst_softc *sc)
 	device_printf(sc->dev, "Booting DSP...\n");
 
 	/*
-	 * For Broadwell-U (catpt), use CSR2 at offset 0x80 (not CSR at 0x00).
-	 * BAR1 offset 0x00-0x7F is PCI config mirror, actual DSP control is at 0x80.
+	 * For Broadwell-U (WPT/catpt), SHIM is at BAR0+0xE7000.
+	 * CSR (Control/Status Register) is at SHIM offset 0x00.
 	 */
 
-	/* Read initial CSR2 state */
-	csr = sst_shim_read(sc, SST_SHIM_CSR2);
-	device_printf(sc->dev, "  Initial CSR2: 0x%08x\n", csr);
+	/* Read initial CSR state */
+	csr = sst_shim_read(sc, SST_SHIM_CSR);
+	device_printf(sc->dev, "  Initial CSR: 0x%08x\n", csr);
 
 	/* 1. Ensure DSP is in reset and stalled */
 	csr |= (SST_CSR_RST | SST_CSR_STALL);
-	sst_shim_write(sc, SST_SHIM_CSR2, csr);
+	sst_shim_write(sc, SST_SHIM_CSR, csr);
 	DELAY(SST_RESET_DELAY_US);
-	csr = sst_shim_read(sc, SST_SHIM_CSR2);
+	csr = sst_shim_read(sc, SST_SHIM_CSR);
 	device_printf(sc->dev, "  After RST+STALL: 0x%08x\n", csr);
 
 	/* 2. Clear reset but keep stall (allows memory access) */
 	csr &= ~SST_CSR_RST;
-	sst_shim_write(sc, SST_SHIM_CSR2, csr);
+	sst_shim_write(sc, SST_SHIM_CSR, csr);
 	DELAY(SST_RESET_DELAY_US);
-	csr = sst_shim_read(sc, SST_SHIM_CSR2);
+	csr = sst_shim_read(sc, SST_SHIM_CSR);
 	device_printf(sc->dev, "  After clear RST: 0x%08x\n", csr);
 
 	/* 3. Unmask IPC interrupts */
@@ -407,11 +407,11 @@ sst_fw_boot(struct sst_softc *sc)
 	device_printf(sc->dev, "  IMRX/IMRD unmasked\n");
 
 	/* 4. Clear stall - DSP starts running */
-	csr = sst_shim_read(sc, SST_SHIM_CSR2);
+	csr = sst_shim_read(sc, SST_SHIM_CSR);
 	csr &= ~SST_CSR_STALL;
-	sst_shim_write(sc, SST_SHIM_CSR2, csr);
+	sst_shim_write(sc, SST_SHIM_CSR, csr);
 	DELAY(1000); /* Small delay before reading back */
-	csr = sst_shim_read(sc, SST_SHIM_CSR2);
+	csr = sst_shim_read(sc, SST_SHIM_CSR);
 	device_printf(sc->dev, "  After clear STALL: 0x%08x (DSP should run)\n", csr);
 
 	device_printf(sc->dev, "DSP running, waiting for ready...\n");
@@ -421,9 +421,9 @@ sst_fw_boot(struct sst_softc *sc)
 	if (error) {
 		device_printf(sc->dev, "DSP boot timeout\n");
 		/* Reset DSP on failure */
-		csr = sst_shim_read(sc, SST_SHIM_CSR2);
+		csr = sst_shim_read(sc, SST_SHIM_CSR);
 		csr |= (SST_CSR_RST | SST_CSR_STALL);
-		sst_shim_write(sc, SST_SHIM_CSR2, csr);
+		sst_shim_write(sc, SST_SHIM_CSR, csr);
 		return (error);
 	}
 

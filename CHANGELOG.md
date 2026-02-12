@@ -5,32 +5,45 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.26.0] - 2026-02-12
+
+### CRITICAL FIX: Correct SHIM Offset for WPT/Broadwell
+
+- **Root Cause Found**: SHIM offset was wrong for WPT (Broadwell-U)!
+  - Old offset: 0xC0000 (for Skylake+)
+  - Correct offset for WPT: **0xE7000** (from Linux catpt driver `wpt_spec`)
+  - BAR1+0x80 is LPSS private status register, NOT DSP control!
+
+- **Fix**: Updated SHIM offset and access
+  - `SST_SHIM_OFFSET` changed from 0xC0000 to **0xE7000**
+  - `sst_shim_read/write` reverted to use BAR0 (mem_res) + offset
+  - Back to using `SST_SHIM_CSR` (offset 0x00 within SHIM)
+
+- **Key Insight from Linux catpt driver**:
+  ```c
+  static const struct catpt_spec wpt_spec = {
+      .shim_offset = 0xe7000,  /* WPT SHIM offset in BAR0 */
+      ...
+  };
+  ```
+
+- **Memory Layout for WPT/Broadwell-U**:
+  | Region | BAR | Offset | Size |
+  |--------|-----|--------|------|
+  | IRAM | BAR0 | 0x00000 | 80KB |
+  | DRAM | BAR0 | 0x80000 | 160KB |
+  | SHIM | BAR0 | **0xE7000** | 4KB |
+  | LPSS Private | BAR1 | 0x00 | 4KB |
+
+---
+
 ## [0.25.0] - 2026-02-12
 
-### CRITICAL FIX: SHIM Register Access
+### Attempted Fix: BAR1 for SHIM (Incorrect)
 
-- **Root Cause Found**: SHIM registers were being read from wrong location!
-  - Old code: `sst_shim_read(sc, reg)` → BAR0 + 0xC0000 + reg
-  - CSR was reading garbage SRAM data (`0xce6b5ffb`)
-  - This is why DSP control never worked!
-
-- **Fix**: For Broadwell-U (catpt), SHIM is in **BAR1** (not BAR0+offset)
-  - `sst_shim_read/write` now uses `sc->shim_res` (BAR1) directly
-  - DSP control register is at BAR1 + 0x80 (CSR2), not 0x00
-  - BAR1 offset 0x00-0x7F is PCI config mirror
-
-- **Key Discovery from BAR1 Dump**:
-  | Offset | Value | Meaning |
-  |--------|-------|---------|
-  | 0x00 | 0x9cb68086 | PCI VID/DID (config mirror) |
-  | 0x80 | 0x40030001 | **CSR2** (bit 0 = STALL = 1) |
-  | 0xA0 | 0x00000000 | VDRTCTL0 |
-  | 0xA8 | 0x80000FFF | VDRTCTL2 |
-
-- **Updated**: All CSR access changed from `SST_SHIM_CSR` (0x00) to `SST_SHIM_CSR2` (0x80)
-  - `sst_reset()` - uses CSR2
-  - `sst_fw_boot()` - uses CSR2 for all boot steps
-  - IPC polling diagnostic - shows CSR2
+- Tried using BAR1 for SHIM access - didn't work
+- BAR1+0x80 is LPSS private status, read-only (`0x40030001`)
+- Writes to CSR2 at BAR1+0x80 have no effect
 
 ---
 

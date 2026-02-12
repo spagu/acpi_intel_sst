@@ -110,24 +110,24 @@ struct sst_softc {
 /*
  * Register Access Helpers
  *
- * For Broadwell-U (WPT/catpt), SHIM registers are in BAR1 (shim_res):
- *   - CSR2 at offset 0x80, IPCX at 0x38, IPCD at 0x40, etc.
+ * For Broadwell-U (WPT/catpt), SHIM registers are in BAR0 at offset 0xE7000.
+ * This is from Linux catpt driver wpt_spec.shim_offset.
  *
- * Note: The original SST_SHIM_OFFSET (0xC0000) was for different platforms.
- * Broadwell-U uses BAR1 directly for SHIM registers.
+ * Note: BAR1 contains LPSS private registers (power/clock control),
+ * but the actual SHIM (CSR, IPC, etc.) is within BAR0.
  */
 static inline uint32_t
 sst_shim_read(struct sst_softc *sc, uint32_t reg)
 {
-	/* Broadwell-U: SHIM registers are in BAR1 (LPSS Private) */
-	return (bus_read_4(sc->shim_res, reg));
+	/* WPT/Broadwell-U: SHIM at BAR0 + 0xE7000 */
+	return (bus_read_4(sc->mem_res, SST_SHIM_OFFSET + reg));
 }
 
 static inline void
 sst_shim_write(struct sst_softc *sc, uint32_t reg, uint32_t val)
 {
-	/* Broadwell-U: SHIM registers are in BAR1 (LPSS Private) */
-	bus_write_4(sc->shim_res, reg, val);
+	/* WPT/Broadwell-U: SHIM at BAR0 + 0xE7000 */
+	bus_write_4(sc->mem_res, SST_SHIM_OFFSET + reg, val);
 }
 
 static inline void

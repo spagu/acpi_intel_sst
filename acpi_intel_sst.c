@@ -50,7 +50,7 @@
 #define PCI_DEVICE_SST_BDW	0x9CB6
 #define PCI_DEVICE_SST_HSW	0x9C76 /* Haswell pending testing */
 
-#define SST_DRV_VERSION "0.25.0-BAR1-SHIM"
+#define SST_DRV_VERSION "0.26.0-SHIM-0xE7000"
 
 /* Forward declarations */
 static int sst_acpi_probe(device_t dev);
@@ -115,10 +115,10 @@ sst_reset(struct sst_softc *sc)
 	uint32_t csr;
 
 	device_printf(sc->dev, "Resetting DSP...\n");
-	/* Broadwell-U: Use CSR2 at offset 0x80, not CSR at 0x00 */
-	csr = sst_shim_read(sc, SST_SHIM_CSR2);
+	/* CSR at SHIM offset 0x00 (SHIM base is BAR0+0xE7000 for WPT) */
+	csr = sst_shim_read(sc, SST_SHIM_CSR);
 	csr |= (SST_CSR_RST | SST_CSR_STALL);
-	sst_shim_write(sc, SST_SHIM_CSR2, csr);
+	sst_shim_write(sc, SST_SHIM_CSR, csr);
 	DELAY(SST_RESET_DELAY_US);
 }
 
@@ -2199,7 +2199,7 @@ sst_acpi_attach(device_t dev)
 		    SST_MBOX_OUTBOX_OFFSET,
 		    bus_read_4(sc->mem_res, SST_MBOX_OUTBOX_OFFSET));
 
-		csr = sst_shim_read(sc, SST_SHIM_CSR2);
+		csr = sst_shim_read(sc, SST_SHIM_CSR);
 		device_printf(dev, "  SHIM CSR2: 0x%08x\n", csr);
 
 		/* Continue with full DSP initialization... */
