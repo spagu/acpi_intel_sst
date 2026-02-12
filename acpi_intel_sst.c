@@ -1228,6 +1228,62 @@ sst_acpi_attach(device_t dev)
 					}
 
 					bus_space_unmap(mem_tag, rcba_handle, 0x4000);
+				}
+
+				/*
+				 * Check P2SB (Primary to Sideband Bridge) - PCI 00:1f.1
+				 * On Broadwell, this might control access to internal devices
+				 * P2SB has a "hide" bit that makes it invisible
+				 */
+				device_printf(dev, "  === P2SB / LPC SCAN ===\n");
+				{
+					/* LPC Bridge at 00:1f.0 */
+					uint32_t lpc_vid = pci_cfgregread(0, 0, 31, 0, 0x00, 4);
+					device_printf(dev, "  LPC (00:1f.0) VID/DID: 0x%08x\n", lpc_vid);
+
+					/* Check for P2SB at 00:1f.1 */
+					uint32_t p2sb_vid = pci_cfgregread(0, 0, 31, 1, 0x00, 4);
+					device_printf(dev, "  P2SB (00:1f.1) VID/DID: 0x%08x\n", p2sb_vid);
+
+					if (p2sb_vid == 0xFFFFFFFF) {
+						device_printf(dev, "  P2SB hidden! Trying to unhide...\n");
+						/*
+						 * P2SB hide is controlled by register 0xE1 in P2SB config
+						 * We need to write 0 to unhide, but can't if it's hidden!
+						 * Try via LPC register at 0xE0-0xE4
+						 */
+						uint32_t lpc_e0 = pci_cfgregread(0, 0, 31, 0, 0xE0, 4);
+						device_printf(dev, "  LPC [0xE0]: 0x%08x\n", lpc_e0);
+					}
+
+					/* Check hidden PCI device at slot 19 (ADSP PCI location) */
+					uint32_t adsp_pci = pci_cfgregread(0, 0, 19, 0, 0x00, 4);
+					device_printf(dev, "  ADSP PCI (00:13.0) VID/DID: 0x%08x\n", adsp_pci);
+
+					/* Also check slot 20 */
+					uint32_t dev20 = pci_cfgregread(0, 0, 20, 0, 0x00, 4);
+					device_printf(dev, "  PCI 00:14.0 VID/DID: 0x%08x\n", dev20);
+
+					/* Scan all PCI devices on bus 0 */
+					device_printf(dev, "  === PCI Bus 0 Device Scan ===\n");
+					int slot, func;
+					for (slot = 0; slot < 32; slot++) {
+						for (func = 0; func < 8; func++) {
+							uint32_t vid = pci_cfgregread(0, 0, slot, func, 0x00, 4);
+							if (vid != 0xFFFFFFFF && vid != 0x00000000) {
+								uint32_t class = pci_cfgregread(0, 0, slot, func, 0x08, 4);
+								device_printf(dev, "    %02d:%d VID/DID=0x%08x Class=0x%08x\n",
+								    slot, func, vid, class >> 8);
+							}
+							if (func == 0) {
+								/* Check if multi-function */
+								uint8_t hdr = pci_cfgregread(0, 0, slot, 0, 0x0E, 1);
+								if ((hdr & 0x80) == 0)
+									break; /* Single function */
+							}
+						}
+					}
+				}
 				} else {
 					device_printf(dev, "  Failed to map RCBA at 0x%llx\n",
 					    (unsigned long long)rcba_base);
