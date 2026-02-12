@@ -1292,12 +1292,16 @@ sst_acpi_attach(device_t dev)
 				device_printf(dev, "  === ALTERNATIVE MEMORY PROBE ===\n");
 				{
 					uint64_t alt_addrs[] = {
+						0xfe100000,  /* SST BAR1 - WORKS */
+						0xfe101000,  /* SST BAR1 + 0x1000 */
+						0xfe102000,  /* Near I2C0 */
+						0xfe103000,  /* I2C0 - ig4iic fails here! */
+						0xfe104000,  /* Between I2C */
+						0xfe105000,  /* I2C1 - ig4iic fails here! */
+						0xfe106000,  /* After I2C */
+						0xfe000000,  /* SST BAR0 */
 						0xfce00000,  /* From RCBA [0x341c] */
 						0xfed04000,  /* From RCBA [0x3450] */
-						0xfe000004,  /* BAR0 + 4 (skip first dword) */
-						0xfe010000,  /* 64KB into BAR0 region */
-						0xfe080000,  /* IRAM area */
-						0xfe0c0000,  /* SHIM area */
 					};
 					int i;
 					bus_space_tag_t test_tag = X86_BUS_SPACE_MEM;
@@ -1308,14 +1312,20 @@ sst_acpi_attach(device_t dev)
 						    &test_h) == 0) {
 							uint32_t v0 = bus_space_read_4(test_tag, test_h, 0);
 							uint32_t v4 = bus_space_read_4(test_tag, test_h, 4);
-							if (v0 != 0xFFFFFFFF || v4 != 0xFFFFFFFF) {
-								device_printf(dev, "    0x%llx: [0]=0x%08x [4]=0x%08x",
-								    (unsigned long long)alt_addrs[i], v0, v4);
-								if (v0 == 0x9CB68086)
-									device_printf(dev, " <-- SST!");
-								device_printf(dev, "\n");
-							}
+							/* Show ALL addresses to see the pattern */
+							device_printf(dev, "    0x%llx: [0]=0x%08x [4]=0x%08x",
+							    (unsigned long long)alt_addrs[i], v0, v4);
+							if (v0 == 0x9CB68086)
+								device_printf(dev, " <-- SST PCI!");
+							else if (v0 == 0xFFFFFFFF)
+								device_printf(dev, " <-- DEAD");
+							else
+								device_printf(dev, " <-- LIVE!");
+							device_printf(dev, "\n");
 							bus_space_unmap(test_tag, test_h, 0x100);
+						} else {
+							device_printf(dev, "    0x%llx: MAP FAILED\n",
+							    (unsigned long long)alt_addrs[i]);
 						}
 					}
 				}
