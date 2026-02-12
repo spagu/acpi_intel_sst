@@ -2653,7 +2653,7 @@ static int
 sst_pci_attach(device_t dev)
 {
 	struct sst_softc *sc;
-	uint32_t csr;
+
 	int error = 0;
 	bool bar0_ok;
 
