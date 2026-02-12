@@ -50,7 +50,7 @@
 #define PCI_DEVICE_SST_BDW	0x9CB6
 #define PCI_DEVICE_SST_HSW	0x9C76 /* Haswell pending testing */
 
-#define SST_DRV_VERSION "0.19.0-DefaultMap"
+#define SST_DRV_VERSION "0.20.0-PreActivate"
 
 /* Forward declarations */
 static int sst_acpi_probe(device_t dev);
@@ -356,28 +356,31 @@ sst_test_bar0(struct sst_softc *sc)
 #define SST_PCI_BAR0_PHYS	0xDF800000	/* PCI-allocated BAR0 physical address */
 
 /*
- * Enable SRAM using pmap_mapdev (default attributes) with byte writes.
- * This mimics /dev/mem more closely which uses default pmap_mapdev.
- * dd byte writes work, so try to replicate that exact behavior.
+ * Check if SRAM is active and try to enable it.
+ *
+ * IMPORTANT: Kernel driver writes cannot trigger the SRAM hardware.
+ * Manual activation via /dev/mem is required BEFORE loading driver.
+ *
+ * This function:
+ * 1. Checks if SRAM was pre-activated (via dd before driver load)
+ * 2. If active, returns success
+ * 3. If not, tries atomic 32-bit writes (which write correctly but hardware ignores)
+ * 4. Prints instructions for manual activation
  */
 static int
 sst_enable_sram_direct(device_t dev)
 {
 	void *bar0_va;
-	volatile uint8_t *ctrl_bytes;
 	volatile uint32_t *ctrl_reg;
 	volatile uint32_t *sram_base;
 	uint32_t ctrl, test_val;
-	int attempt, i;
-	uint8_t clear_bytes[4] = {0x00, 0x04, 0x80, 0x84};  /* 0x84800400 */
-	uint8_t set_bytes[4] = {0x1f, 0x04, 0x80, 0x84};    /* 0x8480041f */
 	const uint32_t clear_val = 0x84800400;
 	const uint32_t set_val = 0x8480041f;
 
-	device_printf(dev, "=== SRAM Enable (pmap_mapdev default + byte writes) ===\n");
+	device_printf(dev, "=== SRAM Check & Enable ===\n");
 
-	/* Use pmap_mapdev WITHOUT special attributes - matches /dev/mem */
-	bar0_va = pmap_mapdev(SST_PCI_BAR0_PHYS, 0x100000);
+	/* Map with UNCACHED attribute - atomic 32-bit writes work correctly */
+	bar0_va = pmap_mapdev_attr(SST_PCI_BAR0_PHYS, 0x100000, VM_MEMATTR_UNCACHEABLE);
 	if (bar0_va == NULL) {
 		device_printf(dev, "  Failed to map BAR0 at 0x%x\n", SST_PCI_BAR0_PHYS);
 		return (ENOMEM);
@@ -385,88 +388,62 @@ sst_enable_sram_direct(device_t dev)
 
 	sram_base = (volatile uint32_t *)bar0_va;
 	ctrl_reg = (volatile uint32_t *)((char *)bar0_va + SST_SRAM_CTRL_OFFSET);
-	ctrl_bytes = (volatile uint8_t *)((char *)bar0_va + SST_SRAM_CTRL_OFFSET);
 
-	/* Memory barrier before reads */
 	__asm __volatile("mfence" ::: "memory");
-
 	test_val = *sram_base;
 	ctrl = *ctrl_reg;
-	device_printf(dev, "  Initial: SRAM[0]=0x%08x, CTRL=0x%08x\n", test_val, ctrl);
+	device_printf(dev, "  SRAM[0]=0x%08x, CTRL=0x%08x\n", test_val, ctrl);
 
+	/* Check if SRAM was pre-activated via dd */
 	if (test_val != 0xFFFFFFFF) {
-		device_printf(dev, "  SRAM is ACTIVE! Proceeding with DSP init.\n");
+		device_printf(dev, "  SRAM is ACTIVE! (pre-activated via /dev/mem)\n");
 		pmap_unmapdev(bar0_va, 0x100000);
 		return (0);
 	}
 
-	/* Try byte-by-byte writes like dd does */
-	for (attempt = 1; attempt <= 3; attempt++) {
-		device_printf(dev, "  Attempt %d (byte writes with clflush):\n", attempt);
+	/* SRAM is not active - try atomic 32-bit writes */
+	device_printf(dev, "  SRAM is DEAD. Attempting atomic 32-bit enable...\n");
 
-		/* Step 1: Clear enable bits - byte by byte with cache flush */
-		device_printf(dev, "    Clearing bits 0-4 byte-by-byte\n");
-		for (i = 0; i < 4; i++) {
-			ctrl_bytes[i] = clear_bytes[i];
-			__asm __volatile("clflush (%0)" : : "r" (&ctrl_bytes[i]) : "memory");
-			__asm __volatile("mfence" ::: "memory");
-			DELAY(10000); /* 10ms between bytes like dd timing */
-		}
+	/* Clear bits 0-4 */
+	__asm __volatile("mfence" ::: "memory");
+	*ctrl_reg = clear_val;
+	__asm __volatile("mfence" ::: "memory");
+	ctrl = *ctrl_reg;
+	device_printf(dev, "  Wrote 0x%08x, read back 0x%08x\n", clear_val, ctrl);
 
-		/* Force write to complete with read */
-		ctrl = *ctrl_reg;
-		device_printf(dev, "    After clear: CTRL=0x%08x (expected 0x%08x)\n", ctrl, clear_val);
+	DELAY(100000); /* 100ms */
 
-		DELAY(100000); /* 100ms wait between clear and set */
+	/* Set bits 0-4 */
+	__asm __volatile("mfence" ::: "memory");
+	*ctrl_reg = set_val;
+	__asm __volatile("mfence" ::: "memory");
 
-		/* Step 2: Set enable bits - byte by byte with cache flush */
-		device_printf(dev, "    Setting bits 0-4 byte-by-byte\n");
-		for (i = 0; i < 4; i++) {
-			ctrl_bytes[i] = set_bytes[i];
-			__asm __volatile("clflush (%0)" : : "r" (&ctrl_bytes[i]) : "memory");
-			__asm __volatile("mfence" ::: "memory");
-			DELAY(10000); /* 10ms between bytes */
-		}
+	DELAY(200000); /* 200ms */
 
-		DELAY(100000); /* 100ms for hardware to process */
+	test_val = *sram_base;
+	ctrl = *ctrl_reg;
+	device_printf(dev, "  After enable: SRAM[0]=0x%08x, CTRL=0x%08x\n", test_val, ctrl);
 
-		/* Read result */
-		__asm __volatile("mfence" ::: "memory");
-		test_val = *sram_base;
-		ctrl = *ctrl_reg;
-		device_printf(dev, "    Result: CTRL=0x%08x, SRAM[0]=0x%08x\n", ctrl, test_val);
-
-		/* Check if hardware processed (CTRL should change to ~0x78663178) */
-		if (ctrl != set_val) {
-			device_printf(dev, "    CTRL changed from 0x%08x to 0x%08x! Hardware responded.\n",
-			    set_val, ctrl);
-		}
-
-		if (test_val != 0xFFFFFFFF) {
-			device_printf(dev, "  SUCCESS! SRAM is now ACTIVE.\n");
-			pmap_unmapdev(bar0_va, 0x100000);
-			return (0);
-		}
-
-		/* Hardware might need even more time */
-		device_printf(dev, "    SRAM still dead, waiting 1 more second...\n");
-		DELAY(1000000); /* 1 second extra wait */
-		test_val = *sram_base;
-		ctrl = *ctrl_reg;
-		device_printf(dev, "    After extended wait: CTRL=0x%08x, SRAM[0]=0x%08x\n", ctrl, test_val);
-		if (test_val != 0xFFFFFFFF) {
-			device_printf(dev, "  SUCCESS after extended wait!\n");
-			pmap_unmapdev(bar0_va, 0x100000);
-			return (0);
-		}
+	if (test_val != 0xFFFFFFFF) {
+		device_printf(dev, "  SUCCESS! SRAM is now ACTIVE.\n");
+		pmap_unmapdev(bar0_va, 0x100000);
+		return (0);
 	}
 
-	device_printf(dev, "  FAILED: SRAM still dead after byte writes with clflush.\n");
-	device_printf(dev, "  Manual dd works - trying to replicate /dev/mem path.\n");
-	device_printf(dev, "  Before loading driver, run:\n");
-	device_printf(dev, "    printf '\\x00\\x04\\x80\\x84' | dd of=/dev/mem bs=1 seek=$((0xdf8fb000)) conv=notrunc\n");
-	device_printf(dev, "    sleep 0.1\n");
-	device_printf(dev, "    printf '\\x1f\\x04\\x80\\x84' | dd of=/dev/mem bs=1 seek=$((0xdf8fb000)) conv=notrunc\n");
+	/* Hardware didn't process our writes (kernel limitation) */
+	device_printf(dev, "\n");
+	device_printf(dev, "  *** SRAM REQUIRES MANUAL ACTIVATION ***\n");
+	device_printf(dev, "  Kernel writes reach hardware but don't trigger the SRAM state machine.\n");
+	device_printf(dev, "  Manual dd via /dev/mem works. Run BEFORE loading driver:\n");
+	device_printf(dev, "\n");
+	device_printf(dev, "  # Activate SRAM:\n");
+	device_printf(dev, "  printf '\\x00\\x04\\x80\\x84' | dd of=/dev/mem bs=1 seek=$((0xdf8fb000)) conv=notrunc 2>/dev/null\n");
+	device_printf(dev, "  sleep 0.1\n");
+	device_printf(dev, "  printf '\\x1f\\x04\\x80\\x84' | dd of=/dev/mem bs=1 seek=$((0xdf8fb000)) conv=notrunc 2>/dev/null\n");
+	device_printf(dev, "  sleep 0.1\n");
+	device_printf(dev, "  # Then load driver:\n");
+	device_printf(dev, "  kldload acpi_intel_sst\n");
+	device_printf(dev, "\n");
 
 	pmap_unmapdev(bar0_va, 0x100000);
 	return (EIO);

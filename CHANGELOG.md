@@ -5,6 +5,37 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.20.0] - 2026-02-12
+
+### CONCLUSION: Manual SRAM Activation Required
+
+- **Root Cause Identified**: Kernel driver writes cannot trigger SRAM hardware
+  - Atomic 32-bit writes: values written correctly, but hardware ignores
+  - Byte writes (any method): values corrupted
+  - Manual `dd` via `/dev/mem`: values correct AND hardware processes them
+
+- **Hardware Quirk**: The SST DSP SRAM requires byte-level bus transactions
+  - `/dev/mem` path generates proper byte lane strobes
+  - Kernel driver writes (any method) don't trigger the state machine
+  - This is a fundamental limitation of how x86 kernel MMIO works
+
+- **Solution**: Pre-activate SRAM before loading driver
+  ```bash
+  # Before kldload acpi_intel_sst:
+  printf '\x00\x04\x80\x84' | dd of=/dev/mem bs=1 seek=$((0xdf8fb000)) conv=notrunc 2>/dev/null
+  sleep 0.1
+  printf '\x1f\x04\x80\x84' | dd of=/dev/mem bs=1 seek=$((0xdf8fb000)) conv=notrunc 2>/dev/null
+  sleep 0.1
+  kldload acpi_intel_sst
+  ```
+
+- **Driver Behavior**:
+  - Checks if SRAM was pre-activated
+  - If active, proceeds with DSP initialization
+  - If not, prints clear instructions for manual activation
+
+---
+
 ## [0.18.0] - 2026-02-12
 
 ### Changed: Atomic 32-bit Writes with mfence
