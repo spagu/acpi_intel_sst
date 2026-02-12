@@ -3293,8 +3293,8 @@ sst_acpi_resume(device_t dev)
  * ================================================================ */
 
 
+/* DISABLED: ACPI driver causes SRAM reset when both drivers are active
 static device_method_t sst_methods[] = {
-	/* ACPI probe/attach */
 	DEVMETHOD(device_probe,		sst_acpi_probe),
 	DEVMETHOD(device_attach,	sst_acpi_attach),
 	DEVMETHOD(device_detach,	sst_acpi_detach),
@@ -3308,6 +3308,7 @@ static driver_t sst_driver = {
 	sst_methods,
 	sizeof(struct sst_softc),
 };
+*/
 
 static device_method_t sst_pci_methods[] = {
 	/* PCI probe/attach */
