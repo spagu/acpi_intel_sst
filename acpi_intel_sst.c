@@ -47,7 +47,7 @@
 #define PCI_DEVICE_SST_BDW	0x9CB6
 #define PCI_DEVICE_SST_HSW	0x9C76 /* Haswell pending testing */
 
-#define SST_DRV_VERSION "0.9.0-PCI"
+#define SST_DRV_VERSION "0.10.0-SRAM"
 
 /* Forward declarations */
 static int sst_acpi_probe(device_t dev);
@@ -66,6 +66,7 @@ static void sst_init(struct sst_softc *sc);
 static void sst_acpi_power_up(struct sst_softc *sc);
 static int sst_wpt_power_up(struct sst_softc *sc);
 static bool sst_test_bar0(struct sst_softc *sc);
+static int sst_enable_sram(struct sst_softc *sc);
 static int sst_try_enable_hda(struct sst_softc *sc);
 static int sst_try_enable_adsp(struct sst_softc *sc) __unused;
 static void sst_probe_i2c_codec(struct sst_softc *sc);
@@ -338,6 +339,78 @@ sst_test_bar0(struct sst_softc *sc)
 			return (false);
 	}
 	return (true);
+}
+
+/* ================================================================
+ * Enable SRAM Power via BAR0 Control Register
+ * Discovered through RWEverything experiments - writing to offset
+ * 0xFB000 in BAR0 with bits 0-4 set enables the DSP SRAM.
+ * ================================================================ */
+
+#define SST_SRAM_CTRL_OFFSET	0xFB000
+#define SST_SRAM_CTRL_ENABLE	0x1F	/* Bits 0-4 enable SRAM */
+
+static int
+sst_enable_sram(struct sst_softc *sc)
+{
+	uint32_t ctrl, ctrl_after, test_val;
+	int retries;
+
+	if (sc->mem_res == NULL) {
+		device_printf(sc->dev, "SRAM Enable: BAR0 not allocated\n");
+		return (ENXIO);
+	}
+
+	device_printf(sc->dev, "=== SRAM Power Enable Sequence ===\n");
+
+	/* Read current control register value */
+	ctrl = bus_read_4(sc->mem_res, SST_SRAM_CTRL_OFFSET);
+	device_printf(sc->dev, "  SRAM_CTRL (0x%x) before: 0x%08x\n",
+	    SST_SRAM_CTRL_OFFSET, ctrl);
+
+	/* Check if SRAM is already accessible */
+	test_val = bus_read_4(sc->mem_res, 0);
+	if (test_val != SST_INVALID_REG_VALUE) {
+		device_printf(sc->dev, "  SRAM already accessible: 0x%08x\n", test_val);
+		return (0);
+	}
+
+	/* Set enable bits 0-4 */
+	ctrl |= SST_SRAM_CTRL_ENABLE;
+	bus_write_4(sc->mem_res, SST_SRAM_CTRL_OFFSET, ctrl);
+
+	/* Wait for SRAM to power up */
+	DELAY(1000);
+
+	/* Read back control register */
+	ctrl_after = bus_read_4(sc->mem_res, SST_SRAM_CTRL_OFFSET);
+	device_printf(sc->dev, "  SRAM_CTRL after write:  0x%08x\n", ctrl_after);
+
+	/* Verify SRAM is now accessible with retries */
+	for (retries = 0; retries < 10; retries++) {
+		test_val = bus_read_4(sc->mem_res, 0);
+		if (test_val != SST_INVALID_REG_VALUE) {
+			device_printf(sc->dev, "  SRAM enabled! First DWORD: 0x%08x (retry %d)\n",
+			    test_val, retries);
+
+			/* Dump some control registers from the working region */
+			device_printf(sc->dev, "  Control region (0xF0000): 0x%08x\n",
+			    bus_read_4(sc->mem_res, 0xF0000));
+			device_printf(sc->dev, "  Control region (0xF2000): 0x%08x\n",
+			    bus_read_4(sc->mem_res, 0xF2000));
+			device_printf(sc->dev, "  DMA region (0xFE000):     0x%08x\n",
+			    bus_read_4(sc->mem_res, 0xFE000));
+
+			return (0);
+		}
+		DELAY(1000);
+	}
+
+	device_printf(sc->dev, "  SRAM enable FAILED - still reading 0xFFFFFFFF\n");
+	device_printf(sc->dev, "  Final SRAM_CTRL: 0x%08x\n",
+	    bus_read_4(sc->mem_res, SST_SRAM_CTRL_OFFSET));
+
+	return (EIO);
 }
 
 /* ================================================================
@@ -1946,6 +2019,12 @@ sst_acpi_attach(device_t dev)
 	device_printf(dev, "BAR0: 0x%lx (size: 0x%lx)\n",
 	    rman_get_start(sc->mem_res), rman_get_size(sc->mem_res));
 
+	/* === NEW: Enable SRAM power via control register === */
+	error = sst_enable_sram(sc);
+	if (error != 0) {
+		device_printf(dev, "SRAM enable returned %d, continuing anyway\n", error);
+	}
+
 	/* Test BAR0 */
 	bar0_ok = sst_test_bar0(sc);
 	device_printf(dev, "BAR0 test: %s\n",
@@ -2803,11 +2882,17 @@ sst_pci_attach(device_t dev)
 
 	/* WPT Power-Up Sequence - SKIPPED */
 	// sst_wpt_power_up(sc);
-	
+
 	device_printf(dev, "Skipped WPT Power-Up. Final State Check:\n");
 	device_printf(dev, "  VDRTCTL0: 0x%08x\n", bus_read_4(sc->shim_res, 0xA0));
 	device_printf(dev, "  VDRTCTL2: 0x%08x\n", bus_read_4(sc->shim_res, 0xA8));
 	device_printf(dev, "  Reg 0x80: 0x%08x\n", bus_read_4(sc->shim_res, 0x80));
+
+	/* === NEW: Enable SRAM power via control register === */
+	error = sst_enable_sram(sc);
+	if (error != 0) {
+		device_printf(dev, "SRAM enable returned %d, continuing anyway\n", error);
+	}
 
 	/* Test BAR0 */
 	bar0_ok = sst_test_bar0(sc);
