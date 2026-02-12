@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.24.2] - 2026-02-12
+
+### Added: IPC Polling Mode and Boot Diagnostics
+
+- **Added**: IPC polling mode when IRQ unavailable
+  - `sst_ipc_poll_ready()` - polls IPCD/IPCX registers for DSP ready
+  - `sst_ipc_wait_ready()` now uses polling when `sc->irq_res == NULL`
+  - Prints CSR/ISR/IPCD values every second during boot wait
+
+- **Added**: DSP boot sequence diagnostics
+  - Prints CSR value at each boot step (initial, RST+STALL, clear RST, clear STALL)
+  - Helps identify where boot sequence fails
+
+---
+
 ## [0.24.1] - 2026-02-12
 
 ### Fixed: Firmware Format Detection
@@ -13,6 +28,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - IntcSST2.bin has format=254 (< 256) but uses `$SST` for modules instead of `$MOD`
   - Parser now detects nested `$SST` headers and falls back to raw binary loading
   - Raw binary loading splits firmware: first half to IRAM, second half to DRAM
+
+### Progress: DSP Boot Attempted
+
+- **Working**:
+  - All subsystems initialize successfully
+  - Jack detection works (Headphone inserted detected!)
+  - Firmware loads to DSP memory (IRAM=81920, DRAM=163840 bytes)
+  - DSP boot sequence starts
+
+- **Blocked**: DSP boot timeout (error 60 = ETIMEDOUT)
+  - DSP never signals ready via IPC
+  - Possible causes:
+    1. **IRQ not allocated** - "Failed to allocate IRQ" - IPC relies on interrupts
+    2. **Reset bit stuck** - Reg 0x80 = 0x40030001, bit 0 won't clear
+    3. **Wrong firmware split** - 50/50 IRAM/DRAM split may be incorrect
+    4. **Entry point** - Using 0x0, might need different address
+
+- **Key Register State** (BAR1 / LPSS Private):
+  | Register | Offset | Value | Notes |
+  |----------|--------|-------|-------|
+  | VDRTCTL0 | 0xA0 | 0x00000000 | Power OK |
+  | VDRTCTL2 | 0xA8 | 0x80000FFF | Clock config OK |
+  | DSP Control | 0x80 | 0x40030001 | **Bit 0 stuck** (reset?) |
+
+- **Next Steps**:
+  1. Investigate IRQ allocation failure
+  2. Find correct way to release DSP from reset (reg 0x80)
+  3. Analyze actual IntcSST2.bin firmware layout
 
 ---
 

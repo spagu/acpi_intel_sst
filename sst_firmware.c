@@ -378,26 +378,36 @@ sst_fw_boot(struct sst_softc *sc)
 
 	device_printf(sc->dev, "Booting DSP...\n");
 
-	/* 1. Ensure DSP is in reset and stalled */
+	/* Read initial CSR state */
 	csr = sst_shim_read(sc, SST_SHIM_CSR);
+	device_printf(sc->dev, "  Initial CSR: 0x%08x\n", csr);
+
+	/* 1. Ensure DSP is in reset and stalled */
 	csr |= (SST_CSR_RST | SST_CSR_STALL);
 	sst_shim_write(sc, SST_SHIM_CSR, csr);
 	DELAY(SST_RESET_DELAY_US);
+	csr = sst_shim_read(sc, SST_SHIM_CSR);
+	device_printf(sc->dev, "  After RST+STALL: 0x%08x\n", csr);
 
 	/* 2. Clear reset but keep stall (allows memory access) */
-	csr = sst_shim_read(sc, SST_SHIM_CSR);
 	csr &= ~SST_CSR_RST;
 	sst_shim_write(sc, SST_SHIM_CSR, csr);
 	DELAY(SST_RESET_DELAY_US);
+	csr = sst_shim_read(sc, SST_SHIM_CSR);
+	device_printf(sc->dev, "  After clear RST: 0x%08x\n", csr);
 
 	/* 3. Unmask IPC interrupts */
 	sst_shim_write(sc, SST_SHIM_IMRX, 0);
 	sst_shim_write(sc, SST_SHIM_IMRD, 0);
+	device_printf(sc->dev, "  IMRX/IMRD unmasked\n");
 
 	/* 4. Clear stall - DSP starts running */
 	csr = sst_shim_read(sc, SST_SHIM_CSR);
 	csr &= ~SST_CSR_STALL;
 	sst_shim_write(sc, SST_SHIM_CSR, csr);
+	DELAY(1000); /* Small delay before reading back */
+	csr = sst_shim_read(sc, SST_SHIM_CSR);
+	device_printf(sc->dev, "  After clear STALL: 0x%08x (DSP should run)\n", csr);
 
 	device_printf(sc->dev, "DSP running, waiting for ready...\n");
 

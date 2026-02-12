@@ -172,6 +172,42 @@ sst_ipc_recv(struct sst_softc *sc, uint32_t *header, void *data, size_t *size)
 }
 
 /*
+ * Poll IPC registers for DSP ready (used when IRQ unavailable)
+ */
+static int
+sst_ipc_poll_ready(struct sst_softc *sc)
+{
+	uint32_t ipcd, ipcx;
+
+	/* Check for IPC reply (DONE from DSP) */
+	ipcd = sst_shim_read(sc, SST_SHIM_IPCD);
+	if (ipcd & SST_IPC_DONE) {
+		/* Clear DONE bit */
+		sst_shim_write(sc, SST_SHIM_IPCD, ipcd & ~SST_IPC_DONE);
+
+		/* First message after boot is "ready" */
+		if (!sc->ipc.ready) {
+			sc->ipc.ready = true;
+			device_printf(sc->dev, "DSP signaled ready (polled)\n");
+		}
+		sc->ipc.msg.reply = ipcd;
+		sc->ipc.state = SST_IPC_STATE_DONE;
+		return (1);
+	}
+
+	/* Check for IPC message from DSP */
+	ipcx = sst_shim_read(sc, SST_SHIM_IPCX);
+	if (ipcx & SST_IPC_BUSY) {
+		/* Clear BUSY bit to acknowledge */
+		sst_shim_write(sc, SST_SHIM_IPCX, ipcx & ~SST_IPC_BUSY);
+		device_printf(sc->dev, "IPC: DSP message (polled): 0x%08x\n", ipcx);
+		return (1);
+	}
+
+	return (0);
+}
+
+/*
  * Wait for DSP ready signal
  */
 int
@@ -179,7 +215,38 @@ sst_ipc_wait_ready(struct sst_softc *sc, int timeout_ms)
 {
 	int timeout;
 	int error = 0;
+	int poll_interval_ms = 100;
+	int elapsed = 0;
 
+	/* If no IRQ, use polling mode */
+	if (sc->irq_res == NULL) {
+		device_printf(sc->dev, "IPC: Using polling mode (no IRQ)\n");
+
+		while (elapsed < timeout_ms) {
+			/* Poll IPC registers */
+			sst_ipc_poll_ready(sc);
+
+			if (sc->ipc.ready)
+				return (0);
+
+			/* Also check SHIM CSR for DSP status */
+			if (elapsed % 1000 == 0) {
+				uint32_t csr = sst_shim_read(sc, SST_SHIM_CSR);
+				uint32_t isr = sst_shim_read(sc, SST_SHIM_ISRX);
+				uint32_t ipcd = sst_shim_read(sc, SST_SHIM_IPCD);
+				device_printf(sc->dev,
+				    "IPC poll: CSR=0x%08x ISR=0x%08x IPCD=0x%08x\n",
+				    csr, isr, ipcd);
+			}
+
+			DELAY(poll_interval_ms * 1000);
+			elapsed += poll_interval_ms;
+		}
+
+		return (ETIMEDOUT);
+	}
+
+	/* IRQ mode - use condition variable */
 	timeout = timeout_ms * hz / 1000;
 
 	mtx_lock(&sc->ipc.lock);
