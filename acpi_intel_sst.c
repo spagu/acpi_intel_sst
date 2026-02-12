@@ -1858,11 +1858,13 @@ sst_acpi_attach(device_t dev)
 
 	device_printf(dev, "Intel SST Driver v%s loading\n", SST_DRV_VERSION);
 
-	/* ---- Phase 0: PCI BAR Fixup ----
-	 * A previous PCI rescan (e.g. from HDA enable) may have relocated
-	 * the ADSP BARs away from the ACPI-declared addresses.  Read the
-	 * current PCI config and restore them so ACPI resource allocation
-	 * maps to memory that the hardware is actually decoding. */
+	/* ---- Phase 0: PCI BAR Fixup (DISABLED for PCI Mode) ----
+	 * The ACPI driver should NOT interfere with BAR addresses if we want
+	 * the kernel PCI subsystem to handle resource allocation naturally.
+	 * The ACPI-hardcoded 0xFE000000 often conflicts or is simply wrong
+	 * compared to what the OS allocates (e.g. 0xDF800000).
+	 */
+#if 0
 	{
 		uint32_t pci_bar0, pci_bar1, pci_cmd;
 
@@ -1899,6 +1901,7 @@ sst_acpi_attach(device_t dev)
 			    pci_bar0, pci_bar1);
 		}
 	}
+#endif
 
 	/* ---- Phase 1: ACPI Power-Up ---- */
 	sst_acpi_power_up(sc);
