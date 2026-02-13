@@ -50,7 +50,7 @@
 #define PCI_DEVICE_SST_BDW	0x9CB6
 #define PCI_DEVICE_SST_HSW	0x9C76 /* Haswell pending testing */
 
-#define SST_DRV_VERSION "0.35.0-catpt-exact"
+#define SST_DRV_VERSION "0.37.0-catpt-bits-fixed"
 
 /* Forward declarations */
 static int sst_acpi_probe(device_t dev);
@@ -260,196 +260,125 @@ sst_acpi_power_up(struct sst_softc *sc)
  * ================================================================ */
 
 /*
- * sst_wpt_power_down - Full power-down (catpt_dsp_power_down)
- * Must be called before power-up to reset the power state machine.
- * Without a proper power-down, D3PGD is already set and CPA won't
- * assert because there's no 0→1 transition.
+ * sst_wpt_power_down - catpt_dsp_power_down() via BAR1
+ *
+ * Linux catpt power-down keeps D3PGD=1 (register state preserved)
+ * but clears D3SRAMPGD and gates all SRAM, then enters D3hot.
  */
 static void
 sst_wpt_power_down(struct sst_softc *sc)
 {
-	uint32_t vdrtctl0, vdrtctl2;
+	uint32_t vdrtctl0, vdrtctl2, pmcs;
 
-	device_printf(sc->dev, "  --- Power-Down sequence ---\n");
+	device_printf(sc->dev, "  --- Power-Down (catpt) ---\n");
 
-	/* 1. Disable dynamic clock gating */
+	/* 1. Disable DCLCGE */
 	vdrtctl2 = bus_read_4(sc->shim_res, SST_PCI_VDRTCTL2);
 	vdrtctl2 &= ~SST_VDRTCTL2_DCLCGE;
 	bus_write_4(sc->shim_res, SST_PCI_VDRTCTL2, vdrtctl2);
-	DELAY(50000);
 
-	/* 2. Enable ALL SRAM power gating (set PGE bits = power off SRAM) */
+	/* 2. Gate ALL SRAM (set all PGE bits) */
 	vdrtctl0 = bus_read_4(sc->shim_res, SST_PCI_VDRTCTL0);
 	vdrtctl0 |= (SST_WPT_VDRTCTL0_ISRAMPGE_MASK |
 	    SST_WPT_VDRTCTL0_DSRAMPGE_MASK);
 	bus_write_4(sc->shim_res, SST_PCI_VDRTCTL0, vdrtctl0);
-	DELAY(10000);
 
-	/* 3. Clear D3SRAMPGD and D3PGD (allow power gating in D3) */
+	/* 3. Set D3PGD=1, clear D3SRAMPGD (per Linux catpt) */
 	vdrtctl0 = bus_read_4(sc->shim_res, SST_PCI_VDRTCTL0);
-	vdrtctl0 &= ~(SST_WPT_VDRTCTL0_D3SRAMPGD |
-	    SST_WPT_VDRTCTL0_D3PGD);
+	vdrtctl0 |= SST_WPT_VDRTCTL0_D3PGD;
+	vdrtctl0 &= ~SST_WPT_VDRTCTL0_D3SRAMPGD;
 	bus_write_4(sc->shim_res, SST_PCI_VDRTCTL0, vdrtctl0);
-	DELAY(10000);
 
-	/* 4. Set APLLSE (shut down Audio PLL) */
-	vdrtctl2 = bus_read_4(sc->shim_res, SST_PCI_VDRTCTL2);
-	vdrtctl2 |= SST_VDRTCTL2_APLLSE_MASK;
-	bus_write_4(sc->shim_res, SST_PCI_VDRTCTL2, vdrtctl2);
-	DELAY(10000);
+	/* 4. Enter D3hot */
+	pmcs = bus_read_4(sc->shim_res, SST_PCI_PMCS);
+	pmcs = (pmcs & ~SST_PMCS_PS_MASK) | SST_PMCS_PS_D3;
+	bus_write_4(sc->shim_res, SST_PCI_PMCS, pmcs);
+	DELAY(50);
 
-	/* 5. Re-enable dynamic clock gating */
+	/* 5. Re-enable DCLCGE */
 	vdrtctl2 = bus_read_4(sc->shim_res, SST_PCI_VDRTCTL2);
 	vdrtctl2 |= SST_VDRTCTL2_DCLCGE;
 	bus_write_4(sc->shim_res, SST_PCI_VDRTCTL2, vdrtctl2);
-
-	/* 6. Put in D3 */
-	{
-		uint32_t pmcs = bus_read_4(sc->shim_res, SST_PCI_PMCS);
-		pmcs = (pmcs & ~SST_PMCS_PS_MASK) | SST_PMCS_PS_D3;
-		bus_write_4(sc->shim_res, SST_PCI_PMCS, pmcs);
-	}
-	DELAY(100000);	/* 100ms settle in D3 */
+	DELAY(50);
 
 	vdrtctl0 = bus_read_4(sc->shim_res, SST_PCI_VDRTCTL0);
-	vdrtctl2 = bus_read_4(sc->shim_res, SST_PCI_VDRTCTL2);
+	pmcs = bus_read_4(sc->shim_res, SST_PCI_PMCS);
 	device_printf(sc->dev,
-	    "  After power-down: VDRTCTL0=0x%08x VDRTCTL2=0x%08x PMCS=0x%08x\n",
-	    vdrtctl0, vdrtctl2,
-	    bus_read_4(sc->shim_res, SST_PCI_PMCS));
+	    "  After down: VDRTCTL0=0x%08x PMCS=0x%08x(D%d)\n",
+	    vdrtctl0, pmcs, pmcs & SST_PMCS_PS_MASK);
 }
 
+/*
+ * sst_wpt_power_up - catpt_dsp_power_up() via BAR1
+ *
+ * Exact sequence from Linux catpt dsp.c:
+ * 1. Disable DCLCGE
+ * 2. Set D0
+ * 3. Set D3PGD + D3SRAMPGD (disable power gating)
+ * 4. Clear SRAM PGE (ungate all SRAM)
+ * 5. Re-enable DCLCGE
+ *
+ * Linux does NOT poll CPA - it just sets the registers and proceeds.
+ */
 static int
 sst_wpt_power_up(struct sst_softc *sc)
 {
 	uint32_t vdrtctl0, vdrtctl2, pmcs;
-	int i;
 
 	if (sc->shim_res == NULL) {
 		device_printf(sc->dev, "WPT power-up: no BAR1 resource\n");
 		return (ENXIO);
 	}
 
-	device_printf(sc->dev, "=== WPT Full Power Cycle ===\n");
-
-	/* Read initial state */
+	/* Check for dead BAR1 */
 	vdrtctl0 = bus_read_4(sc->shim_res, SST_PCI_VDRTCTL0);
+	if (vdrtctl0 == SST_INVALID_REG_VALUE) {
+		device_printf(sc->dev,
+		    "WPT power-up: BAR1 reads 0xFFFFFFFF - bus dead\n");
+		return (ENXIO);
+	}
+
 	vdrtctl2 = bus_read_4(sc->shim_res, SST_PCI_VDRTCTL2);
 	pmcs = bus_read_4(sc->shim_res, SST_PCI_PMCS);
+	device_printf(sc->dev, "=== WPT Power Cycle (catpt-exact) ===\n");
 	device_printf(sc->dev,
 	    "  Initial: VDRTCTL0=0x%08x VDRTCTL2=0x%08x PMCS=0x%08x(D%d)\n",
 	    vdrtctl0, vdrtctl2, pmcs, pmcs & SST_PMCS_PS_MASK);
 
-	/*
-	 * Step 0: Full power-down first.
-	 * The BIOS leaves D3PGD=1 which means the 0→1 transition
-	 * that triggers the clock power-up never happens. We need to
-	 * do a proper power-down (clear D3PGD, gate SRAM, shut PLL)
-	 * then power-up from clean state.
-	 */
+	/* Power-down first (puts device in known state) */
 	sst_wpt_power_down(sc);
 
-	/*
-	 * Exact catpt_dsp_power_up() sequence from Linux:
-	 * 1. Disable DCLCGE (dynamic clock gating)
-	 * 2. Set D3PGD + D3SRAMPGD together
-	 * 3. Transition to D0
-	 * 4. Poll CPA (Clock Power Active)
-	 *
-	 * After CPA asserts:
-	 * 5. Clear ISRAMPGE/DSRAMPGE (ungate SRAM)
-	 * 6. Clear APLLSE (enable Audio PLL)
-	 * 7. Re-enable DCLCGE
-	 */
+	/* === catpt_dsp_power_up === */
 
-	/* Step 1: Disable dynamic clock gating */
+	/* 1. Disable DCLCGE */
 	vdrtctl2 = bus_read_4(sc->shim_res, SST_PCI_VDRTCTL2);
 	vdrtctl2 &= ~SST_VDRTCTL2_DCLCGE;
 	bus_write_4(sc->shim_res, SST_PCI_VDRTCTL2, vdrtctl2);
-	DELAY(50000);
 
-	vdrtctl2 = bus_read_4(sc->shim_res, SST_PCI_VDRTCTL2);
-	device_printf(sc->dev,
-	    "  Step 1 (clk gate off): VDRTCTL2=0x%08x\n", vdrtctl2);
+	/* 2. Transition to D0 */
+	pmcs = bus_read_4(sc->shim_res, SST_PCI_PMCS);
+	pmcs = (pmcs & ~SST_PMCS_PS_MASK) | SST_PMCS_PS_D0;
+	bus_write_4(sc->shim_res, SST_PCI_PMCS, pmcs);
 
-	/* Step 2: Set D3PGD + D3SRAMPGD together (Linux sets both) */
+	/* 3. Set D3PGD + D3SRAMPGD (disable power gating) */
 	vdrtctl0 = bus_read_4(sc->shim_res, SST_PCI_VDRTCTL0);
-	device_printf(sc->dev,
-	    "  Step 2 pre: VDRTCTL0=0x%08x D3PGD=%d D3SRAMPGD=%d\n",
-	    vdrtctl0,
-	    !!(vdrtctl0 & SST_WPT_VDRTCTL0_D3PGD),
-	    !!(vdrtctl0 & SST_WPT_VDRTCTL0_D3SRAMPGD));
 	vdrtctl0 |= (SST_WPT_VDRTCTL0_D3PGD |
 	    SST_WPT_VDRTCTL0_D3SRAMPGD);
 	bus_write_4(sc->shim_res, SST_PCI_VDRTCTL0, vdrtctl0);
-	DELAY(1000);
 
-	vdrtctl0 = bus_read_4(sc->shim_res, SST_PCI_VDRTCTL0);
-	device_printf(sc->dev,
-	    "  Step 2 post: VDRTCTL0=0x%08x D3PGD=%d D3SRAMPGD=%d\n",
-	    vdrtctl0,
-	    !!(vdrtctl0 & SST_WPT_VDRTCTL0_D3PGD),
-	    !!(vdrtctl0 & SST_WPT_VDRTCTL0_D3SRAMPGD));
-
-	/* Step 3: Transition to D0 (BEFORE polling CPA, per Linux) */
-	pmcs = bus_read_4(sc->shim_res, SST_PCI_PMCS);
-	device_printf(sc->dev,
-	    "  Step 3 pre: PMCS=0x%08x (D%d)\n",
-	    pmcs, pmcs & SST_PMCS_PS_MASK);
-	pmcs = (pmcs & ~SST_PMCS_PS_MASK) | SST_PMCS_PS_D0;
-	bus_write_4(sc->shim_res, SST_PCI_PMCS, pmcs);
-	DELAY(100000);	/* 100ms settle after D0 transition */
-
-	pmcs = bus_read_4(sc->shim_res, SST_PCI_PMCS);
-	device_printf(sc->dev,
-	    "  Step 3 post: PMCS=0x%08x (D%d)\n",
-	    pmcs, pmcs & SST_PMCS_PS_MASK);
-
-	/* Step 4: Poll for CPA (after D0, per Linux catpt) */
-	for (i = 0; i < 3000; i++) {
-		vdrtctl0 = bus_read_4(sc->shim_res, SST_PCI_VDRTCTL0);
-		if (vdrtctl0 & SST_WPT_VDRTCTL0_CPA)
-			break;
-		DELAY(1000);
-	}
-	device_printf(sc->dev,
-	    "  Step 4 (CPA): VDRTCTL0=0x%08x CPA=%s (%d polls)\n",
-	    vdrtctl0,
-	    (vdrtctl0 & SST_WPT_VDRTCTL0_CPA) ? "YES" : "NO", i);
-
-	if (!(vdrtctl0 & SST_WPT_VDRTCTL0_CPA)) {
-		device_printf(sc->dev, "  CPA failed! Trying without power-down...\n");
-		/*
-		 * Alternative: maybe BIOS already powered up and we just
-		 * need to skip the power-down and work with existing state.
-		 * Try setting D3PGD+D3SRAMPGD from the initial state.
-		 */
-	}
-
-	/* Step 5: Clear ALL SRAM power gate enable bits */
+	/* 4. Ungate ALL SRAM (clear PGE bits) */
 	vdrtctl0 = bus_read_4(sc->shim_res, SST_PCI_VDRTCTL0);
 	vdrtctl0 &= ~(SST_WPT_VDRTCTL0_ISRAMPGE_MASK |
 	    SST_WPT_VDRTCTL0_DSRAMPGE_MASK);
 	bus_write_4(sc->shim_res, SST_PCI_VDRTCTL0, vdrtctl0);
-	DELAY(50000);
 
-	vdrtctl0 = bus_read_4(sc->shim_res, SST_PCI_VDRTCTL0);
-	device_printf(sc->dev,
-	    "  Step 5 (SRAM ungate): VDRTCTL0=0x%08x\n", vdrtctl0);
-
-	/* Step 6: Enable Audio PLL (clear APLLSE) */
-	vdrtctl2 = bus_read_4(sc->shim_res, SST_PCI_VDRTCTL2);
-	if (vdrtctl2 & SST_VDRTCTL2_APLLSE_MASK) {
-		vdrtctl2 &= ~SST_VDRTCTL2_APLLSE_MASK;
-		bus_write_4(sc->shim_res, SST_PCI_VDRTCTL2, vdrtctl2);
-		DELAY(100000);
-		device_printf(sc->dev, "  Step 6: Audio PLL enabled\n");
-	}
-
-	/* Step 7: Re-enable dynamic clock gating */
+	/* 5. Re-enable DCLCGE */
 	vdrtctl2 = bus_read_4(sc->shim_res, SST_PCI_VDRTCTL2);
 	vdrtctl2 |= SST_VDRTCTL2_DCLCGE;
 	bus_write_4(sc->shim_res, SST_PCI_VDRTCTL2, vdrtctl2);
+
+	/* Allow hardware to settle */
+	DELAY(100000);
 
 	/* Final state */
 	vdrtctl0 = bus_read_4(sc->shim_res, SST_PCI_VDRTCTL0);
@@ -459,8 +388,7 @@ sst_wpt_power_up(struct sst_softc *sc)
 	    "  Final: VDRTCTL0=0x%08x VDRTCTL2=0x%08x PMCS=0x%08x(D%d)\n",
 	    vdrtctl0, vdrtctl2, pmcs, pmcs & SST_PMCS_PS_MASK);
 	device_printf(sc->dev,
-	    "  CPA=%s D3PGD=%d D3SRAMPGD=%d ISRAMPGE=0x%x DSRAMPGE=0x%x\n",
-	    (vdrtctl0 & SST_WPT_VDRTCTL0_CPA) ? "YES" : "NO",
+	    "  D3PGD=%d D3SRAMPGD=%d ISRAMPGE=0x%x DSRAMPGE=0x%x\n",
 	    !!(vdrtctl0 & SST_WPT_VDRTCTL0_D3PGD),
 	    !!(vdrtctl0 & SST_WPT_VDRTCTL0_D3SRAMPGD),
 	    (vdrtctl0 & SST_WPT_VDRTCTL0_ISRAMPGE_MASK) >>
@@ -468,15 +396,21 @@ sst_wpt_power_up(struct sst_softc *sc)
 	    (vdrtctl0 & SST_WPT_VDRTCTL0_DSRAMPGE_MASK) >>
 		SST_WPT_VDRTCTL0_DSRAMPGE_SHIFT);
 
-	/* Quick BAR0 test */
+	/* Quick BAR0 test - check multiple offsets */
 	if (sc->mem_res != NULL) {
-		uint32_t test_val = bus_read_4(sc->mem_res, 0);
-		device_printf(sc->dev, "  BAR0[0] after power-up: 0x%08x%s\n",
-		    test_val,
-		    test_val != SST_INVALID_REG_VALUE ? " ALIVE!" : " dead");
+		uint32_t iram0 = bus_read_4(sc->mem_res, 0);
+		uint32_t shim0 = bus_read_4(sc->mem_res, SST_SHIM_OFFSET);
+		uint32_t sram_ctrl = bus_read_4(sc->mem_res, 0xFB000);
+		device_printf(sc->dev,
+		    "  BAR0 test: IRAM[0]=0x%08x SHIM[0]=0x%08x SRAM_CTRL=0x%08x\n",
+		    iram0, shim0, sram_ctrl);
+		if (iram0 != SST_INVALID_REG_VALUE ||
+		    shim0 != SST_INVALID_REG_VALUE ||
+		    sram_ctrl != SST_INVALID_REG_VALUE)
+			device_printf(sc->dev, "  *** BAR0 ALIVE! ***\n");
 	}
 
-	return ((vdrtctl0 & SST_WPT_VDRTCTL0_CPA) ? 0 : EIO);
+	return (0);
 }
 
 /* ================================================================
@@ -492,14 +426,17 @@ sst_test_bar0(struct sst_softc *sc)
 	if (sc->mem_res == NULL)
 		return (false);
 
+	/* Check multiple offsets - IRAM may be all-FF when uninitialized */
 	val = bus_read_4(sc->mem_res, 0);
-	if (val == SST_INVALID_REG_VALUE) {
-		/* Try SHIM offset too */
-		val = bus_read_4(sc->mem_res, SST_SHIM_OFFSET);
-		if (val == SST_INVALID_REG_VALUE)
-			return (false);
-	}
-	return (true);
+	if (val != SST_INVALID_REG_VALUE)
+		return (true);
+	val = bus_read_4(sc->mem_res, SST_SHIM_OFFSET);
+	if (val != SST_INVALID_REG_VALUE)
+		return (true);
+	val = bus_read_4(sc->mem_res, 0xFB000);	/* SRAM_CTRL */
+	if (val != SST_INVALID_REG_VALUE)
+		return (true);
+	return (false);
 }
 
 /* ================================================================
@@ -1601,7 +1538,6 @@ sst_iobp_probe(struct sst_softc *sc)
 	 */
 	{
 		uint32_t v0, v2, pmcs;
-		int i;
 
 		device_printf(sc->dev, "=== PCI Config Power Cycle ===\n");
 
@@ -1612,99 +1548,70 @@ sst_iobp_probe(struct sst_softc *sc)
 		    "  Initial: V0=0x%08x V2=0x%08x PMCS=0x%08x\n",
 		    v0, v2, pmcs);
 
-		/* Power-DOWN first (clear D3PGD for 0→1 edge) */
-		/* 1. Disable clock gating */
+		/*
+		 * catpt_dsp_power_down via PCI config:
+		 * Gate SRAM, set D3PGD=1+D3SRAMPGD=0, enter D3hot
+		 */
+		/* 1. Disable DCLCGE */
 		v2 &= ~SST_VDRTCTL2_DCLCGE;
 		pci_cfgregwrite(0, 0, 0x13, 0, 0xA8, v2, 4);
-		DELAY(50000);
 
 		/* 2. Gate all SRAM */
 		v0 |= (SST_WPT_VDRTCTL0_ISRAMPGE_MASK |
 		    SST_WPT_VDRTCTL0_DSRAMPGE_MASK);
 		pci_cfgregwrite(0, 0, 0x13, 0, 0xA0, v0, 4);
-		DELAY(10000);
 
-		/* 3. Clear D3PGD + D3SRAMPGD + bit0 */
-		v0 &= ~(SST_WPT_VDRTCTL0_D3PGD |
-		    SST_WPT_VDRTCTL0_D3SRAMPGD | 0x01);
+		/* 3. D3PGD=1, D3SRAMPGD=0 (per Linux catpt) */
+		v0 |= SST_WPT_VDRTCTL0_D3PGD;
+		v0 &= ~SST_WPT_VDRTCTL0_D3SRAMPGD;
 		pci_cfgregwrite(0, 0, 0x13, 0, 0xA0, v0, 4);
-		DELAY(10000);
 
-		/* 4. Set APLLSE (PLL shutdown) */
-		v2 |= SST_VDRTCTL2_APLLSE_MASK;
-		pci_cfgregwrite(0, 0, 0x13, 0, 0xA8, v2, 4);
-		DELAY(10000);
-
-		/* 5. Re-enable clock gating */
-		v2 |= SST_VDRTCTL2_DCLCGE;
-		pci_cfgregwrite(0, 0, 0x13, 0, 0xA8, v2, 4);
-
-		/* 6. Set D3 */
+		/* 4. Enter D3hot */
 		pmcs = (pci_cfgregread(0, 0, 0x13, 0, 0x84, 4) & ~3) | 3;
 		pci_cfgregwrite(0, 0, 0x13, 0, 0x84, pmcs, 4);
-		DELAY(100000);
+		DELAY(50);
+
+		/* 5. Re-enable DCLCGE */
+		v2 |= SST_VDRTCTL2_DCLCGE;
+		pci_cfgregwrite(0, 0, 0x13, 0, 0xA8, v2, 4);
+		DELAY(50);
 
 		v0 = pci_cfgregread(0, 0, 0x13, 0, 0xA0, 4);
-		v2 = pci_cfgregread(0, 0, 0x13, 0, 0xA8, 4);
 		pmcs = pci_cfgregread(0, 0, 0x13, 0, 0x84, 4);
 		device_printf(sc->dev,
-		    "  After DOWN: V0=0x%08x V2=0x%08x PMCS=0x%08x(D%d)\n",
-		    v0, v2, pmcs, pmcs & 3);
+		    "  After DOWN: V0=0x%08x PMCS=0x%08x(D%d)\n",
+		    v0, pmcs, pmcs & 3);
 
-		/* Power-UP (exact catpt_dsp_power_up) */
-		/* 1. Disable clock gating */
+		/*
+		 * catpt_dsp_power_up via PCI config:
+		 * D0, D3PGD+D3SRAMPGD, ungate SRAM
+		 */
+		/* 1. Disable DCLCGE */
 		v2 = pci_cfgregread(0, 0, 0x13, 0, 0xA8, 4);
 		v2 &= ~SST_VDRTCTL2_DCLCGE;
 		pci_cfgregwrite(0, 0, 0x13, 0, 0xA8, v2, 4);
-		DELAY(50000);
 
-		/* 2. Set D3PGD + D3SRAMPGD */
-		v0 = pci_cfgregread(0, 0, 0x13, 0, 0xA0, 4);
-		device_printf(sc->dev,
-		    "  UP pre-D3PGD: V0=0x%08x (D3PGD=%d)\n",
-		    v0, !!(v0 & SST_WPT_VDRTCTL0_D3PGD));
-		v0 |= (SST_WPT_VDRTCTL0_D3PGD |
-		    SST_WPT_VDRTCTL0_D3SRAMPGD);
-		pci_cfgregwrite(0, 0, 0x13, 0, 0xA0, v0, 4);
-		DELAY(1000);
-		v0 = pci_cfgregread(0, 0, 0x13, 0, 0xA0, 4);
-		device_printf(sc->dev,
-		    "  UP post-D3PGD: V0=0x%08x (D3PGD=%d)\n",
-		    v0, !!(v0 & SST_WPT_VDRTCTL0_D3PGD));
-
-		/* 3. Transition to D0 */
+		/* 2. Transition to D0 (BEFORE setting D3PGD per catpt) */
 		pmcs = pci_cfgregread(0, 0, 0x13, 0, 0x84, 4);
 		pmcs = (pmcs & ~3) | 0;
 		pci_cfgregwrite(0, 0, 0x13, 0, 0x84, pmcs, 4);
-		DELAY(100000);
 
-		/* 4. Poll CPA */
-		for (i = 0; i < 5000; i++) {
-			v0 = pci_cfgregread(0, 0, 0x13, 0, 0xA0, 4);
-			if (v0 & SST_WPT_VDRTCTL0_CPA)
-				break;
-			DELAY(1000);
-		}
-		device_printf(sc->dev,
-		    "  CPA poll: V0=0x%08x CPA=%s (%d polls)\n",
-		    v0, (v0 & SST_WPT_VDRTCTL0_CPA) ? "YES!" : "NO", i);
+		/* 3. Set D3PGD + D3SRAMPGD */
+		v0 = pci_cfgregread(0, 0, 0x13, 0, 0xA0, 4);
+		v0 |= (SST_WPT_VDRTCTL0_D3PGD |
+		    SST_WPT_VDRTCTL0_D3SRAMPGD);
+		pci_cfgregwrite(0, 0, 0x13, 0, 0xA0, v0, 4);
 
-		/* 5. Ungate SRAM */
+		/* 4. Ungate all SRAM */
 		v0 = pci_cfgregread(0, 0, 0x13, 0, 0xA0, 4);
 		v0 &= ~(SST_WPT_VDRTCTL0_ISRAMPGE_MASK |
 		    SST_WPT_VDRTCTL0_DSRAMPGE_MASK);
 		pci_cfgregwrite(0, 0, 0x13, 0, 0xA0, v0, 4);
-		DELAY(50000);
 
-		/* 6. Clear APLLSE */
-		v2 = pci_cfgregread(0, 0, 0x13, 0, 0xA8, 4);
-		v2 &= ~SST_VDRTCTL2_APLLSE_MASK;
-		pci_cfgregwrite(0, 0, 0x13, 0, 0xA8, v2, 4);
-		DELAY(50000);
-
-		/* 7. Re-enable clock gating */
+		/* 5. Re-enable DCLCGE */
 		v2 |= SST_VDRTCTL2_DCLCGE;
 		pci_cfgregwrite(0, 0, 0x13, 0, 0xA8, v2, 4);
+		DELAY(100000);
 
 		v0 = pci_cfgregread(0, 0, 0x13, 0, 0xA0, 4);
 		v2 = pci_cfgregread(0, 0, 0x13, 0, 0xA8, 4);
@@ -1713,9 +1620,9 @@ sst_iobp_probe(struct sst_softc *sc)
 		    "  Final: V0=0x%08x V2=0x%08x PMCS=0x%08x(D%d)\n",
 		    v0, v2, pmcs, pmcs & 3);
 		device_printf(sc->dev,
-		    "  CPA=%s D3PGD=%d ISRAMPGE=0x%x DSRAMPGE=0x%x\n",
-		    (v0 & SST_WPT_VDRTCTL0_CPA) ? "YES!" : "NO",
+		    "  D3PGD=%d D3SRAMPGD=%d ISRAMPGE=0x%x DSRAMPGE=0x%x\n",
 		    !!(v0 & SST_WPT_VDRTCTL0_D3PGD),
+		    !!(v0 & SST_WPT_VDRTCTL0_D3SRAMPGD),
 		    (v0 & SST_WPT_VDRTCTL0_ISRAMPGE_MASK) >>
 			SST_WPT_VDRTCTL0_ISRAMPGE_SHIFT,
 		    (v0 & SST_WPT_VDRTCTL0_DSRAMPGE_MASK) >>
@@ -2118,6 +2025,15 @@ sst_acpi_attach(device_t dev)
 	 * Must be done before the power-up sequence.
 	 */
 	sst_iobp_probe(sc);
+
+	/* ---- Phase 2.7: Enable HDA (shared clock domain) ---- */
+	/*
+	 * The ADSP and HDA share the audio clock domain in the PCH.
+	 * If HDA is disabled (HDAD=1 in FD register), the clock source
+	 * is gated and CPA will never assert during power-up.
+	 * Enable HDA before attempting DSP power-up.
+	 */
+	(void)sst_try_enable_hda(sc);
 
 	/* ---- Phase 3: WPT Power-Up Sequence ---- */
 	sst_wpt_power_up(sc);
