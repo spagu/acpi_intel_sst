@@ -206,11 +206,26 @@ sst_ipc_poll_ready(struct sst_softc *sc)
 		return (1);
 	}
 
-	/* Check for IPC reply completion (DONE in IPCD = DSP finished our request) */
+	/*
+	 * Check for IPC reply completion (DONE in IPCD)
+	 * On Broadwell/WPT, DSP may use DONE bit for ready notification.
+	 */
 	if (ipcd & SST_IPC_DONE) {
 		/* Clear DONE bit */
 		sst_shim_write(sc, SST_SHIM_IPCD, ipcd & ~SST_IPC_DONE);
-		device_printf(sc->dev, "IPC: Reply done (polled): 0x%08x\n", ipcd);
+
+		/*
+		 * First reply after boot is the ready notification on WPT.
+		 * DSP uses DONE (not BUSY) to signal FW_READY.
+		 */
+		if (!sc->ipc.ready) {
+			sc->ipc.ready = true;
+			device_printf(sc->dev,
+			    "DSP signaled ready via DONE (polled): IPCD=0x%08x\n", ipcd);
+		} else {
+			device_printf(sc->dev, "IPC: Reply done (polled): 0x%08x\n", ipcd);
+		}
+
 		sc->ipc.msg.reply = ipcd;
 		sc->ipc.state = SST_IPC_STATE_DONE;
 		return (1);
@@ -330,12 +345,22 @@ sst_ipc_intr(struct sst_softc *sc)
 		mtx_unlock(&sc->ipc.lock);
 	}
 
-	/* Check for reply completion (DONE in IPCD - DSP finished our command) */
+	/*
+	 * Check for reply completion (DONE in IPCD)
+	 * On WPT, DSP may use DONE for ready notification too.
+	 */
 	if (ipcd & SST_IPC_DONE) {
 		/* Clear DONE bit */
 		sst_shim_write(sc, SST_SHIM_IPCD, ipcd & ~SST_IPC_DONE);
 
 		mtx_lock(&sc->ipc.lock);
+
+		/* First DONE after boot may be ready notification on WPT */
+		if (!sc->ipc.ready) {
+			sc->ipc.ready = true;
+			device_printf(sc->dev,
+			    "DSP signaled ready via DONE: IPCD=0x%08x\n", ipcd);
+		}
 
 		/* Store reply and wake up sender */
 		sc->ipc.msg.reply = ipcd;
