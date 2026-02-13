@@ -13,6 +13,7 @@
 #include <sys/bus.h>
 #include <sys/systm.h>
 #include <sys/malloc.h>
+#include <sys/callout.h>
 
 #include <machine/bus.h>
 
@@ -22,6 +23,14 @@
 
 #include "acpi_intel_sst.h"
 #include "sst_pcm.h"
+
+/*
+ * DMA position polling interval in ticks.
+ * The DW-DMAC inside the SST DSP routes its interrupts to the DSP core,
+ * not to the host. We poll the DMA position register instead.
+ * ~5ms = hz/200 for responsive audio at 48kHz/16bit/2ch with 1KB blocks.
+ */
+#define SST_PCM_POLL_TICKS	(hz / 200 > 0 ? hz / 200 : 1)
 
 /*
  * Supported formats
@@ -55,13 +64,17 @@ static uint32_t sst_chan_setblocksize(kobj_t obj, void *data, uint32_t blocksize
 static int sst_chan_trigger(kobj_t obj, void *data, int go);
 static uint32_t sst_chan_getptr(kobj_t obj, void *data);
 static struct pcmchan_caps *sst_chan_getcaps(kobj_t obj, void *data);
-static void sst_pcm_dma_callback(void *arg);
 
 /* DSP stream allocation helpers */
 static int sst_pcm_alloc_dsp_stream(struct sst_softc *sc,
     struct sst_pcm_channel *ch);
 static void sst_pcm_free_dsp_stream(struct sst_softc *sc,
     struct sst_pcm_channel *ch);
+
+/* Page table helpers */
+static int sst_pcm_alloc_pgtbl(struct sst_softc *sc,
+    struct sst_pcm_channel *ch);
+static void sst_pcm_free_pgtbl(struct sst_pcm_channel *ch);
 
 /*
  * Channel method definitions
@@ -174,6 +187,116 @@ sst_pcm_free_buffer(struct sst_pcm_channel *ch)
 }
 
 /*
+ * DMA callback for page table allocation
+ */
+static void
+sst_pgtbl_cb(void *arg, bus_dma_segment_t *segs, int nseg, int error)
+{
+	bus_addr_t *addr = arg;
+
+	if (error || nseg != 1)
+		return;
+	*addr = segs[0].ds_addr;
+}
+
+/*
+ * Allocate page table DMA buffer for DSP ring buffer
+ *
+ * The catpt firmware expects a page table (array of PFNs) that
+ * describes the physical pages of the ring buffer. The DSP reads
+ * this page table to set up DMA transfers.
+ */
+static int
+sst_pcm_alloc_pgtbl(struct sst_softc *sc, struct sst_pcm_channel *ch)
+{
+	uint32_t num_pages, i;
+	size_t pgtbl_size;
+	int error;
+
+	num_pages = (ch->buf_size + PAGE_SIZE - 1) / PAGE_SIZE;
+	if (num_pages > SST_MAX_RING_PAGES)
+		num_pages = SST_MAX_RING_PAGES;
+
+	/* Allocate full page like Linux catpt - packed 20-bit PFNs need
+	 * 2.5 bytes each, but DSP may read beyond num_pages entries */
+	pgtbl_size = PAGE_SIZE;
+
+	/* Create DMA tag for page table */
+	error = bus_dma_tag_create(
+	    bus_get_dma_tag(sc->dev),
+	    4, 0,			/* 4-byte alignment */
+	    BUS_SPACE_MAXADDR_32BIT,
+	    BUS_SPACE_MAXADDR,
+	    NULL, NULL,
+	    pgtbl_size, 1, pgtbl_size,
+	    0, NULL, NULL,
+	    &ch->pgtbl_tag);
+	if (error) {
+		device_printf(sc->dev, "PCM: pgtbl tag create failed: %d\n",
+		    error);
+		return (error);
+	}
+
+	/* Allocate page table buffer */
+	error = bus_dmamem_alloc(ch->pgtbl_tag, (void **)&ch->pgtbl_buf,
+	    BUS_DMA_NOWAIT | BUS_DMA_ZERO, &ch->pgtbl_map);
+	if (error) {
+		device_printf(sc->dev, "PCM: pgtbl alloc failed: %d\n", error);
+		bus_dma_tag_destroy(ch->pgtbl_tag);
+		ch->pgtbl_tag = NULL;
+		return (error);
+	}
+
+	/* Map page table buffer */
+	error = bus_dmamap_load(ch->pgtbl_tag, ch->pgtbl_map, ch->pgtbl_buf,
+	    pgtbl_size, sst_pgtbl_cb, &ch->pgtbl_addr, BUS_DMA_NOWAIT);
+	if (error) {
+		device_printf(sc->dev, "PCM: pgtbl map failed: %d\n", error);
+		bus_dmamem_free(ch->pgtbl_tag, ch->pgtbl_buf, ch->pgtbl_map);
+		bus_dma_tag_destroy(ch->pgtbl_tag);
+		ch->pgtbl_tag = NULL;
+		ch->pgtbl_buf = NULL;
+		return (error);
+	}
+
+	/* Fill page table with simple uint32_t PFN entries */
+	for (i = 0; i < num_pages; i++)
+		ch->pgtbl_buf[i] = (uint32_t)((ch->dma_addr + i * PAGE_SIZE)
+		    >> PAGE_SHIFT);
+
+	/* Sync to device */
+	bus_dmamap_sync(ch->pgtbl_tag, ch->pgtbl_map,
+	    BUS_DMASYNC_PREWRITE);
+
+	device_printf(sc->dev,
+	    "PCM: pgtbl allocated: %u pages, phys=0x%lx, first_pfn=0x%x\n",
+	    num_pages, (unsigned long)ch->pgtbl_addr, ch->pgtbl_buf[0]);
+
+	return (0);
+}
+
+/*
+ * Free page table DMA buffer
+ */
+static void
+sst_pcm_free_pgtbl(struct sst_pcm_channel *ch)
+{
+	if (ch->pgtbl_map != NULL) {
+		bus_dmamap_unload(ch->pgtbl_tag, ch->pgtbl_map);
+	}
+	if (ch->pgtbl_buf != NULL) {
+		bus_dmamem_free(ch->pgtbl_tag, ch->pgtbl_buf, ch->pgtbl_map);
+		ch->pgtbl_buf = NULL;
+		ch->pgtbl_map = NULL;
+	}
+	if (ch->pgtbl_tag != NULL) {
+		bus_dma_tag_destroy(ch->pgtbl_tag);
+		ch->pgtbl_tag = NULL;
+	}
+	ch->pgtbl_addr = 0;
+}
+
+/*
  * Find free channel slot (multi-stream support)
  */
 static struct sst_pcm_channel *
@@ -281,14 +404,17 @@ sst_chan_init(kobj_t obj, void *devinfo, struct snd_dbuf *b,
 	device_printf(sc->dev, "PCM: DMA buf=%p size=%zu\n",
 	    ch->buf, ch->buf_size);
 
-	/* Allocate DMA channel */
-	ch->dma_ch = sst_dma_alloc(sc);
-	if (ch->dma_ch < 0) {
-		device_printf(sc->dev, "Failed to allocate DMA channel\n");
+	/* Allocate page table for DSP ring buffer */
+	error = sst_pcm_alloc_pgtbl(sc, ch);
+	if (error) {
+		device_printf(sc->dev, "PCM: pgtbl alloc failed: %d\n", error);
 		sst_pcm_free_buffer(ch);
 		sst_pcm_release_channel(sc, ch);
 		return (NULL);
 	}
+
+	/* DMA channel no longer needed - DSP manages DMA internally */
+	ch->dma_ch = -1;
 
 	/* Setup sound buffer */
 	device_printf(sc->dev, "PCM: sndbuf_setup buf=%p size=%zu\n",
@@ -306,9 +432,13 @@ sst_chan_init(kobj_t obj, void *devinfo, struct snd_dbuf *b,
 	ch->speed = 48000;
 	ch->channels = 2;
 
+	/* Initialize position polling callout */
+	callout_init(&ch->poll_timer, 1);
+
 	/* DSP stream not yet allocated */
 	ch->stream_id = 0;
 	ch->stream_allocated = false;
+	ch->read_pos_regaddr = 0;
 
 	device_printf(sc->dev, "PCM: Allocated %s channel %d\n",
 	    (dir == PCMDIR_PLAY) ? "playback" : "capture", ch->index);
@@ -330,18 +460,17 @@ sst_chan_free(kobj_t obj, void *data)
 
 	sc = ch->sc;
 
-	if (ch->state == SST_PCM_STATE_RUNNING)
-		sst_ssp_stop(sc, ch->ssp_port);
+	/* Stop and drain polling timer */
+	callout_drain(&ch->poll_timer);
 
 	/* Free DSP stream if allocated */
 	if (ch->stream_allocated)
 		sst_pcm_free_dsp_stream(sc, ch);
 
-	if (ch->dma_ch >= 0) {
-		sst_dma_free(sc, ch->dma_ch);
-		ch->dma_ch = -1;
-	}
+	/* Free page table */
+	sst_pcm_free_pgtbl(ch);
 
+	/* Free DMA buffer */
 	sst_pcm_free_buffer(ch);
 
 	/* Release channel slot back to pool */
@@ -410,6 +539,10 @@ sst_chan_setblocksize(kobj_t obj, void *data, uint32_t blocksize)
 
 /*
  * Allocate DSP stream via IPC (catpt protocol)
+ *
+ * The catpt firmware manages DMA and SSP internally.
+ * We just provide the ring buffer page table and audio format.
+ * The DSP returns position register addresses for polling.
  */
 static int
 sst_pcm_alloc_dsp_stream(struct sst_softc *sc, struct sst_pcm_channel *ch)
@@ -417,8 +550,7 @@ sst_pcm_alloc_dsp_stream(struct sst_softc *sc, struct sst_pcm_channel *ch)
 	struct sst_alloc_stream_req req;
 	struct sst_alloc_stream_rsp rsp;
 	struct sst_module_entry mod;
-	uint32_t page_table[SST_MAX_RING_PAGES];
-	uint32_t mod_id, num_pages, i;
+	uint32_t mod_id;
 	int error;
 
 	if (ch->stream_allocated)
@@ -427,11 +559,11 @@ sst_pcm_alloc_dsp_stream(struct sst_softc *sc, struct sst_pcm_channel *ch)
 	memset(&req, 0, sizeof(req));
 	memset(&rsp, 0, sizeof(rsp));
 
-	/* Path and stream type */
+	/* Path and stream type (uint32_t - matches catpt enum size) */
 	if (ch->dir == PCMDIR_PLAY) {
 		req.path_id = SST_PATH_SSP0_OUT;
-		req.stream_type = SST_STREAM_TYPE_SYSTEM;
-		mod_id = SST_MODID_PCM_SYSTEM;
+		req.stream_type = SST_STREAM_TYPE_RENDER;
+		mod_id = SST_MODID_PCM;
 	} else {
 		req.path_id = SST_PATH_SSP0_IN;
 		req.stream_type = SST_STREAM_TYPE_CAPTURE;
@@ -439,45 +571,46 @@ sst_pcm_alloc_dsp_stream(struct sst_softc *sc, struct sst_pcm_channel *ch)
 	}
 	req.format_id = SST_FMT_PCM;
 
-	/* Audio format (catpt_audio_format layout) */
+	/* Audio format (catpt_audio_format layout - 24 bytes) */
 	req.format.sample_rate = ch->speed;
 	req.format.bit_depth = AFMT_BIT(ch->format);
 	req.format.valid_bit_depth = req.format.bit_depth;
 	req.format.num_channels = ch->channels;
-	req.format.interleaving = SST_INTERLEAVING_PER_SAMPLE;
+	req.format.interleaving = SST_INTERLEAVING_PER_CHANNEL;
 
 	if (ch->channels == 2) {
 		req.format.channel_config = SST_CHAN_CONFIG_STEREO;
-		req.format.channel_map = 0x00000201; /* FL=1,FR=2 */
+		/* Nibble-packed: LEFT=0 in nib0, RIGHT=2 in nib1, rest=0xF */
+		req.format.channel_map = 0xFFFFFF20;
 	} else {
 		req.format.channel_config = SST_CHAN_CONFIG_MONO;
-		req.format.channel_map = 0x00000001;
+		/* CENTER=1 in nib0, rest=0xF */
+		req.format.channel_map = 0xFFFFFFF1;
 	}
 
 	/*
-	 * Ring buffer: catpt uses a page table (array of PFNs).
-	 * Our DMA buffer is contiguous, so build a simple PFN array.
+	 * Ring buffer configuration (catpt protocol).
+	 *
+	 * From Linux catpt pcm.c (catpt_dai_hw_params):
+	 *   page_table_addr = physical addr of PFN array
+	 *   num_pages = buffer_bytes >> PAGE_SHIFT
+	 *   size = total ring buffer size in bytes
+	 *   offset = 0
+	 *   first_pfn = first entry from PFN table
 	 */
-	num_pages = (ch->buf_size + PAGE_SIZE - 1) / PAGE_SIZE;
-	if (num_pages > SST_MAX_RING_PAGES)
-		num_pages = SST_MAX_RING_PAGES;
+	{
+		uint32_t num_pages;
 
-	for (i = 0; i < num_pages; i++)
-		page_table[i] = (ch->dma_addr + i * PAGE_SIZE) >> PAGE_SHIFT;
+		num_pages = (ch->buf_size + PAGE_SIZE - 1) / PAGE_SIZE;
+		if (num_pages > SST_MAX_RING_PAGES)
+			num_pages = SST_MAX_RING_PAGES;
 
-	/*
-	 * We need a physical address for the page table itself.
-	 * Since we're already in a DMA-accessible buffer scenario,
-	 * write the PFN array into the start of DRAM scratch area.
-	 * For now, pass the physical address of the first page and
-	 * set page_table_addr to our DMA buffer address (the firmware
-	 * uses this to locate the ring buffer pages).
-	 */
-	req.ring.page_table_addr = (uint32_t)ch->dma_addr;
-	req.ring.num_pages = num_pages;
-	req.ring.size = ch->buf_size;
-	req.ring.offset = 0;
-	req.ring.first_pfn = (uint32_t)(ch->dma_addr >> PAGE_SHIFT);
+		req.ring.page_table_addr = (uint32_t)ch->pgtbl_addr;
+		req.ring.num_pages = num_pages;
+		req.ring.size = ch->buf_size;
+		req.ring.offset = 0;
+		req.ring.first_pfn = ch->pgtbl_buf[0];
+	}
 
 	/* Module entry */
 	req.num_entries = 1;
@@ -486,35 +619,54 @@ sst_pcm_alloc_dsp_stream(struct sst_softc *sc, struct sst_pcm_channel *ch)
 	if (mod_id < SST_MAX_MODULES && sc->fw.mod[mod_id].present)
 		mod.entry_point = sc->fw.mod[mod_id].entry_point;
 
-	/* Persistent and scratch memory from firmware module info */
+	/*
+	 * Persistent and scratch memory from firmware module info.
+	 * Offsets are DSP absolute addresses (DRAM base = 0x400000).
+	 */
 	if (mod_id < SST_MAX_MODULES && sc->fw.mod[mod_id].present) {
-		req.persistent_mem.size = sc->fw.mod[mod_id].persistent_size;
-		req.scratch_mem.size = sc->fw.mod[mod_id].scratch_size;
+		req.persistent_mem.offset = SST_DSP_DRAM_OFFSET +
+		    sc->fw.mod[mod_id].persistent_offset;
+		req.persistent_mem.size =
+		    sc->fw.mod[mod_id].persistent_size;
+		if (sc->fw.mod[mod_id].scratch_size > 0) {
+			req.scratch_mem.offset = SST_DSP_DRAM_OFFSET +
+			    sc->fw.mod[mod_id].scratch_offset;
+			req.scratch_mem.size =
+			    sc->fw.mod[mod_id].scratch_size;
+		}
 	}
-	/* Offsets left as 0 - firmware will allocate */
 
-	req.num_notifications = 1; /* Position notification */
+	req.num_notifications = 0; /* Linux catpt sends 0 */
 
 	device_printf(sc->dev,
-	    "DSP stream alloc: type=%u path=%u mod=0x%x persist=%u scratch=%u\n",
-	    req.stream_type, req.path_id, mod_id,
-	    req.persistent_mem.size, req.scratch_mem.size);
+	    "DSP stream alloc: type=%u path=%u fmt=%u mod=0x%x "
+	    "rate=%u depth=%u ch=%u pgtbl=0x%x pages=%u "
+	    "persist=0x%x/%u scratch=0x%x/%u\n",
+	    req.stream_type, req.path_id, req.format_id, mod_id,
+	    ch->speed, req.format.bit_depth, ch->channels,
+	    req.ring.page_table_addr, req.ring.num_pages,
+	    req.persistent_mem.offset, req.persistent_mem.size,
+	    req.scratch_mem.offset, req.scratch_mem.size);
 
 	/* Allocate stream on DSP */
 	error = sst_ipc_alloc_stream(sc, &req, &mod, 1, &rsp);
 	if (error) {
-		device_printf(sc->dev, "DSP stream alloc failed: %d\n", error);
+		device_printf(sc->dev,
+		    "DSP stream alloc failed: %d (status=INVALID_PARAM?)\n",
+		    error);
 		return (error);
 	}
 
 	ch->stream_id = rsp.stream_hw_id;
 	ch->stream_allocated = true;
+	ch->read_pos_regaddr = rsp.read_pos_regaddr;
 
 	device_printf(sc->dev,
-	    "PCM: Allocated DSP stream %u for %s (read_pos=0x%x)\n",
+	    "PCM: Allocated DSP stream %u for %s "
+	    "(read_pos=0x%x pres_pos=0x%x)\n",
 	    ch->stream_id,
 	    (ch->dir == PCMDIR_PLAY) ? "playback" : "capture",
-	    rsp.read_pos_regaddr);
+	    rsp.read_pos_regaddr, rsp.pres_pos_regaddr);
 
 	return (0);
 }
@@ -534,18 +686,72 @@ sst_pcm_free_dsp_stream(struct sst_softc *sc, struct sst_pcm_channel *ch)
 }
 
 /*
+ * DSP position polling callback
+ *
+ * The DSP firmware writes the current playback/capture position to
+ * a register in DRAM (read_pos_regaddr, returned by ALLOC_STREAM).
+ * We poll this register to detect block boundary crossings and
+ * notify sound(4) via chn_intr().
+ */
+static void
+sst_pcm_poll(void *arg)
+{
+	struct sst_pcm_channel *ch = arg;
+	struct sst_softc *sc = ch->sc;
+	uint32_t pos;
+	static int dbg_count = 0;
+
+	if (ch->state != SST_PCM_STATE_RUNNING)
+		return;
+
+	/* Read DSP position register */
+	if (ch->read_pos_regaddr != 0)
+		pos = bus_read_4(sc->mem_res, ch->read_pos_regaddr);
+	else
+		pos = 0;
+
+	/* Wrap within buffer */
+	if (ch->buf_size > 0)
+		pos = pos % ch->buf_size;
+
+	/* Debug: show first few polls */
+	if (dbg_count < 10) {
+		device_printf(sc->dev,
+		    "poll[%d]: pos=%u last=%u (reg=0x%x)\n",
+		    dbg_count, pos, ch->last_pos, ch->read_pos_regaddr);
+		dbg_count++;
+	}
+
+	/* If position crossed a block boundary, notify sound(4) */
+	if (ch->blk_size > 0 &&
+	    pos / ch->blk_size != ch->last_pos / ch->blk_size) {
+		ch->ptr = pos;
+		chn_intr(ch->pcm_ch);
+	}
+	ch->last_pos = pos;
+
+	/* Reschedule */
+	callout_reset(&ch->poll_timer, SST_PCM_POLL_TICKS,
+	    sst_pcm_poll, ch);
+}
+
+/*
  * Trigger (start/stop)
+ *
+ * Uses the catpt IPC protocol for all stream management.
+ * The DSP firmware manages DMA and SSP internally.
+ * Flow:
+ *   START: alloc_stream → set_device_formats → resume → set_write_pos
+ *   STOP:  pause → free_stream
  */
 static int
 sst_chan_trigger(kobj_t obj, void *data, int go)
 {
 	struct sst_pcm_channel *ch = data;
 	struct sst_softc *sc;
-	struct sst_ssp_config ssp_cfg;
-	struct sst_dma_config dma_cfg;
+	struct sst_device_format devfmt;
 	int error;
 
-	/* Get parent softc */
 	sc = ch->sc;
 
 	switch (go) {
@@ -553,69 +759,72 @@ sst_chan_trigger(kobj_t obj, void *data, int go)
 		if (ch->state == SST_PCM_STATE_RUNNING)
 			return (0);
 
-		/* Allocate DSP stream if firmware is running */
-		if (sc->fw.state == SST_FW_STATE_RUNNING) {
-			error = sst_pcm_alloc_dsp_stream(sc, ch);
-			if (error) {
-				device_printf(sc->dev,
-				    "DSP stream alloc failed: %d\n", error);
-				/* Continue without DSP - direct SSP mode */
-			}
+		/* DSP firmware must be running */
+		if (sc->fw.state != SST_FW_STATE_RUNNING) {
+			device_printf(sc->dev,
+			    "PCM trigger: DSP firmware not running\n");
+			return (ENXIO);
 		}
 
-		/* Configure SSP */
-		ssp_cfg.sample_rate = ch->speed;
-		ssp_cfg.sample_bits = AFMT_BIT(ch->format);
-		ssp_cfg.channels = ch->channels;
-		ssp_cfg.format = SST_FMT_I2S;
-		ssp_cfg.mclk_rate = 0;	/* Auto */
-		ssp_cfg.master = true;
-
-		error = sst_ssp_configure(sc, ch->ssp_port, &ssp_cfg);
+		/* Step 1: Allocate DSP stream */
+		error = sst_pcm_alloc_dsp_stream(sc, ch);
 		if (error) {
-			device_printf(sc->dev, "SSP configure failed: %d\n",
-			    error);
+			device_printf(sc->dev,
+			    "DSP stream alloc failed: %d\n", error);
 			return (error);
 		}
 
-		/* Configure DMA */
-		memset(&dma_cfg, 0, sizeof(dma_cfg));
-		if (ch->dir == PCMDIR_PLAY) {
-			dma_cfg.src = ch->dma_addr;
-			dma_cfg.dst = SST_SSP0_OFFSET + SSP_SSDR;
-			dma_cfg.direction = DMA_TT_M2P;
+		/* Step 2: Set device formats (SSP hardware config) */
+		memset(&devfmt, 0, sizeof(devfmt));
+		devfmt.iface = (ch->dir == PCMDIR_PLAY) ?
+		    SST_SSP_IFACE_0 : SST_SSP_IFACE_0;
+		devfmt.mclk = SST_MCLK_FREQ_24_MHZ;
+		devfmt.channels = ch->channels;
+		if (ch->channels == 4) {
+			devfmt.mode = SST_SSP_MODE_TDM_PROVIDER;
+			devfmt.clock_divider = 4;
 		} else {
-			dma_cfg.src = SST_SSP1_OFFSET + SSP_SSDR;
-			dma_cfg.dst = ch->dma_addr;
-			dma_cfg.direction = DMA_TT_P2M;
+			devfmt.mode = SST_SSP_MODE_I2S_PROVIDER;
+			devfmt.clock_divider = 9;
 		}
-		dma_cfg.size = ch->buf_size;
-		dma_cfg.src_width = DMA_WIDTH_32;
-		dma_cfg.dst_width = DMA_WIDTH_32;
-		dma_cfg.src_burst = DMA_MSIZE_4;
-		dma_cfg.dst_burst = DMA_MSIZE_4;
-		dma_cfg.circular = true;
-
-		error = sst_dma_configure(sc, ch->dma_ch, &dma_cfg);
+		error = sst_ipc_set_device_formats(sc, &devfmt);
 		if (error) {
-			device_printf(sc->dev, "DMA configure failed: %d\n",
-			    error);
+			device_printf(sc->dev,
+			    "SET_DEVICE_FORMATS failed: %d\n", error);
+			/* Non-fatal - try to continue */
+		}
+
+		/* Step 3: Resume (start) DSP stream */
+		error = sst_ipc_stream_resume(sc, ch->stream_id);
+		if (error) {
+			device_printf(sc->dev,
+			    "DSP stream resume failed: %d\n", error);
+			sst_pcm_free_dsp_stream(sc, ch);
 			return (error);
 		}
 
-		/* Set DMA callback */
-		sst_dma_set_callback(sc, ch->dma_ch, sst_pcm_dma_callback, ch);
+		/* Step 4: Tell DSP the entire buffer is available */
+		error = sst_ipc_set_write_pos(sc, ch->stream_id,
+		    ch->buf_size, false);
+		if (error) {
+			device_printf(sc->dev,
+			    "SET_WRITE_POS failed: %d\n", error);
+			/* Non-fatal */
+		}
 
-		/* Resume DSP stream if allocated */
-		if (ch->stream_allocated)
-			sst_ipc_stream_resume(sc, ch->stream_id);
-
-		/* Start DMA first, then SSP */
+		/* Initialize position tracking */
 		ch->ptr = 0;
-		sst_dma_start(sc, ch->dma_ch);
-		sst_ssp_start(sc, ch->ssp_port);
-
+		ch->last_pos = 0;
 		ch->state = SST_PCM_STATE_RUNNING;
+
+		device_printf(sc->dev,
+		    "PCM: %s started (stream=%u read_pos=0x%x)\n",
+		    (ch->dir == PCMDIR_PLAY) ? "playback" : "capture",
+		    ch->stream_id, ch->read_pos_regaddr);
+
+		/* Start position polling timer */
+		callout_reset(&ch->poll_timer, SST_PCM_POLL_TICKS,
+		    sst_pcm_poll, ch);
 		break;
 
 	case PCMTRIG_STOP:
@@ -623,24 +832,29 @@ sst_chan_trigger(kobj_t obj, void *data, int go)
 		if (ch->state != SST_PCM_STATE_RUNNING)
 			return (0);
 
+		/* Stop polling first */
+		callout_stop(&ch->poll_timer);
+
 		/* Pause DSP stream */
+		if (ch->stream_allocated) {
+			error = sst_ipc_stream_pause(sc, ch->stream_id);
+			if (error)
+				device_printf(sc->dev,
+				    "DSP stream pause failed: %d\n", error);
+		}
+
+		/* Free DSP stream */
 		if (ch->stream_allocated)
-			sst_ipc_stream_pause(sc, ch->stream_id);
-
-		/* Stop SSP first, then DMA */
-		sst_ssp_stop(sc, ch->ssp_port);
-		sst_dma_stop(sc, ch->dma_ch);
-
-		/* Free DSP stream on abort */
-		if (go == PCMTRIG_ABORT && ch->stream_allocated)
 			sst_pcm_free_dsp_stream(sc, ch);
 
 		ch->state = SST_PCM_STATE_PREPARED;
+
+		device_printf(sc->dev, "PCM: %s stopped\n",
+		    (ch->dir == PCMDIR_PLAY) ? "playback" : "capture");
 		break;
 
 	case PCMTRIG_EMLDMAWR:
 	case PCMTRIG_EMLDMARD:
-		/* Software DMA trigger - not used */
 		break;
 	}
 
@@ -649,23 +863,29 @@ sst_chan_trigger(kobj_t obj, void *data, int go)
 
 /*
  * Get current buffer position
+ *
+ * The DSP writes the current read position to a DRAM register
+ * (read_pos_regaddr) which we can read via MMIO.
  */
 static uint32_t
 sst_chan_getptr(kobj_t obj, void *data)
 {
 	struct sst_pcm_channel *ch = data;
 	struct sst_softc *sc;
-	size_t pos;
+	uint32_t pos;
 
 	sc = ch->sc;
 
 	if (ch->state != SST_PCM_STATE_RUNNING)
 		return (0);
 
-	/* Get position from DMA */
-	pos = sst_dma_get_position(sc, ch->dma_ch);
+	/* Read DSP position register */
+	if (ch->read_pos_regaddr != 0) {
+		pos = bus_read_4(sc->mem_res, ch->read_pos_regaddr);
+		return (pos % ch->buf_size);
+	}
 
-	return (pos % ch->buf_size);
+	return (ch->ptr % ch->buf_size);
 }
 
 /*
@@ -675,23 +895,6 @@ static struct pcmchan_caps *
 sst_chan_getcaps(kobj_t obj, void *data)
 {
 	return (&sst_caps);
-}
-
-/*
- * DMA completion callback
- */
-static void
-sst_pcm_dma_callback(void *arg)
-{
-	struct sst_pcm_channel *ch = arg;
-
-	/* Update position */
-	ch->ptr += ch->blk_size;
-	if (ch->ptr >= ch->buf_size)
-		ch->ptr = 0;
-
-	/* Notify sound subsystem */
-	chn_intr(ch->pcm_ch);
 }
 
 /*
@@ -799,6 +1002,10 @@ sst_pcm_init(struct sst_softc *sc)
 		sc->pcm.play[i].dma_tag = NULL;
 		sc->pcm.play[i].stream_id = 0;
 		sc->pcm.play[i].stream_allocated = false;
+		sc->pcm.play[i].read_pos_regaddr = 0;
+		sc->pcm.play[i].pgtbl_tag = NULL;
+		sc->pcm.play[i].pgtbl_buf = NULL;
+		sc->pcm.play[i].pgtbl_addr = 0;
 	}
 
 	/* Initialize all capture channel slots */
@@ -812,6 +1019,10 @@ sst_pcm_init(struct sst_softc *sc)
 		sc->pcm.rec[i].dma_tag = NULL;
 		sc->pcm.rec[i].stream_id = 0;
 		sc->pcm.rec[i].stream_allocated = false;
+		sc->pcm.rec[i].read_pos_regaddr = 0;
+		sc->pcm.rec[i].pgtbl_tag = NULL;
+		sc->pcm.rec[i].pgtbl_buf = NULL;
+		sc->pcm.rec[i].pgtbl_addr = 0;
 	}
 
 	/* Default mixer values */

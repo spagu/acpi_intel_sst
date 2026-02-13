@@ -229,12 +229,16 @@ struct sst_module_entry {
  * Stream Allocation Request (catpt_alloc_stream_input)
  * Note: module entries are spliced between num_entries and persistent_mem
  * when building the actual mailbox payload.
+ *
+ * Linux catpt uses 8-bit bitfields (enum:8) for path_id, stream_type,
+ * format_id packed into a single 32-bit word.  Using uint32_t per field
+ * shifts all subsequent fields by 8 bytes, causing INVALID_PARAM.
  */
 struct sst_alloc_stream_req {
-	uint8_t			path_id;	/* SST_PATH_* */
-	uint8_t			stream_type;	/* SST_STREAM_TYPE_* */
-	uint8_t			format_id;	/* SST_FMT_* */
-	uint8_t			reserved;
+	uint8_t			path_id;	/* SST_PATH_* (1 byte) */
+	uint8_t			stream_type;	/* SST_STREAM_TYPE_* (1 byte) */
+	uint8_t			format_id;	/* SST_FMT_* (1 byte) */
+	uint8_t			reserved;	/* padding (1 byte) */
 	struct sst_audio_format	format;		/* Audio format (24 bytes) */
 	struct sst_ring_info	ring;		/* Ring buffer info (20 bytes) */
 	uint8_t			num_entries;	/* Number of module entries */
@@ -258,6 +262,37 @@ struct sst_alloc_stream_rsp {
 	uint32_t	pres_pos_regaddr;	/* Presentation position register */
 	uint32_t	peak_meter_regaddr[SST_CHANNELS_MAX];
 	uint32_t	volume_regaddr[SST_CHANNELS_MAX];
+} __packed;
+
+/*
+ * SSP Device Format (for SET_DEVICE_FORMATS IPC)
+ * From Linux catpt: struct catpt_ssp_device_format (messages.h)
+ *
+ * This configures the SSP port hardware, NOT audio format.
+ * 15 bytes packed.
+ */
+
+/* SSP interface IDs */
+#define SST_SSP_IFACE_0		0
+#define SST_SSP_IFACE_1		1
+
+/* MCLK frequencies */
+#define SST_MCLK_OFF		0
+#define SST_MCLK_FREQ_6_MHZ	1
+#define SST_MCLK_FREQ_21_MHZ	2
+#define SST_MCLK_FREQ_24_MHZ	3
+
+/* SSP modes */
+#define SST_SSP_MODE_I2S_CONSUMER	0
+#define SST_SSP_MODE_I2S_PROVIDER	1
+#define SST_SSP_MODE_TDM_PROVIDER	2
+
+struct sst_device_format {
+	uint32_t	iface;		/* SST_SSP_IFACE_* */
+	uint32_t	mclk;		/* SST_MCLK_* */
+	uint32_t	mode;		/* SST_SSP_MODE_* */
+	uint16_t	clock_divider;	/* Clock divider */
+	uint8_t		channels;	/* Number of channels */
 } __packed;
 
 /*
@@ -328,6 +363,7 @@ struct sst_ipc_msg {
  */
 #define SST_MBOX_SIZE_IN	0x400	/* Host -> DSP: 1KB */
 #define SST_MBOX_SIZE_OUT	0x400	/* DSP -> Host: 1KB */
+#define SST_IPC_REPLY_MAX	256	/* Max reply data cached in ISR */
 
 /*
  * IPC Context
@@ -344,6 +380,10 @@ struct sst_ipc {
 	/* Mailbox addresses */
 	bus_addr_t		mbox_in;	/* Host -> DSP */
 	bus_addr_t		mbox_out;	/* DSP -> Host */
+
+	/* Reply data cached by ISR (before DONE is cleared) */
+	uint8_t			reply_data[SST_IPC_REPLY_MAX];
+	size_t			reply_size;	/* Bytes captured */
 
 	/* Statistics */
 	uint32_t		tx_count;
@@ -392,6 +432,14 @@ int	sst_ipc_stream_set_params(struct sst_softc *sc,
 				  struct sst_stream_params *params);
 int	sst_ipc_stream_get_position(struct sst_softc *sc, uint32_t stream_id,
 				    struct sst_stream_position *pos);
+
+/* Device format */
+int	sst_ipc_set_device_formats(struct sst_softc *sc,
+				   struct sst_device_format *devfmt);
+
+/* Stream write position (for ring buffer management) */
+int	sst_ipc_set_write_pos(struct sst_softc *sc, uint32_t stream_id,
+			      uint32_t pos, bool end_of_buffer);
 
 /* Mixer control */
 int	sst_ipc_set_mixer(struct sst_softc *sc, struct sst_mixer_params *params);

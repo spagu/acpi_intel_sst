@@ -1439,234 +1439,13 @@ sst_try_enable_adsp(struct sst_softc *sc)
 static void
 sst_probe_i2c_codec(struct sst_softc *sc)
 {
-	bus_space_tag_t mem_tag;
-	bus_space_handle_t i2c_handle;
-	uint32_t comp_type, ic_con, ic_tar, ic_enable, ic_status;
-	uint32_t comp_param;
-	int error;
-	int timeout;
-
-	device_printf(sc->dev, "=== I2C0 Codec Probe (addr 0x%02x) ===\n",
-	    SST_I2C0_CODEC_ADDR);
-
-	mem_tag = X86_BUS_SPACE_MEM;
-	error = bus_space_map(mem_tag, SST_I2C0_BASE, SST_I2C0_SIZE,
-	    0, &i2c_handle);
-	if (error != 0) {
-		device_printf(sc->dev, "  Failed to map I2C0: %d\n", error);
-		return;
-	}
-
-	/* Verify DesignWare I2C controller */
-	comp_type = bus_space_read_4(mem_tag, i2c_handle, DW_IC_COMP_TYPE);
-	device_printf(sc->dev, "  IC_COMP_TYPE: 0x%08x %s\n",
-	    comp_type,
-	    comp_type == DW_IC_COMP_TYPE_VALUE ? "(DesignWare OK)" : "(UNKNOWN)");
-
-	if (comp_type != DW_IC_COMP_TYPE_VALUE) {
-		device_printf(sc->dev, "  Not a DesignWare I2C controller\n");
-		goto out;
-	}
-
-	/* Read controller state */
-	ic_con = bus_space_read_4(mem_tag, i2c_handle, DW_IC_CON);
-	ic_tar = bus_space_read_4(mem_tag, i2c_handle, DW_IC_TAR);
-	ic_enable = bus_space_read_4(mem_tag, i2c_handle, DW_IC_ENABLE);
-	ic_status = bus_space_read_4(mem_tag, i2c_handle, DW_IC_STATUS);
-	comp_param = bus_space_read_4(mem_tag, i2c_handle, DW_IC_COMP_PARAM_1);
-
-	device_printf(sc->dev, "  IC_CON:    0x%08x (master=%d, speed=%d)\n",
-	    ic_con,
-	    (ic_con & DW_IC_CON_MASTER) ? 1 : 0,
-	    (ic_con >> 1) & 3);
-	device_printf(sc->dev, "  IC_TAR:    0x%03x (codec addr)\n",
-	    ic_tar & 0x3FF);
-	device_printf(sc->dev, "  IC_ENABLE: %d\n", ic_enable & 1);
-	device_printf(sc->dev, "  IC_STATUS: 0x%08x\n", ic_status);
-	device_printf(sc->dev, "  IC_PARAM:  0x%08x\n", comp_param);
-
-	/* Verify target address */
-	if ((ic_tar & 0x3FF) != SST_I2C0_CODEC_ADDR) {
-		device_printf(sc->dev,
-		    "  Target addr 0x%x != expected 0x%x\n",
-		    ic_tar & 0x3FF, SST_I2C0_CODEC_ADDR);
-	} else {
-		device_printf(sc->dev,
-		    "  Target addr 0x1C confirmed (RT286 codec)\n");
-	}
-
-	/* Try to communicate with the codec */
-	/* First disable the controller to configure it */
-	bus_space_write_4(mem_tag, i2c_handle, DW_IC_ENABLE, 0);
-	DELAY(10000);
-
-	/* Wait for disable */
-	for (timeout = 100; timeout > 0; timeout--) {
-		uint32_t en_status = bus_space_read_4(mem_tag, i2c_handle,
-		    DW_IC_ENABLE_STATUS);
-		if ((en_status & 1) == 0)
-			break;
-		DELAY(1000);
-	}
-
-	/* Configure: master mode, fast speed, restart enable, 7-bit addr */
-	bus_space_write_4(mem_tag, i2c_handle, DW_IC_CON,
-	    DW_IC_CON_MASTER | DW_IC_CON_SPEED_FS |
-	    DW_IC_CON_RESTART_EN | DW_IC_CON_SLAVE_DIS);
-
-	/* Set target address to RT286 */
-	bus_space_write_4(mem_tag, i2c_handle, DW_IC_TAR,
-	    SST_I2C0_CODEC_ADDR);
-
-	/* Disable all interrupts */
-	bus_space_write_4(mem_tag, i2c_handle, DW_IC_INTR_MASK, 0);
-
-	/* Clear any pending interrupts */
-	bus_space_read_4(mem_tag, i2c_handle, DW_IC_CLR_INTR);
-
-	/* Enable the controller */
-	bus_space_write_4(mem_tag, i2c_handle, DW_IC_ENABLE, 1);
-	DELAY(10000);
-
-	/* Wait for enable */
-	for (timeout = 100; timeout > 0; timeout--) {
-		uint32_t en_status = bus_space_read_4(mem_tag, i2c_handle,
-		    DW_IC_ENABLE_STATUS);
-		if (en_status & 1)
-			break;
-		DELAY(1000);
-	}
-
-	if (timeout <= 0) {
-		device_printf(sc->dev, "  I2C enable timed out\n");
-		goto disable_out;
-	}
-
-	device_printf(sc->dev, "  I2C controller enabled, trying codec read...\n");
 
 	/*
-	 * RT286 codec uses HDA-verb-like commands over I2C.
-	 * To read vendor ID:
-	 *   Send 4 bytes: verb command for GET_PARAM(AC_NODE_ROOT, AC_PAR_VENDOR_ID)
-	 *   Verb = 0x000F0000 (node=0x00, verb=0xF00, param=0x00)
-	 *
-	 * The I2C protocol for RT286:
-	 *   Write: [addr_hi] [addr_lo] [data_hi] [data_lo]
-	 *   Read:  [addr_hi] [addr_lo] RESTART [read] [read] [read] [read]
-	 *
-	 * For reading vendor ID: write 0x00 0xF0 0x00 0x00
+	 * Legacy I2C codec probe - functionality moved to sst_codec.c.
+	 * Full codec init is now done by sst_codec_init() / sst_codec_enable_speaker().
 	 */
-	{
-		uint32_t abort;
-		int i;
-
-		/* Clear any previous abort */
-		bus_space_read_4(mem_tag, i2c_handle, DW_IC_CLR_TX_ABRT);
-
-		/* Write the verb command bytes */
-		/* Byte 0: Node ID high (0x00) */
-		bus_space_write_4(mem_tag, i2c_handle, DW_IC_DATA_CMD, 0x00);
-		/* Byte 1: Verb ID (0xF0 = GET_PARAMETER) */
-		bus_space_write_4(mem_tag, i2c_handle, DW_IC_DATA_CMD, 0xF0);
-		/* Byte 2: Parameter high (0x00) */
-		bus_space_write_4(mem_tag, i2c_handle, DW_IC_DATA_CMD, 0x00);
-		/* Byte 3: Parameter low (0x00 = VENDOR_ID) with STOP */
-		bus_space_write_4(mem_tag, i2c_handle, DW_IC_DATA_CMD,
-		    0x00 | DW_IC_DATA_CMD_STOP);
-
-		/* Wait for TX to complete */
-		for (timeout = 1000; timeout > 0; timeout--) {
-			ic_status = bus_space_read_4(mem_tag, i2c_handle,
-			    DW_IC_STATUS);
-			if (ic_status & DW_IC_STATUS_TFE)
-				break;
-			DELAY(100);
-		}
-
-		/* Check for TX abort */
-		abort = bus_space_read_4(mem_tag, i2c_handle,
-		    DW_IC_TX_ABRT_SOURCE);
-		if (abort) {
-			device_printf(sc->dev,
-			    "  I2C TX abort: 0x%08x (codec may need different protocol)\n",
-			    abort);
-			bus_space_read_4(mem_tag, i2c_handle,
-			    DW_IC_CLR_TX_ABRT);
-		} else {
-			device_printf(sc->dev,
-			    "  I2C write completed (no abort)\n");
-		}
-
-		/* Now try a raw read to see if any data comes back */
-		/* Issue 4 read commands */
-		for (i = 0; i < 4; i++) {
-			uint32_t cmd = DW_IC_DATA_CMD_READ;
-			if (i == 3)
-				cmd |= DW_IC_DATA_CMD_STOP;
-			bus_space_write_4(mem_tag, i2c_handle,
-			    DW_IC_DATA_CMD, cmd);
-		}
-
-		/* Wait for RX data */
-		DELAY(10000);
-		for (timeout = 1000; timeout > 0; timeout--) {
-			uint32_t rxflr = bus_space_read_4(mem_tag, i2c_handle,
-			    DW_IC_RXFLR);
-			if (rxflr >= 4)
-				break;
-			DELAY(100);
-		}
-
-		/* Read whatever is in the RX FIFO */
-		{
-			uint32_t rxflr = bus_space_read_4(mem_tag, i2c_handle,
-			    DW_IC_RXFLR);
-			device_printf(sc->dev, "  RX FIFO level: %d\n", rxflr);
-
-			if (rxflr > 0) {
-				uint32_t vendor_id = 0;
-				for (i = 0; i < (int)rxflr && i < 4; i++) {
-					uint32_t data = bus_space_read_4(
-					    mem_tag, i2c_handle,
-					    DW_IC_DATA_CMD);
-					vendor_id = (vendor_id << 8) |
-					    (data & 0xFF);
-					device_printf(sc->dev,
-					    "  RX[%d]: 0x%02x\n",
-					    i, data & 0xFF);
-				}
-				device_printf(sc->dev,
-				    "  Codec response: 0x%08x\n", vendor_id);
-				if (vendor_id == RT286_VENDOR_ID)
-					device_printf(sc->dev,
-					    "  *** RT286 CODEC CONFIRMED! ***\n");
-			}
-		}
-
-		/* Check for abort on reads */
-		abort = bus_space_read_4(mem_tag, i2c_handle,
-		    DW_IC_TX_ABRT_SOURCE);
-		if (abort) {
-			device_printf(sc->dev,
-			    "  I2C read abort: 0x%08x\n", abort);
-			bus_space_read_4(mem_tag, i2c_handle,
-			    DW_IC_CLR_TX_ABRT);
-		}
-
-		/* Final status */
-		device_printf(sc->dev, "  Final IC_STATUS: 0x%08x\n",
-		    bus_space_read_4(mem_tag, i2c_handle, DW_IC_STATUS));
-		device_printf(sc->dev, "  Final RAW_INTR:  0x%08x\n",
-		    bus_space_read_4(mem_tag, i2c_handle, DW_IC_RAW_INTR_STAT));
-	}
-
-disable_out:
-	/* Disable the controller when done */
-	bus_space_write_4(mem_tag, i2c_handle, DW_IC_ENABLE, 0);
-	DELAY(10000);
-
-out:
-	bus_space_unmap(mem_tag, i2c_handle, SST_I2C0_SIZE);
+	device_printf(sc->dev,
+	    "I2C codec probe: handled by sst_codec module\n");
 }
 
 /* ================================================================
@@ -3027,6 +2806,7 @@ dsp_init:
 			error = 0;
 		} else {
 			sst_ipc_get_fw_version(sc, NULL);
+			sst_fw_alloc_module_regions(sc);
 			sst_topology_load_default(sc);
 		}
 	}
@@ -3043,6 +2823,10 @@ dsp_init:
 		sst_jack_enable(sc);
 	}
 	error = 0;
+
+	/* RT286 codec initialization and speaker enable */
+	if (sst_codec_init(sc) == 0)
+		sst_codec_enable_speaker(sc);
 
 	sc->attached = true;
 	sc->state = SST_STATE_ATTACHED;
@@ -3280,6 +3064,7 @@ sst_pci_attach(device_t dev)
 			} else {
 				/* Get firmware version */
 				sst_ipc_get_fw_version(sc, NULL);
+				sst_fw_alloc_module_regions(sc);
 				/* Load default audio topology */
 				sst_topology_load_default(sc);
 			}
@@ -3297,6 +3082,10 @@ sst_pci_attach(device_t dev)
 			sst_jack_enable(sc);
 		}
 		error = 0;
+
+		/* RT286 codec initialization and speaker enable */
+		if (sst_codec_init(sc) == 0)
+			sst_codec_enable_speaker(sc);
 
 		sc->attached = true;
 		sc->state = SST_STATE_ATTACHED;
@@ -3326,6 +3115,7 @@ sst_pci_detach(device_t dev)
 	struct sst_softc *sc = device_get_softc(dev);
 
 	/* Cleanup subsystems in reverse order of initialization */
+	sst_codec_fini(sc);
 	sst_jack_fini(sc);
 	sst_topology_fini(sc);
 	sst_pcm_fini(sc);
@@ -3368,6 +3158,7 @@ sst_acpi_detach(device_t dev)
 
 	sc = device_get_softc(dev);
 
+	sst_codec_fini(sc);
 	sst_jack_fini(sc);
 	sst_topology_fini(sc);
 	sst_pcm_fini(sc);
@@ -3447,6 +3238,7 @@ sst_acpi_resume(device_t dev)
 			sc->state = SST_STATE_ERROR;
 			return (error);
 		}
+		sst_fw_alloc_module_regions(sc);
 	}
 
 	sc->state = SST_STATE_RUNNING;

@@ -453,11 +453,7 @@
 #define SST_I2C1_SIZE		0x1000
 #define SST_I2C1_CODEC_ADDR	0x2C
 
-/* RT286 Codec I2C Verb Definitions */
+/* RT286 Codec Vendor ID (verb definitions moved to sst_codec.h) */
 #define RT286_VENDOR_ID		0x10EC0286
-#define RT286_GET_PARAM		0xF0000		/* Get Parameter verb base */
-#define RT286_SET_POWER		0x70500		/* Set Power State verb */
-#define AC_NODE_ROOT		0x00		/* Root node */
-#define AC_PAR_VENDOR_ID	0x00		/* Vendor ID parameter */
 
 #endif /* _SST_REGS_H_ */

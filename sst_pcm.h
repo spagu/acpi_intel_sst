@@ -12,6 +12,7 @@
 #define _SST_PCM_H_
 
 #include <sys/types.h>
+#include <sys/callout.h>
 
 /*
  * PCM Channel Configuration
@@ -69,9 +70,18 @@ struct sst_pcm_channel {
 
 	/* Hardware resources */
 	int			ssp_port;	/* SSP port (0 or 1) */
-	int			dma_ch;		/* DMA channel */
+	int			dma_ch;		/* DMA channel (legacy) */
 	uint32_t		stream_id;	/* DSP stream ID */
 	bool			stream_allocated; /* Stream allocated flag */
+
+	/* DSP position register (from stream alloc response) */
+	uint32_t		read_pos_regaddr; /* BAR0 offset for position */
+
+	/* Page table for DSP ring buffer (PFN array) */
+	bus_dma_tag_t		pgtbl_tag;	/* DMA tag for page table */
+	bus_dmamap_t		pgtbl_map;	/* DMA map for page table */
+	uint32_t		*pgtbl_buf;	/* Virtual address */
+	bus_addr_t		pgtbl_addr;	/* Physical address */
 
 	/* PCM channel reference for chn_intr */
 	struct pcm_channel	*pcm_ch;	/* sound(4) channel */
@@ -80,6 +90,10 @@ struct sst_pcm_channel {
 	uint32_t		format;		/* AFMT_* */
 	uint32_t		speed;		/* Sample rate */
 	uint32_t		channels;	/* Channel count */
+
+	/* Position polling (DMA interrupts don't reach host) */
+	struct callout		poll_timer;	/* Polling callout */
+	uint32_t		last_pos;	/* Last polled position */
 };
 
 /*

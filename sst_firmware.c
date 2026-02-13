@@ -344,6 +344,88 @@ sst_fw_parse(struct sst_softc *sc)
 }
 
 /*
+ * Allocate DRAM regions for module persistent/scratch memory.
+ *
+ * The catpt firmware expects the host to pre-allocate DRAM space
+ * for each module's persistent and scratch state.  These offsets
+ * are passed in the ALLOC_STREAM IPC request.
+ *
+ * We use a simple bump allocator starting after the firmware's
+ * mailbox region to avoid conflicts.
+ */
+void
+sst_fw_alloc_module_regions(struct sst_softc *sc)
+{
+	uint32_t alloc_start;
+	uint32_t i;
+
+	/*
+	 * Allocate from the beginning of DRAM.
+	 *
+	 * The catpt firmware on WPT places its mailbox near the END
+	 * of DRAM (~0x8DC98).  The firmware's IRAM-only code doesn't
+	 * use early DRAM, so we can safely allocate module regions
+	 * starting from offset 0.  The firmware runtime heap/mailbox
+	 * lives at the top of DRAM and won't conflict.
+	 */
+	alloc_start = 0;
+
+	sc->fw.dram_alloc_next = alloc_start;
+
+	device_printf(sc->dev,
+	    "DRAM allocator: start=0x%x (mbox ends ~0x%x)\n",
+	    alloc_start,
+	    (uint32_t)(sc->ipc.mbox_out + SST_MBOX_SIZE_OUT));
+
+	for (i = 0; i < SST_MAX_MODULES; i++) {
+		if (!sc->fw.mod[i].present)
+			continue;
+
+		/* Allocate persistent memory */
+		if (sc->fw.mod[i].persistent_size > 0) {
+			sc->fw.mod[i].persistent_offset =
+			    sc->fw.dram_alloc_next;
+			sc->fw.dram_alloc_next +=
+			    roundup2(sc->fw.mod[i].persistent_size, 64);
+		}
+
+		/* Allocate scratch memory */
+		if (sc->fw.mod[i].scratch_size > 0) {
+			sc->fw.mod[i].scratch_offset =
+			    sc->fw.dram_alloc_next;
+			sc->fw.dram_alloc_next +=
+			    roundup2(sc->fw.mod[i].scratch_size, 64);
+		}
+
+		if (sc->fw.mod[i].persistent_size > 0 ||
+		    sc->fw.mod[i].scratch_size > 0) {
+			device_printf(sc->dev,
+			    "  Module %u: persist @0x%x (%u bytes) "
+			    "scratch @0x%x (%u bytes)\n",
+			    i,
+			    sc->fw.mod[i].persistent_offset,
+			    sc->fw.mod[i].persistent_size,
+			    sc->fw.mod[i].scratch_offset,
+			    sc->fw.mod[i].scratch_size);
+		}
+	}
+
+	/* Warn if allocations reach the mailbox area */
+	if (sc->fw.dram_alloc_next > sc->ipc.mbox_in) {
+		device_printf(sc->dev,
+		    "WARNING: DRAM alloc 0x%x overlaps mailbox 0x%lx!\n",
+		    sc->fw.dram_alloc_next,
+		    (unsigned long)sc->ipc.mbox_in);
+	}
+
+	device_printf(sc->dev,
+	    "DRAM allocator: used 0x%x - 0x%x (%u bytes, mbox@0x%lx)\n",
+	    alloc_start, sc->fw.dram_alloc_next,
+	    sc->fw.dram_alloc_next - alloc_start,
+	    (unsigned long)sc->ipc.mbox_in);
+}
+
+/*
  * Initialize firmware subsystem
  */
 int
@@ -355,6 +437,7 @@ sst_fw_init(struct sst_softc *sc)
 	sc->fw.entry_point = 0;
 	sc->fw.modules = 0;
 	sc->fw.state = SST_FW_STATE_NONE;
+	sc->fw.dram_alloc_next = 0;
 
 	return (0);
 }
@@ -747,11 +830,14 @@ sst_fw_boot(struct sst_softc *sc)
 		    fw_ready.inbox_size > 0 &&
 		    fw_ready.outbox_size > 0) {
 			/*
-			 * catpt fw_ready offsets are absolute from BAR0.
-			 * Use them directly for host MMIO access.
+			 * catpt fw_ready naming is from HOST perspective:
+			 *   inbox_offset  = where host receives (DSP→Host)
+			 *   outbox_offset = where host sends    (Host→DSP)
+			 * Our mbox_in = Host→DSP = fw outbox_offset
+			 * Our mbox_out = DSP→Host = fw inbox_offset
 			 */
-			sc->ipc.mbox_in = fw_ready.inbox_offset;
-			sc->ipc.mbox_out = fw_ready.outbox_offset;
+			sc->ipc.mbox_in = fw_ready.outbox_offset;
+			sc->ipc.mbox_out = fw_ready.inbox_offset;
 			device_printf(sc->dev,
 			    "IPC mailbox configured: "
 			    "in=BAR0+0x%lx (%lu bytes) "

@@ -156,18 +156,25 @@ enum sst_dma_state {
 };
 
 /*
+ * Max linked-list descriptors per channel (for circular DMA)
+ */
+#define SST_DMA_MAX_LLI		256
+
+/*
  * DMA Channel Configuration
  */
 struct sst_dma_config {
 	bus_addr_t	src;		/* Source address */
 	bus_addr_t	dst;		/* Destination address */
-	size_t		size;		/* Transfer size */
+	size_t		size;		/* Total transfer size (full buffer) */
 	uint32_t	direction;	/* Transfer direction */
 	uint32_t	src_width;	/* Source width */
 	uint32_t	dst_width;	/* Destination width */
 	uint32_t	src_burst;	/* Source burst size */
 	uint32_t	dst_burst;	/* Destination burst size */
 	bool		circular;	/* Circular buffer mode */
+	size_t		blk_size;	/* Block size (for circular mode) */
+	uint32_t	blk_count;	/* Block count (for circular mode) */
 };
 
 /*
@@ -179,6 +186,13 @@ struct sst_dma_channel {
 	struct sst_dma_config	config;		/* Configuration */
 	void			(*callback)(void *);	/* Completion callback */
 	void			*callback_arg;
+
+	/* Linked-list descriptors for circular DMA */
+	struct sst_dma_desc	*lli;		/* LLI array (virtual) */
+	bus_addr_t		lli_addr;	/* LLI array (physical) */
+	bus_dma_tag_t		lli_tag;	/* DMA tag for LLI */
+	bus_dmamap_t		lli_map;	/* DMA map for LLI */
+	uint32_t		lli_count;	/* Number of LLI entries */
 };
 
 /*

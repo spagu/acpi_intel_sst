@@ -89,9 +89,42 @@ sst_ipc_send(struct sst_softc *sc, uint32_t header, void *data, size_t size)
 		goto done;
 	}
 
-	/* Write data to mailbox */
+	/*
+	 * Write data to mailbox (DRAM/SRAM).
+	 *
+	 * CRITICAL: Must use 32-bit writes!  PCH SRAM on Broadwell
+	 * does not support sub-DWORD MMIO writes - byte writes via
+	 * bus_write_region_1() are silently dropped.
+	 */
 	if (data != NULL && size > 0) {
-		bus_write_region_1(sc->mem_res, sc->ipc.mbox_in, data, size);
+		uint32_t dwords = size / 4;
+		uint32_t remainder = size % 4;
+		uint32_t k;
+		const uint8_t *src = data;
+
+		for (k = 0; k < dwords; k++) {
+			uint32_t val;
+			memcpy(&val, src + (k * 4), 4);
+			bus_write_4(sc->mem_res,
+			    sc->ipc.mbox_in + (k * 4), val);
+		}
+		if (remainder > 0) {
+			uint32_t val = 0;
+			memcpy(&val, src + (dwords * 4), remainder);
+			bus_write_4(sc->mem_res,
+			    sc->ipc.mbox_in + (dwords * 4), val);
+		}
+	}
+
+	/* Readback verify (first 3 dwords) */
+	if (data != NULL && size >= 12) {
+		uint32_t rb0, rb1, rb2;
+		rb0 = bus_read_4(sc->mem_res, sc->ipc.mbox_in);
+		rb1 = bus_read_4(sc->mem_res, sc->ipc.mbox_in + 4);
+		rb2 = bus_read_4(sc->mem_res, sc->ipc.mbox_in + 8);
+		device_printf(sc->dev,
+		    "IPC: mbox readback @0x%lx: %08x %08x %08x\n",
+		    (unsigned long)sc->ipc.mbox_in, rb0, rb1, rb2);
 	}
 
 	/* Setup message context */
@@ -152,16 +185,16 @@ sst_ipc_recv(struct sst_softc *sc, uint32_t *header, void *data, size_t *size)
 		*header = ipcd;
 
 	/*
-	 * Read data from outbox mailbox.
-	 * In catpt, reply size is not in the header - caller specifies
-	 * expected size. Read up to caller's buffer size from outbox.
+	 * Copy reply data from ISR-cached buffer.
+	 * The ISR copies outbox data before clearing DONE to avoid
+	 * race with DSP overwriting the outbox.
 	 */
 	if (data != NULL && size != NULL && *size > 0) {
 		recv_size = *size;
-		if (recv_size > SST_MBOX_SIZE_OUT)
-			recv_size = SST_MBOX_SIZE_OUT;
-		bus_read_region_1(sc->mem_res, sc->ipc.mbox_out, data,
-				  recv_size);
+		if (recv_size > sc->ipc.reply_size)
+			recv_size = sc->ipc.reply_size;
+
+		memcpy(data, sc->ipc.reply_data, recv_size);
 		*size = recv_size;
 	}
 
@@ -354,6 +387,27 @@ sst_ipc_intr(struct sst_softc *sc)
 
 		ipcx = sst_shim_read(sc, SST_SHIM_IPCX);
 
+		/*
+		 * Copy reply data from mbox_in BEFORE clearing DONE.
+		 *
+		 * The catpt firmware writes the IPC reply to the same
+		 * mailbox region where the host wrote the command
+		 * (mbox_in / "outbox"), overwriting the command data.
+		 * The "inbox" region only holds the FW_READY notification.
+		 */
+		{
+			uint32_t dwords, k;
+			uint8_t *dst = sc->ipc.reply_data;
+
+			sc->ipc.reply_size = SST_IPC_REPLY_MAX;
+			dwords = SST_IPC_REPLY_MAX / 4;
+			for (k = 0; k < dwords; k++) {
+				uint32_t val = bus_read_4(sc->mem_res,
+				    sc->ipc.mbox_in + (k * 4));
+				memcpy(dst + (k * 4), &val, 4);
+			}
+		}
+
 		mtx_lock(&sc->ipc.lock);
 
 		/* Extract status from reply (bits 4:0) */
@@ -487,8 +541,25 @@ sst_ipc_alloc_stream(struct sst_softc *sc, struct sst_alloc_stream_req *req,
 	header = SST_IPC_HEADER(SST_IPC_GLBL_ALLOCATE_STREAM, 0, 0);
 
 	device_printf(sc->dev,
-	    "IPC: alloc stream path=%u type=%u fmt=%u paysize=%zu\n",
-	    req->path_id, req->stream_type, req->format_id, paysize);
+	    "IPC: alloc stream path=%u type=%u fmt=%u "
+	    "paysize=%zu off=%zu arrsz=%zu\n",
+	    req->path_id, req->stream_type, req->format_id,
+	    paysize, off, arrsz);
+
+	/* Debug: dump full payload in 16-byte lines */
+	{
+		size_t j;
+		for (j = 0; j < paysize; j += 16) {
+			size_t end = j + 16;
+			size_t k;
+			if (end > paysize)
+				end = paysize;
+			device_printf(sc->dev, "IPC: [%02zu]", j);
+			for (k = j; k < end; k++)
+				printf(" %02x", payload[k]);
+			printf("\n");
+		}
+	}
 
 	error = sst_ipc_send(sc, header, payload, paysize);
 	if (error) {
@@ -503,6 +574,41 @@ sst_ipc_alloc_stream(struct sst_softc *sc, struct sst_alloc_stream_req *req,
 		device_printf(sc->dev, "IPC: Stream alloc recv failed: %d\n",
 		    error);
 		return (error);
+	}
+
+	/* Debug: dump first 48 bytes from both mailbox locations */
+	{
+		uint32_t d[12];
+		int j;
+
+		/* Read from mbox_out (inbox, where DSP should write reply) */
+		for (j = 0; j < 12; j++)
+			d[j] = bus_read_4(sc->mem_res,
+			    sc->ipc.mbox_out + j * 4);
+		device_printf(sc->dev,
+		    "IPC: mbox_out @0x%lx: %08x %08x %08x %08x "
+		    "%08x %08x %08x %08x\n",
+		    (unsigned long)sc->ipc.mbox_out,
+		    d[0], d[1], d[2], d[3], d[4], d[5], d[6], d[7]);
+
+		/* Read from mbox_in (outbox, where we sent command) */
+		for (j = 0; j < 12; j++)
+			d[j] = bus_read_4(sc->mem_res,
+			    sc->ipc.mbox_in + j * 4);
+		device_printf(sc->dev,
+		    "IPC: mbox_in  @0x%lx: %08x %08x %08x %08x "
+		    "%08x %08x %08x %08x\n",
+		    (unsigned long)sc->ipc.mbox_in,
+		    d[0], d[1], d[2], d[3], d[4], d[5], d[6], d[7]);
+
+		/* Also check the ISR cached reply */
+		device_printf(sc->dev,
+		    "IPC: cached reply[0..7]: %02x %02x %02x %02x "
+		    "%02x %02x %02x %02x\n",
+		    sc->ipc.reply_data[0], sc->ipc.reply_data[1],
+		    sc->ipc.reply_data[2], sc->ipc.reply_data[3],
+		    sc->ipc.reply_data[4], sc->ipc.reply_data[5],
+		    sc->ipc.reply_data[6], sc->ipc.reply_data[7]);
 	}
 
 	device_printf(sc->dev,
@@ -611,6 +717,61 @@ sst_ipc_stream_get_position(struct sst_softc *sc, uint32_t stream_id,
 	if (pos != NULL)
 		memset(pos, 0, sizeof(*pos));
 	return (0);
+}
+
+/*
+ * Set device formats (SSP hardware config) - catpt_ipc_set_device_format
+ *
+ * Configures the SSP port: interface, MCLK, mode, clock divider, channels.
+ * This is NOT audio format - it's SSP hardware configuration.
+ */
+int
+sst_ipc_set_device_formats(struct sst_softc *sc,
+			   struct sst_device_format *devfmt)
+{
+	uint32_t header;
+
+	header = SST_IPC_HEADER(SST_IPC_GLBL_SET_DEVICE_FORMATS, 0, 0);
+
+	device_printf(sc->dev,
+	    "IPC: set_device_formats iface=%u mclk=%u mode=%u "
+	    "clkdiv=%u ch=%u (size=%zu)\n",
+	    devfmt->iface, devfmt->mclk, devfmt->mode,
+	    devfmt->clock_divider, devfmt->channels,
+	    sizeof(*devfmt));
+
+	return sst_ipc_send(sc, header, devfmt, sizeof(*devfmt));
+}
+
+/*
+ * Set stream write position - catpt_ipc_set_write_pos
+ *
+ * Tells the DSP how far the host has written in the ring buffer.
+ * The DSP reads from read_pos up to write_pos.
+ *
+ * Payload: struct { uint32_t position; bool end_of_buffer; bool low_latency; }
+ * Header: STREAM_MESSAGE / STAGE_MESSAGE / SET_WRITE_POS
+ */
+int
+sst_ipc_set_write_pos(struct sst_softc *sc, uint32_t stream_id,
+		      uint32_t pos, bool end_of_buffer)
+{
+	uint32_t header;
+	struct {
+		uint32_t position;
+		uint32_t end_of_buffer;
+		uint32_t low_latency;
+	} __packed payload;
+
+	header = SST_IPC_STREAM_HEADER(SST_IPC_STR_STAGE_MESSAGE, stream_id);
+	header |= (SST_IPC_STG_SET_WRITE_POS << SST_IPC_STR_STAGE_SHIFT);
+
+	memset(&payload, 0, sizeof(payload));
+	payload.position = pos;
+	payload.end_of_buffer = end_of_buffer ? 1 : 0;
+	payload.low_latency = 0;
+
+	return sst_ipc_send(sc, header, &payload, sizeof(payload));
 }
 
 /*

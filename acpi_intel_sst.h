@@ -47,6 +47,7 @@
 #include "sst_dma.h"
 #include "sst_pcm.h"
 #include "sst_jack.h"
+#include "sst_codec.h"
 #include "sst_topology.h"
 
 /* ACPI IDs for Broadwell-U Audio DSP */
@@ -102,6 +103,9 @@ struct sst_softc {
 
 	/* Jack detection */
 	struct sst_jack		jack;
+
+	/* Codec (RT286) */
+	struct sst_codec	codec;
 
 	/* Topology (audio pipeline) */
 	struct sst_topology	topology;

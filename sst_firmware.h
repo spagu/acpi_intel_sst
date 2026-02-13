@@ -93,6 +93,8 @@ struct sst_fw_mod_info {
 	uint32_t	entry_point;
 	uint32_t	persistent_size;
 	uint32_t	scratch_size;
+	uint32_t	persistent_offset;	/* Allocated DRAM offset */
+	uint32_t	scratch_offset;		/* Allocated DRAM offset */
 	bool		present;
 };
 
@@ -109,6 +111,9 @@ struct sst_firmware {
 
 	/* Module info table (indexed by module_id) */
 	struct sst_fw_mod_info	mod[SST_MAX_MODULES];
+
+	/* DRAM bump allocator for module persistent/scratch memory */
+	uint32_t		dram_alloc_next;	/* Next free DRAM offset */
 };
 
 /* Forward declaration */
@@ -122,5 +127,6 @@ void	sst_fw_fini(struct sst_softc *sc);
 int	sst_fw_load(struct sst_softc *sc);
 void	sst_fw_unload(struct sst_softc *sc);
 int	sst_fw_boot(struct sst_softc *sc);
+void	sst_fw_alloc_module_regions(struct sst_softc *sc);
 
 #endif /* _SST_FIRMWARE_H_ */
