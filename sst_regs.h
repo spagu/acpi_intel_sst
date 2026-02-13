@@ -54,13 +54,26 @@
  * Register layouts differ between LPT (Haswell) and WPT (Broadwell):
  */
 
-/* WPT (Wildcat Point = Broadwell-U) VDRTCTL0 bit definitions */
-#define SST_WPT_VDRTCTL0_D3PGD		(1 << 0)	/* Bit 0: D3 Power Gate Disable */
-#define SST_WPT_VDRTCTL0_D3SRAMPGD	(1 << 1)	/* Bit 1: D3 SRAM Power Gate Disable */
-#define SST_WPT_VDRTCTL0_ISRAMPGE_MASK	0xFFC		/* Bits 2-11: IRAM Power Gate Enable (10 blocks) */
-#define SST_WPT_VDRTCTL0_ISRAMPGE_SHIFT	2
-#define SST_WPT_VDRTCTL0_DSRAMPGE_MASK	0xFF000		/* Bits 12-19: DRAM Power Gate Enable (8 blocks) */
-#define SST_WPT_VDRTCTL0_DSRAMPGE_SHIFT	12
+/*
+ * WPT (Wildcat Point = Broadwell-U) VDRTCTL0 bit definitions
+ * From Linux catpt driver: sound/soc/intel/catpt/registers.h
+ *
+ * Layout:
+ *   Bit 0:     Reserved
+ *   Bit 1:     D3PGD (D3 Power Gate Disable)
+ *   Bit 2:     D3SRAMPGD (D3 SRAM Power Gate Disable)
+ *   Bits 3-8:  ISRAMPGE (IRAM Power Gate Enable, 6 blocks)
+ *   Bits 9-20: DSRAMPGE (DRAM Power Gate Enable, 12 blocks)
+ *   Bits 21-23: Reserved
+ *   Bit 24:    CPA (Clock Power Active, read-only)
+ */
+#define SST_WPT_VDRTCTL0_D3PGD		(1 << 1)	/* Bit 1: D3 Power Gate Disable */
+#define SST_WPT_VDRTCTL0_D3SRAMPGD	(1 << 2)	/* Bit 2: D3 SRAM Power Gate Disable */
+#define SST_WPT_VDRTCTL0_ISRAMPGE_MASK	0x1F8		/* Bits 3-8: IRAM Power Gate Enable (6 blocks) */
+#define SST_WPT_VDRTCTL0_ISRAMPGE_SHIFT	3
+#define SST_WPT_VDRTCTL0_DSRAMPGE_MASK	0x1FFE00	/* Bits 9-20: DRAM Power Gate Enable (12 blocks) */
+#define SST_WPT_VDRTCTL0_DSRAMPGE_SHIFT	9
+#define SST_WPT_VDRTCTL0_CPA		(1 << 24)	/* Bit 24: Clock Power Active (read-only status) */
 
 /* LPT (Lynx Point = Haswell) VDRTCTL0 bit definitions */
 #define SST_LPT_VDRTCTL0_APLLSE		(1 << 0)	/* Bit 0: Audio PLL Shutdown Enable */
