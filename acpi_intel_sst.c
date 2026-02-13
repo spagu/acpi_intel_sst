@@ -3170,11 +3170,14 @@ sst_pci_attach(device_t dev)
 				sst_ipc_get_fw_version(sc, NULL);
 				/* Load default audio topology */
 				sst_topology_load_default(sc);
+				device_printf(dev, "DEBUG-v28: After topology load\n");
 			}
 		}
 
+		device_printf(dev, "DEBUG-v28: Before PCM check\n");
+
 		/* Register PCM device if firmware is running */
-		device_printf(dev, "PCI: fw.state=%d, SST_FW_STATE_RUNNING=%d\n",
+		device_printf(dev, "DEBUG-v28: fw.state=%d, SST_FW_STATE_RUNNING=%d\n",
 		    sc->fw.state, SST_FW_STATE_RUNNING);
 		if (sc->fw.state == SST_FW_STATE_RUNNING) {
 			device_printf(dev, "PCI: Calling sst_pcm_register()\n");
