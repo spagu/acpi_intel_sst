@@ -3354,7 +3354,7 @@ sst_acpi_resume(device_t dev)
  * ================================================================ */
 
 
-/* DISABLED: ACPI driver causes SRAM reset when both drivers are active
+/* ACPI driver - handles INT3438 when device is hidden on PCI */
 static device_method_t sst_methods[] = {
 	DEVMETHOD(device_probe,		sst_acpi_probe),
 	DEVMETHOD(device_attach,	sst_acpi_attach),
@@ -3369,7 +3369,6 @@ static driver_t sst_driver = {
 	sst_methods,
 	sizeof(struct sst_softc),
 };
-*/
 
 static device_method_t sst_pci_methods[] = {
 	/* PCI probe/attach */
