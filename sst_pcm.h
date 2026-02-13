@@ -85,6 +85,7 @@ struct sst_pcm_channel {
 
 	/* PCM channel reference for chn_intr */
 	struct pcm_channel	*pcm_ch;	/* sound(4) channel */
+	struct snd_dbuf		*sndbuf;	/* sound(4) hardware buffer */
 
 	/* Format */
 	uint32_t		format;		/* AFMT_* */
@@ -94,6 +95,7 @@ struct sst_pcm_channel {
 	/* Position polling (DMA interrupts don't reach host) */
 	struct callout		poll_timer;	/* Polling callout */
 	uint32_t		last_pos;	/* Last polled position */
+	int			dbg_polls;	/* Debug poll counter */
 };
 
 /*

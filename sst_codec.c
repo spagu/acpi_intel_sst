@@ -459,7 +459,7 @@ static const struct {
 	{ 0x03, 0x0002 },	/* Power control 3 */
 	{ 0x04, 0xAF01 },	/* Vendor-specific */
 	{ 0x08, 0x2004 },	/* Vendor-specific */
-	{ 0x09, 0x0400 },	/* I2S control - 24-bit I2S mode */
+	{ 0x09, 0xd010 },	/* I2S control: consumer, I2S mode (Linux default 0xd810 with bit 11 cleared) */
 	{ 0x0A, 0x0000 },	/* I2S control 2 */
 	{ 0x0D, 0x0000 },	/* DC gain calibration */
 	{ 0x0E, 0x2000 },	/* Vendor-specific */
@@ -589,12 +589,24 @@ sst_codec_enable_speaker(struct sst_softc *sc)
 
 	device_printf(sc->dev, "codec: enabling speaker output...\n");
 
-	/* Audio Function Group → D0 */
+	/*
+	 * Audio Function Group → D0, with PLL clock source.
+	 * Linux catpt sets RT286_SCLK_S_PLL (bit 6 = 0x40) to use
+	 * the codec's internal PLL driven by MCLK from SSP.
+	 */
 	error = sst_codec_write(sc,
-	    RT286_SET_POWER(RT286_NID_AFG), RT286_PWR_D0);
+	    RT286_SET_POWER(RT286_NID_AFG), RT286_PWR_D0 | 0x40);
 	if (error)
 		return (error);
 	DELAY(50000);	/* 50ms for AFG power up */
+
+	/*
+	 * Configure I2S interface for consumer (slave) mode.
+	 * Index 0x09 was set to 0xd010 in init defaults, but
+	 * reinforce it here in case of power cycle.
+	 */
+	sst_codec_index_update_bits(sc, RT286_IDX_I2S_CTRL1,
+	    0x0F00, 0x0000);	/* bits[11:8] = 0: consumer, I2S mode */
 
 	/* DC gain calibration: set bit 9, wait, clear */
 	sst_codec_index_update_bits(sc, RT286_IDX_DC_GAIN, 0x0200, 0x0200);
@@ -618,7 +630,11 @@ sst_codec_enable_speaker(struct sst_softc *sc)
 	    RT286_SET_POWER(RT286_NID_SPK), RT286_PWR_D0);
 	DELAY(20000);	/* 20ms for widget power */
 
-	/* Set DAC format: 48kHz / 16-bit / 2ch */
+	/*
+	 * Set DAC format: 48kHz / 16-bit / 2ch.
+	 * Bit 15 = 0 selects I2S input (not HDA link).
+	 * Linux rt286_set_dai_fmt() explicitly clears bit 15.
+	 */
 	error = sst_codec_write(sc,
 	    RT286_SET_FORMAT(RT286_NID_DAC0), RT286_FMT_48K_16B_2CH);
 	if (error) {
@@ -668,9 +684,9 @@ sst_codec_enable_headphone(struct sst_softc *sc)
 
 	device_printf(sc->dev, "codec: enabling headphone output...\n");
 
-	/* Audio Function Group → D0 (may already be) */
+	/* Audio Function Group → D0 with PLL clock */
 	sst_codec_write(sc,
-	    RT286_SET_POWER(RT286_NID_AFG), RT286_PWR_D0);
+	    RT286_SET_POWER(RT286_NID_AFG), RT286_PWR_D0 | 0x40);
 	DELAY(50000);
 
 	/* Power up DAC1 and HP pin → D0 */

@@ -390,6 +390,7 @@ sst_chan_init(kobj_t obj, void *devinfo, struct snd_dbuf *b,
 	ch->state = SST_PCM_STATE_INIT;
 	ch->ptr = 0;
 	ch->pcm_ch = c;
+	ch->sndbuf = b;
 
 	/* Allocate DMA buffer */
 	device_printf(sc->dev, "PCM: allocating DMA buffer\n");
@@ -559,11 +560,18 @@ sst_pcm_alloc_dsp_stream(struct sst_softc *sc, struct sst_pcm_channel *ch)
 	memset(&req, 0, sizeof(req));
 	memset(&rsp, 0, sizeof(rsp));
 
-	/* Path and stream type (uint32_t - matches catpt enum size) */
+	/*
+	 * Path and stream type (uint32_t - matches catpt enum size).
+	 *
+	 * Use SYSTEM type for normal PCM playback, not RENDER.
+	 * RENDER is for offload (compressed) streams that require
+	 * explicit SET_WRITE_POS ping-pong.  SYSTEM streams let the
+	 * DSP manage the ring buffer autonomously.
+	 */
 	if (ch->dir == PCMDIR_PLAY) {
 		req.path_id = SST_PATH_SSP0_OUT;
-		req.stream_type = SST_STREAM_TYPE_RENDER;
-		mod_id = SST_MODID_PCM;
+		req.stream_type = SST_STREAM_TYPE_SYSTEM;
+		mod_id = SST_MODID_PCM_SYSTEM;
 	} else {
 		req.path_id = SST_PATH_SSP0_IN;
 		req.stream_type = SST_STREAM_TYPE_CAPTURE;
@@ -680,6 +688,11 @@ sst_pcm_free_dsp_stream(struct sst_softc *sc, struct sst_pcm_channel *ch)
 	if (!ch->stream_allocated)
 		return;
 
+	/*
+	 * Linux catpt hw_free sequence: RESET then FREE.
+	 * The DSP requires the stream to be reset before freeing.
+	 */
+	sst_ipc_stream_reset(sc, ch->stream_id);
 	sst_ipc_free_stream(sc, ch->stream_id);
 	ch->stream_allocated = false;
 	ch->stream_id = 0;
@@ -699,7 +712,6 @@ sst_pcm_poll(void *arg)
 	struct sst_pcm_channel *ch = arg;
 	struct sst_softc *sc = ch->sc;
 	uint32_t pos;
-	static int dbg_count = 0;
 
 	if (ch->state != SST_PCM_STATE_RUNNING)
 		return;
@@ -714,12 +726,13 @@ sst_pcm_poll(void *arg)
 	if (ch->buf_size > 0)
 		pos = pos % ch->buf_size;
 
-	/* Debug: show first few polls */
-	if (dbg_count < 10) {
+	/* Debug: show first few polls after each start */
+	if (ch->dbg_polls < 20) {
 		device_printf(sc->dev,
-		    "poll[%d]: pos=%u last=%u (reg=0x%x)\n",
-		    dbg_count, pos, ch->last_pos, ch->read_pos_regaddr);
-		dbg_count++;
+		    "poll[%d]: pos=%u last=%u (reg=0x%x buf=%zu blk=%u)\n",
+		    ch->dbg_polls, pos, ch->last_pos, ch->read_pos_regaddr,
+		    ch->buf_size, ch->blk_size);
+		ch->dbg_polls++;
 	}
 
 	/* If position crossed a block boundary, notify sound(4) */
@@ -794,7 +807,15 @@ sst_chan_trigger(kobj_t obj, void *data, int go)
 			/* Non-fatal - try to continue */
 		}
 
-		/* Step 3: Resume (start) DSP stream */
+		/*
+		 * Step 3: Prepare stream (catpt prepare sequence).
+		 * Linux catpt does RESET+PAUSE before RESUME to put
+		 * the stream into a known state.
+		 */
+		sst_ipc_stream_reset(sc, ch->stream_id);
+		sst_ipc_stream_pause(sc, ch->stream_id);
+
+		/* Step 4: Resume (start) DSP stream */
 		error = sst_ipc_stream_resume(sc, ch->stream_id);
 		if (error) {
 			device_printf(sc->dev,
@@ -803,24 +824,26 @@ sst_chan_trigger(kobj_t obj, void *data, int go)
 			return (error);
 		}
 
-		/* Step 4: Tell DSP the entire buffer is available */
-		error = sst_ipc_set_write_pos(sc, ch->stream_id,
-		    ch->buf_size, false);
-		if (error) {
-			device_printf(sc->dev,
-			    "SET_WRITE_POS failed: %d\n", error);
-			/* Non-fatal */
-		}
+		/*
+		 * No SET_WRITE_POS needed for SYSTEM type streams.
+		 * The DSP manages the ring buffer autonomously using
+		 * the page table provided at ALLOC_STREAM time.
+		 * SET_WRITE_POS is only for RENDER (offload) streams.
+		 */
 
 		/* Initialize position tracking */
 		ch->ptr = 0;
 		ch->last_pos = 0;
+		ch->dbg_polls = 0;
 		ch->state = SST_PCM_STATE_RUNNING;
 
 		device_printf(sc->dev,
 		    "PCM: %s started (stream=%u read_pos=0x%x)\n",
 		    (ch->dir == PCMDIR_PLAY) ? "playback" : "capture",
 		    ch->stream_id, ch->read_pos_regaddr);
+
+		/* Dump SSP0 registers for debugging */
+		sst_ssp_dump_regs(sc, 0);
 
 		/* Start position polling timer */
 		callout_reset(&ch->poll_timer, SST_PCM_POLL_TICKS,
@@ -854,6 +877,12 @@ sst_chan_trigger(kobj_t obj, void *data, int go)
 		break;
 
 	case PCMTRIG_EMLDMAWR:
+		/*
+		 * Emulated DMA write notification from sound(4).
+		 * Not needed for SYSTEM type streams - the DSP reads
+		 * the ring buffer autonomously via the page table.
+		 */
+		break;
 	case PCMTRIG_EMLDMARD:
 		break;
 	}
