@@ -84,9 +84,11 @@ struct sst_pcm_channel {
 
 /*
  * PCM Device Context
+ *
+ * Note: We use sc->dev directly with pcm_register() rather than
+ * creating a child device. The sound subsystem attaches to our device.
  */
 struct sst_pcm {
-	device_t		dev;		/* PCM device */
 	struct sst_softc	*sc;		/* Parent softc */
 
 	/* Multi-stream channels */

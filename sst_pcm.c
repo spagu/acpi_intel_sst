@@ -710,7 +710,6 @@ sst_pcm_init(struct sst_softc *sc)
 	int i;
 
 	sc->pcm.sc = sc;
-	sc->pcm.dev = NULL;
 	sc->pcm.registered = false;
 
 	/* Initialize stream counters and allocation bitmaps */
@@ -767,6 +766,12 @@ sst_pcm_fini(struct sst_softc *sc)
 
 /*
  * Register PCM device with sound(4)
+ *
+ * FreeBSD pcm_register API:
+ *   int pcm_register(device_t dev, void *devinfo, int numplay, int numrec)
+ *
+ * After registration, use pcm_addchan() to add channels and
+ * pcm_setstatus() to set the status string.
  */
 int
 sst_pcm_register(struct sst_softc *sc)
@@ -777,13 +782,6 @@ sst_pcm_register(struct sst_softc *sc)
 
 	if (sc->pcm.registered)
 		return (0);
-
-	/* Create PCM device */
-	sc->pcm.dev = device_add_child(sc->dev, "pcm", -1);
-	if (sc->pcm.dev == NULL) {
-		device_printf(sc->dev, "Failed to create PCM device\n");
-		return (ENXIO);
-	}
 
 	/* Build status string */
 	if (sc->irq_res != NULL) {
@@ -797,29 +795,38 @@ sst_pcm_register(struct sst_softc *sc)
 		    rman_get_start(sc->mem_res));
 	}
 
-	/* Register with sound subsystem */
-	error = pcm_register(sc->pcm.dev, status);
+	/*
+	 * Register with sound subsystem.
+	 * pcm_register(dev, devinfo, numplay, numrec)
+	 * - dev: our device
+	 * - devinfo: pointer to driver data (passed back to channel methods)
+	 * - numplay: number of playback channels
+	 * - numrec: number of record channels
+	 */
+	error = pcm_register(sc->dev, sc, SST_PCM_MAX_PLAY, SST_PCM_MAX_REC);
 	if (error) {
 		device_printf(sc->dev, "Failed to register PCM: %d\n", error);
-		device_delete_child(sc->dev, sc->pcm.dev);
-		sc->pcm.dev = NULL;
 		return (error);
 	}
 
-	/* Add multiple playback channels for multi-stream support */
+	/* Add playback channels */
 	for (i = 0; i < SST_PCM_MAX_PLAY; i++) {
-		pcm_addchan(sc->pcm.dev, PCMDIR_PLAY, &sst_chan_class, sc);
+		pcm_addchan(sc->dev, PCMDIR_PLAY, &sst_chan_class, sc);
 	}
 
-	/* Add multiple capture channels */
+	/* Add capture channels */
 	for (i = 0; i < SST_PCM_MAX_REC; i++) {
-		pcm_addchan(sc->pcm.dev, PCMDIR_REC, &sst_chan_class, sc);
+		pcm_addchan(sc->dev, PCMDIR_REC, &sst_chan_class, sc);
 	}
+
+	/* Set status string */
+	pcm_setstatus(sc->dev, status);
 
 	/* Register mixer */
-	error = mixer_init(sc->pcm.dev, &sst_mixer_class, sc);
+	error = mixer_init(sc->dev, &sst_mixer_class, sc);
 	if (error) {
 		device_printf(sc->dev, "Failed to register mixer: %d\n", error);
+		/* Non-fatal - continue without mixer */
 	}
 
 	sc->pcm.registered = true;
@@ -839,10 +846,7 @@ sst_pcm_unregister(struct sst_softc *sc)
 	if (!sc->pcm.registered)
 		return;
 
-	if (sc->pcm.dev != NULL) {
-		pcm_unregister(sc->pcm.dev);
-		sc->pcm.dev = NULL;
-	}
+	pcm_unregister(sc->dev);
 
 	sc->pcm.registered = false;
 }
