@@ -110,8 +110,8 @@ struct sst_softc {
 /*
  * Register Access Helpers
  *
- * For Broadwell-U (WPT/catpt), SHIM registers are in BAR0 at offset 0xE7000.
- * This is from Linux catpt driver wpt_spec.shim_offset.
+ * For Broadwell-U (WPT/catpt), SHIM registers are in BAR0 at offset 0xFB000.
+ * This is from Linux catpt driver wpt_desc.host_shim_offset.
  *
  * Note: BAR1 contains LPSS private registers (power/clock control),
  * but the actual SHIM (CSR, IPC, etc.) is within BAR0.
@@ -119,14 +119,14 @@ struct sst_softc {
 static inline uint32_t
 sst_shim_read(struct sst_softc *sc, uint32_t reg)
 {
-	/* WPT/Broadwell-U: SHIM at BAR0 + 0xE7000 */
+	/* WPT/Broadwell-U: SHIM at BAR0 + 0xFB000 (host offset) */
 	return (bus_read_4(sc->mem_res, SST_SHIM_OFFSET + reg));
 }
 
 static inline void
 sst_shim_write(struct sst_softc *sc, uint32_t reg, uint32_t val)
 {
-	/* WPT/Broadwell-U: SHIM at BAR0 + 0xE7000 */
+	/* WPT/Broadwell-U: SHIM at BAR0 + 0xFB000 (host offset) */
 	bus_write_4(sc->mem_res, SST_SHIM_OFFSET + reg, val);
 }
 
@@ -157,5 +157,13 @@ sst_dsp_read(struct sst_softc *sc, uint32_t offset)
 {
 	return (bus_read_4(sc->mem_res, offset));
 }
+
+/*
+ * DSP Control Functions
+ * Defined in acpi_intel_sst.c, used by sst_firmware.c for boot
+ */
+int	sst_dsp_stall(struct sst_softc *sc, bool stall);
+int	sst_dsp_reset(struct sst_softc *sc, bool reset);
+void	sst_dsp_set_regs_defaults(struct sst_softc *sc);
 
 #endif /* _ACPI_INTEL_SST_H_ */

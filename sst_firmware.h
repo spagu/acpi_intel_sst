@@ -36,34 +36,42 @@ struct sst_fw_header {
 
 /*
  * SST Module Header
+ * From Linux catpt loader.c: struct catpt_fw_mod_hdr
+ *
+ * IMPORTANT: Module signature is "$SST" (same as firmware header),
+ * NOT "$MOD" as some older Intel SST drivers use.
  */
 struct sst_module_header {
-	char		signature[4];	/* "MOD\0" or "$MOD" */
-	uint32_t	mod_size;	/* Module size including header */
+	char		signature[4];	/* "$SST" (same as FW header!) */
+	uint32_t	mod_size;	/* Module data size (NOT including header) */
 	uint32_t	blocks;		/* Number of blocks */
 	uint16_t	slot;		/* DSP slot index */
-	uint16_t	type;		/* Module type */
+	uint16_t	module_id;	/* Module ID */
 	uint32_t	entry_point;	/* Entry point address */
+	uint32_t	persistent_size; /* Persistent memory size */
+	uint32_t	scratch_size;	/* Scratch memory size */
 } __packed;
 
-#define SST_MOD_SIGNATURE	"$MOD"
+#define SST_MOD_SIGNATURE	"$SST"	/* Modules use same signature as FW */
 
 /*
  * SST Block Header
+ * From Linux catpt loader.c: struct catpt_fw_block_hdr
  */
 struct sst_block_header {
-	uint32_t	type;		/* Block type (IRAM/DRAM) */
+	uint32_t	ram_type;	/* Block type (IRAM/DRAM/INSTANCE) */
 	uint32_t	size;		/* Block data size */
 	uint32_t	ram_offset;	/* Offset in DSP RAM */
 	uint32_t	reserved;	/* Reserved */
 } __packed;
 
 /*
- * Block Types
+ * Block Types - from Linux catpt loader.c: enum catpt_ram_type
+ * IMPORTANT: IRAM=1, DRAM=2 (NOT 0 and 1!)
  */
-#define SST_BLK_TYPE_IRAM	0
-#define SST_BLK_TYPE_DRAM	1
-#define SST_BLK_TYPE_SRAM	2
+#define SST_BLK_TYPE_IRAM	1	/* Instruction RAM */
+#define SST_BLK_TYPE_DRAM	2	/* Data RAM */
+#define SST_BLK_TYPE_INSTANCE	3	/* DRAM with module initial state */
 
 /*
  * Firmware State

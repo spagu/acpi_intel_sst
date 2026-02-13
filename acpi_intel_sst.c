@@ -50,7 +50,7 @@
 #define PCI_DEVICE_SST_BDW	0x9CB6
 #define PCI_DEVICE_SST_HSW	0x9C76 /* Haswell pending testing */
 
-#define SST_DRV_VERSION "0.37.0-catpt-bits-fixed"
+#define SST_DRV_VERSION "0.41.0-fix-stale-ipcd"
 
 /* Forward declarations */
 static int sst_acpi_probe(device_t dev);
@@ -109,24 +109,120 @@ sst_intr(void *arg)
  * DSP Reset and Init
  * ================================================================ */
 
+/*
+ * sst_dsp_stall - Stall or unstall the DSP core
+ * Based on Linux catpt catpt_dsp_stall()
+ * STALL is at BIT(10) in CSR, NOT BIT(0)!
+ */
+int
+sst_dsp_stall(struct sst_softc *sc, bool stall)
+{
+	uint32_t csr, val, timeout;
+
+	val = stall ? SST_CSR_STALL : 0;
+	sst_shim_update_bits(sc, SST_SHIM_CSR, SST_CSR_STALL, val);
+
+	/* Poll for stall state to take effect */
+	for (timeout = 0; timeout < 20; timeout++) {
+		csr = sst_shim_read(sc, SST_SHIM_CSR);
+		if ((csr & SST_CSR_STALL) == val)
+			return (0);
+		DELAY(500);
+	}
+
+	device_printf(sc->dev, "DSP %s timeout: CSR=0x%08x\n",
+	    stall ? "stall" : "unstall", csr);
+	return (ETIMEDOUT);
+}
+
+/*
+ * sst_dsp_reset - Assert or deassert DSP reset
+ * Based on Linux catpt catpt_dsp_reset()
+ */
+int
+sst_dsp_reset(struct sst_softc *sc, bool reset)
+{
+	uint32_t csr, val, timeout;
+
+	val = reset ? SST_CSR_RST : 0;
+	sst_shim_update_bits(sc, SST_SHIM_CSR, SST_CSR_RST, val);
+
+	/* Poll for reset state to take effect */
+	for (timeout = 0; timeout < 20; timeout++) {
+		csr = sst_shim_read(sc, SST_SHIM_CSR);
+		if ((csr & SST_CSR_RST) == val)
+			return (0);
+		DELAY(500);
+	}
+
+	device_printf(sc->dev, "DSP %s timeout: CSR=0x%08x\n",
+	    reset ? "reset" : "unreset", csr);
+	return (ETIMEDOUT);
+}
+
+/*
+ * sst_dsp_set_regs_defaults - Reset SHIM registers to hardware defaults
+ * Based on Linux catpt catpt_dsp_set_regs_defaults()
+ *
+ * Hardware won't reset these registers itself, so we must do it
+ * after each power cycle.
+ */
+void
+sst_dsp_set_regs_defaults(struct sst_softc *sc)
+{
+	int i;
+
+	device_printf(sc->dev, "  Setting SHIM register defaults...\n");
+
+	/* SHIM registers */
+	sst_shim_write(sc, SST_SHIM_CSR, SST_CS_DEFAULT);
+	sst_shim_write(sc, SST_SHIM_ISRX, SST_ISC_DEFAULT);
+	sst_shim_write(sc, SST_SHIM_ISRD, SST_ISD_DEFAULT);
+	sst_shim_write(sc, SST_SHIM_IMRX, SST_IMC_DEFAULT);
+	sst_shim_write(sc, SST_SHIM_IMRD, SST_IMD_DEFAULT);
+	sst_shim_write(sc, SST_SHIM_IPCX, SST_IPCC_DEFAULT);
+	sst_shim_write(sc, SST_SHIM_IPCD, SST_IPCD_DEFAULT);
+	sst_shim_write(sc, SST_SHIM_CLKCTL, SST_CLKCTL_DEFAULT);
+	sst_shim_write(sc, SST_SHIM_CSR2, SST_CS2_DEFAULT);
+	sst_shim_write(sc, SST_SHIM_LTRC, SST_LTRC_DEFAULT);
+	sst_shim_write(sc, SST_SHIM_HMDC, SST_HMDC_DEFAULT);
+
+	/* SSP registers for both ports */
+	for (i = 0; i < 2; i++) {
+		uint32_t ssp_base = (i == 0) ? SST_SSP0_OFFSET : SST_SSP1_OFFSET;
+
+		bus_write_4(sc->mem_res, ssp_base + 0x00, SST_SSC0_DEFAULT);
+		bus_write_4(sc->mem_res, ssp_base + 0x04, SST_SSC1_DEFAULT);
+		bus_write_4(sc->mem_res, ssp_base + 0x08, SST_SSS_DEFAULT);
+		bus_write_4(sc->mem_res, ssp_base + 0x0C, SST_SSIT_DEFAULT);
+		bus_write_4(sc->mem_res, ssp_base + 0x10, SST_SSD_DEFAULT);
+		bus_write_4(sc->mem_res, ssp_base + 0x28, SST_SSTO_DEFAULT);
+		bus_write_4(sc->mem_res, ssp_base + 0x2C, SST_SSPSP_DEFAULT);
+		bus_write_4(sc->mem_res, ssp_base + 0x30, SST_SSTSA_DEFAULT);
+		bus_write_4(sc->mem_res, ssp_base + 0x34, SST_SSRSA_DEFAULT);
+		bus_write_4(sc->mem_res, ssp_base + 0x38, SST_SSTSS_DEFAULT);
+		bus_write_4(sc->mem_res, ssp_base + 0x40, SST_SSCR2_DEFAULT);
+	}
+
+	device_printf(sc->dev, "  SHIM defaults set (CSR=0x%08x)\n",
+	    sst_shim_read(sc, SST_SHIM_CSR));
+}
+
 static void
 sst_reset(struct sst_softc *sc)
 {
-	uint32_t csr;
-
 	device_printf(sc->dev, "Resetting DSP...\n");
-	/* CSR at SHIM offset 0x00 (SHIM base is BAR0+0xE7000 for WPT) */
-	csr = sst_shim_read(sc, SST_SHIM_CSR);
-	csr |= (SST_CSR_RST | SST_CSR_STALL);
-	sst_shim_write(sc, SST_SHIM_CSR, csr);
+	sst_dsp_stall(sc, true);
+	sst_dsp_reset(sc, true);
 	DELAY(SST_RESET_DELAY_US);
 }
 
 static void
 sst_init(struct sst_softc *sc)
 {
-	sst_shim_write(sc, SST_SHIM_IMRX, SST_IPC_BUSY | SST_IPC_DONE);
-	sst_shim_write(sc, SST_SHIM_IMRD, SST_IPC_BUSY | SST_IPC_DONE);
+	/* Mask all IPC interrupts initially */
+	sst_shim_write(sc, SST_SHIM_IMRX, SST_IMC_DEFAULT);
+	sst_shim_write(sc, SST_SHIM_IMRD, SST_IMD_DEFAULT);
 	sst_reset(sc);
 }
 
@@ -427,22 +523,67 @@ sst_test_bar0(struct sst_softc *sc)
 		return (false);
 
 	/* Check multiple offsets - IRAM may be all-FF when uninitialized */
-	val = bus_read_4(sc->mem_res, 0);
-	if (val != SST_INVALID_REG_VALUE)
-		return (true);
 	val = bus_read_4(sc->mem_res, SST_SHIM_OFFSET);
 	if (val != SST_INVALID_REG_VALUE)
 		return (true);
-	val = bus_read_4(sc->mem_res, 0xFB000);	/* SRAM_CTRL */
+	val = bus_read_4(sc->mem_res, SST_IRAM_OFFSET);
+	if (val != SST_INVALID_REG_VALUE)
+		return (true);
+	val = bus_read_4(sc->mem_res, SST_DRAM_OFFSET);
 	if (val != SST_INVALID_REG_VALUE)
 		return (true);
 	return (false);
 }
 
+/* BAR0 region scanner - identify which memory regions are alive */
+static void
+sst_scan_bar0(struct sst_softc *sc)
+{
+	static const struct { uint32_t off; const char *name; } regs[] = {
+		{ 0x000000, "DRAM base" },
+		{ 0x0A0000, "IRAM base" },
+		{ 0x0FB000, "SHIM (host)" },
+		{ 0x0FB004, "SHIM+4" },
+		{ 0x0FB008, "SHIM PISR" },
+		{ 0x0FB010, "SHIM PIMR" },
+		{ 0x0FB014, "SHIM ISRX" },
+		{ 0x0FB018, "SHIM ISRD" },
+		{ 0x0FB028, "SHIM IMRX" },
+		{ 0x0FB038, "SHIM IPCX" },
+		{ 0x0FB040, "SHIM IPCD" },
+		{ 0x0FB044, "SHIM+0x44" },
+		{ 0x0FB058, "SHIM CLKCTL" },
+		{ 0x0FB05C, "SHIM CS1" },
+		{ 0x0FC000, "SSP0" },
+		{ 0x0FD000, "SSP1" },
+		{ 0x0FE000, "DMA0" },
+		{ 0x0FF000, "DMA1" },
+		{ 0x0E7000, "old SHIM (LPT)" },
+	};
+	uint32_t val;
+	int i, alive = 0;
+
+	if (sc->mem_res == NULL)
+		return;
+
+	device_printf(sc->dev, "=== BAR0 Region Scan ===\n");
+	for (i = 0; i < (int)(sizeof(regs) / sizeof(regs[0])); i++) {
+		if (regs[i].off >= rman_get_size(sc->mem_res))
+			continue;
+		val = bus_read_4(sc->mem_res, regs[i].off);
+		if (val != SST_INVALID_REG_VALUE) {
+			device_printf(sc->dev, "  0x%06x %-16s = 0x%08x ALIVE\n",
+			    regs[i].off, regs[i].name, val);
+			alive++;
+		}
+	}
+	device_printf(sc->dev, "  %d regions alive\n", alive);
+}
+
 /* ================================================================
  * Enable SRAM Power via BAR0 Control Register
- * Discovered through RWEverything experiments - writing to offset
- * 0xFB000 in BAR0 with bits 0-4 set enables the DSP SRAM.
+ * Note: 0xFB000 is now known to be the SHIM base (host offset).
+ * The "SRAM_CTRL" was actually the SHIM CSR register.
  * ================================================================ */
 
 #define SST_SRAM_CTRL_OFFSET	0xFB000
@@ -2062,23 +2203,23 @@ sst_acpi_attach(device_t dev)
 	    bar0_ok ? "ACCESSIBLE" : "DEAD (0xFFFFFFFF)");
 
 	if (bar0_ok) {
-		/* Probe DSP memory regions */
-		device_printf(dev, "DSP Memory Layout:\n");
-		device_printf(dev, "  IRAM  (0x%05x): 0x%08x\n",
-		    SST_IRAM_OFFSET,
-		    bus_read_4(sc->mem_res, SST_IRAM_OFFSET));
-		device_printf(dev, "  DRAM  (0x%05x): 0x%08x\n",
+		/* Scan all BAR0 regions */
+		sst_scan_bar0(sc);
+
+		/* Probe DSP memory regions (WPT offsets) */
+		device_printf(dev, "DSP Memory Layout (WPT):\n");
+		device_printf(dev, "  DRAM  (0x%06x): 0x%08x\n",
 		    SST_DRAM_OFFSET,
 		    bus_read_4(sc->mem_res, SST_DRAM_OFFSET));
-		device_printf(dev, "  SHIM  (0x%05x): 0x%08x\n",
+		device_printf(dev, "  IRAM  (0x%06x): 0x%08x\n",
+		    SST_IRAM_OFFSET,
+		    bus_read_4(sc->mem_res, SST_IRAM_OFFSET));
+		device_printf(dev, "  SHIM  (0x%06x): 0x%08x\n",
 		    SST_SHIM_OFFSET,
 		    bus_read_4(sc->mem_res, SST_SHIM_OFFSET));
-		device_printf(dev, "  MBOX  (0x%05x): 0x%08x\n",
-		    SST_MBOX_OUTBOX_OFFSET,
-		    bus_read_4(sc->mem_res, SST_MBOX_OUTBOX_OFFSET));
 
 		csr = sst_shim_read(sc, SST_SHIM_CSR);
-		device_printf(dev, "  SHIM CSR2: 0x%08x\n", csr);
+		device_printf(dev, "  SHIM CSR: 0x%08x\n", csr);
 
 		/* Continue with full DSP initialization... */
 		goto dsp_init;
@@ -2617,26 +2758,57 @@ dsp_init:
 
 	sst_init(sc);
 
-	/* Configure SHIM for Broadwell-U (catpt) mode */
+	/*
+	 * Configure SHIM for Broadwell-U (catpt) boot sequence.
+	 *
+	 * Based on Linux catpt catpt_dsp_power_up():
+	 * 1. Set register defaults (with STALL+RST in CSR)
+	 * 2. Restore MCLK
+	 * 3. Select high clock (not LP clock)
+	 * 4. Set 24MHz SSP bank clocks via SHIM CSR SBCS bits
+	 * 5. Clear RST (leave STALL set)
+	 * 6. Enable DCLCGE
+	 * 7. Clear IPC interrupt deassert (unmask IPC interrupts in IMC)
+	 */
 	{
-		uint32_t cs1;
+		uint32_t csr;
 
-		/* Set 24MHz SRAM bank clock via BAR1 */
-		cs1 = bus_read_4(sc->shim_res, SST_PCI_CS1);
-		cs1 &= ~SST_CS1_SBCS_MASK;
-		cs1 |= SST_CS1_SBCS_24MHZ;
-		bus_write_4(sc->shim_res, SST_PCI_CS1, cs1);
+		/* Step 1: Set SHIM register defaults (puts DSP in STALL+RST) */
+		sst_dsp_set_regs_defaults(sc);
 
-		/* Set CLKCTL SMOS=2 */
-		sst_shim_write(sc, SST_SHIM_CLKCTL, SST_CLKCTL_DEFAULT);
+		/* Step 2: Restore MCLK via CLKCTL SMOS bits */
+		sst_shim_update_bits(sc, SST_SHIM_CLKCTL,
+		    SST_CLKCTL_SMOS_MASK, SST_CLKCTL_SMOS_MASK);
 
-		/* Set Low Trunk Clock */
-		sst_shim_write(sc, SST_SHIM_LTRC, SST_LTRC_VAL);
+		/* Step 3: Select high clock (clear LPCS in CSR) */
+		sst_shim_update_bits(sc, SST_SHIM_CSR, SST_CSR_LPCS, 0);
 
-		/* Enable Host DMA access to all channels */
-		sst_shim_write(sc, SST_SHIM_HMDC, SST_HMDC_HDDA_ALL);
+		/* Step 4: Set 24MHz SSP bank clocks (SBCS0 + SBCS1) */
+		sst_shim_update_bits(sc, SST_SHIM_CSR,
+		    SST_CSR_SBCS0 | SST_CSR_SBCS1,
+		    SST_CSR_SBCS0 | SST_CSR_SBCS1);
 
-		device_printf(dev, "SHIM configured (catpt mode)\n");
+		/* Step 5: Clear RST (leave STALL set - DSP stalled but not reset) */
+		sst_dsp_reset(sc, false);
+
+		csr = sst_shim_read(sc, SST_SHIM_CSR);
+		device_printf(dev, "  After de-assert RST: CSR=0x%08x "
+		    "(STALL=%d RST=%d)\n",
+		    csr, !!(csr & SST_CSR_STALL), !!(csr & SST_CSR_RST));
+
+		/* Step 6: Re-enable DCLCGE */
+		{
+			uint32_t vdrtctl2 = bus_read_4(sc->shim_res,
+			    SST_PCI_VDRTCTL2);
+			vdrtctl2 |= SST_VDRTCTL2_DCLCGE;
+			bus_write_4(sc->shim_res, SST_PCI_VDRTCTL2, vdrtctl2);
+		}
+
+		/* Step 7: Clear IPC interrupt deassert (unmask IPC in IMC) */
+		sst_shim_update_bits(sc, SST_SHIM_IMRX,
+		    SST_IMC_IPCDB | SST_IMC_IPCCD, 0);
+
+		device_printf(dev, "SHIM configured (catpt boot sequence)\n");
 	}
 
 	error = sst_dma_init(sc);
@@ -2839,26 +3011,48 @@ sst_pci_attach(device_t dev)
 		/* Basic DSP init (mask interrupts, reset) */
 		sst_init(sc);
 
-		/* Configure SHIM for Broadwell-U (catpt) mode */
+		/*
+		 * Configure SHIM for catpt boot (PCI attach path)
+		 * Same sequence as ACPI attach.
+		 */
 		{
-			uint32_t cs1;
+			uint32_t csr_val;
 
-			/* Set 24MHz SRAM bank clock via BAR1 */
-			cs1 = bus_read_4(sc->shim_res, SST_PCI_CS1);
-			cs1 &= ~SST_CS1_SBCS_MASK;
-			cs1 |= SST_CS1_SBCS_24MHZ;
-			bus_write_4(sc->shim_res, SST_PCI_CS1, cs1);
+			sst_dsp_set_regs_defaults(sc);
 
-			/* Set CLKCTL SMOS=2 */
-			sst_shim_write(sc, SST_SHIM_CLKCTL, SST_CLKCTL_DEFAULT);
+			/* Restore MCLK */
+			sst_shim_update_bits(sc, SST_SHIM_CLKCTL,
+			    SST_CLKCTL_SMOS_MASK, SST_CLKCTL_SMOS_MASK);
 
-			/* Set Low Trunk Clock */
-			sst_shim_write(sc, SST_SHIM_LTRC, SST_LTRC_VAL);
+			/* Select high clock */
+			sst_shim_update_bits(sc, SST_SHIM_CSR,
+			    SST_CSR_LPCS, 0);
 
-			/* Enable Host DMA access to all channels */
-			sst_shim_write(sc, SST_SHIM_HMDC, SST_HMDC_HDDA_ALL);
+			/* Set 24MHz SSP bank clocks */
+			sst_shim_update_bits(sc, SST_SHIM_CSR,
+			    SST_CSR_SBCS0 | SST_CSR_SBCS1,
+			    SST_CSR_SBCS0 | SST_CSR_SBCS1);
 
-			device_printf(dev, "SHIM configured (catpt mode)\n");
+			/* Clear RST */
+			sst_dsp_reset(sc, false);
+
+			/* Re-enable DCLCGE */
+			{
+				uint32_t vdrtctl2 = bus_read_4(sc->shim_res,
+				    SST_PCI_VDRTCTL2);
+				vdrtctl2 |= SST_VDRTCTL2_DCLCGE;
+				bus_write_4(sc->shim_res,
+				    SST_PCI_VDRTCTL2, vdrtctl2);
+			}
+
+			/* Clear IPC interrupt deassert */
+			sst_shim_update_bits(sc, SST_SHIM_IMRX,
+			    SST_IMC_IPCDB | SST_IMC_IPCCD, 0);
+
+			csr_val = sst_shim_read(sc, SST_SHIM_CSR);
+			device_printf(dev,
+			    "SHIM configured (catpt): CSR=0x%08x\n",
+			    csr_val);
 		}
 
 		/* Initialize DMA subsystem */

@@ -17,24 +17,25 @@
 #define SST_DSP_BAR		0	/* PCI BAR for DSP */
 
 /*
- * ADSP Memory Map (Haswell/Broadwell-U)
- * All offsets within BAR0 (LPE memory region)
- * Based on Linux catpt driver
- */
-#define SST_IRAM_OFFSET		0x00000		/* Instruction RAM */
-#define SST_IRAM_SIZE		0x14000		/* 80KB */
-#define SST_DRAM_OFFSET		0x80000		/* Data RAM */
-#define SST_DRAM_SIZE		0x28000		/* 160KB */
-/*
- * SHIM registers within LPE memory (BAR0)
- * Note: Power gating must be disabled first via PCI config (VDRTCTL0)
+ * WPT (Broadwell-U) BAR0 Memory Map
+ * HOST-side offsets from Linux catpt driver wpt_desc (device.c)
  *
- * SHIM offset varies by platform:
- *   - Haswell (HSW): 0x0       (SHIM at beginning of BAR0)
- *   - Broadwell-U (WPT): 0xE7000 (from Linux catpt driver wpt_spec)
- *   - Skylake+: 0xC0000
+ * IMPORTANT: There are TWO sets of offsets in the Linux catpt driver:
+ *   wpt_spec.shim_offset = 0xE7000  (DSP-side address, NOT for host)
+ *   wpt_desc.host_shim_offset = 0xFB000  (host BAR0 offset, USE THIS)
  */
-#define SST_SHIM_OFFSET		0xE7000		/* WPT/Broadwell-U SHIM offset */
+#define SST_DRAM_OFFSET		0x000000	/* Data RAM (host) */
+#define SST_DRAM_SIZE		0x0A0000	/* 640KB (20 blocks x 32KB) */
+#define SST_IRAM_OFFSET		0x0A0000	/* Instruction RAM (host) */
+#define SST_IRAM_SIZE		0x050000	/* 320KB (10 blocks x 32KB) */
+#define SST_SHIM_OFFSET		0x0FB000	/* SHIM registers (host) */
+#define SST_SHIM_SIZE		0x001000	/* 4KB */
+#define SST_SSP0_OFFSET		0x0FC000	/* SSP0 */
+#define SST_SSP1_OFFSET		0x0FD000	/* SSP1 */
+#define SST_DMA0_OFFSET		0x0FE000	/* DW-DMA controller 0 */
+#define SST_DMA1_OFFSET		0x0FF000	/* DW-DMA controller 1 */
+#define SST_MEMBLOCK_SIZE	0x008000	/* 32KB per SRAM block */
+#define SST_DSP_DRAM_OFFSET	0x400000	/* DRAM from DSP perspective */
 
 /*
  * PCI Extended Config registers (accessed via BAR1 / shim_res)
@@ -109,14 +110,12 @@
 #define SST_PMCS_PS_MASK		0x03		/* Power State Mask */
 #define SST_PMCS_PS_D0			0x00		/* D0 Power State */
 #define SST_PMCS_PS_D3			0x03		/* D3 Power State */
-#define SST_SHIM_SIZE		0x1000		/* 4KB */
 /*
- * Mailbox offsets (from DSP perspective)
- * OUTBOX: DSP writes, Host reads (0xE0000)
- * INBOX:  DSP reads, Host writes (0xE0400)
+ * Mailbox offsets (configured dynamically via IPC in Linux catpt)
+ * These are within DRAM, offsets relative to BAR0
  */
-#define SST_MBOX_OUTBOX_OFFSET	0xE0000		/* DSP -> Host */
-#define SST_MBOX_INBOX_OFFSET	0xE0400		/* Host -> DSP */
+#define SST_MBOX_OUTBOX_OFFSET	0x00000		/* DSP -> Host (in DRAM) */
+#define SST_MBOX_INBOX_OFFSET	0x00400		/* Host -> DSP (in DRAM) */
 #define SST_MBOX_SIZE		0x400		/* 1KB each */
 
 /*
@@ -155,14 +154,15 @@
 /*
  * IMC/IMD bits (via BAR1)
  */
-#define SST_IMC_IPCDB		(1 << 0)	/* IPC Doorbell */
-#define SST_IMC_IPCCD		(1 << 1)	/* IPC Completion */
+#define SST_IMC_IPCCD		(1 << 0)	/* IPC Completion Done */
+#define SST_IMC_IPCDB		(1 << 1)	/* IPC Doorbell */
 
 /*
- * CS1 bits (via BAR1)
+ * CS1 bits - NOTE: CS1 is the SHIM CSR register (SHIM offset 0x00),
+ * NOT a BAR1/PCI register. Access via sst_shim_read/write.
+ * BAR1 offset 0x00 is PCI VID/DID, NOT CS1!
  */
-#define SST_CS1_SBCS_MASK	(0x3 << 2)	/* SSP/SRAM Bank Clock Select */
-#define SST_CS1_SBCS_24MHZ	(0x2 << 2)	/* 24MHz clock */
+#define SST_CS1_SBCS_MASK	(SST_CSR_SBCS0 | SST_CSR_SBCS1)  /* SSP Bank Clock Select */
 
 /*
  * HMDC bits - Host Memory DMA Control
@@ -175,32 +175,70 @@
 
 /*
  * LTRC bits - Low Trunk Clock
+ * Note: catpt default is 0x0, but some docs suggest 0x3003
  */
-#define SST_LTRC_VAL		0x3003		/* Default LTRC value */
+#define SST_LTRC_VAL		0x0000		/* Default LTRC value (catpt: 0) */
 
 /*
- * Default register values from Linux catpt driver
+ * Default register values - from Linux catpt registers.h
+ * These are written to reset SHIM registers after each power cycle.
  */
-#define SST_IMD_DEFAULT		0x7FFF0003	/* Default IMD value */
+#define SST_ISC_DEFAULT		0x00000000	/* Default ISC (ISRX) */
+#define SST_ISD_DEFAULT		0x00000000	/* Default ISD (ISRD) */
+#define SST_IMC_DEFAULT		0x7FFF0003	/* Default IMC (IMRX) */
+#define SST_IMD_DEFAULT		0x7FFF0003	/* Default IMD (IMRD) */
+#define SST_IPCC_DEFAULT	0x00000000	/* Default IPCC (IPCX) */
+#define SST_IPCD_DEFAULT	0x00000000	/* Default IPCD */
+#define SST_CLKCTL_DEFAULT	0x000007FF	/* Default CLKCTL */
+#define SST_CS2_DEFAULT		0x00000000	/* Default CS2 */
+#define SST_LTRC_DEFAULT	0x00000000	/* Default LTRC */
+#define SST_HMDC_DEFAULT	0x00000000	/* Default HMDC */
+
+/* SSP defaults */
 #define SST_SSC0_DEFAULT	0x00000000	/* Default SSP Control 0 */
 #define SST_SSC1_DEFAULT	0x00000000	/* Default SSP Control 1 */
+#define SST_SSS_DEFAULT		0x0000F004	/* Default SSP Status */
+#define SST_SSIT_DEFAULT	0x00000000	/* Default SSP Interrupt Test */
+#define SST_SSD_DEFAULT		0xC43893A3	/* Default SSP Data */
+#define SST_SSTO_DEFAULT	0x00000000	/* Default SSP Timeout */
+#define SST_SSPSP_DEFAULT	0x00000000	/* Default SSP Protocol */
+#define SST_SSTSA_DEFAULT	0x00000000	/* Default SSP TX Time Slot */
+#define SST_SSRSA_DEFAULT	0x00000000	/* Default SSP RX Time Slot */
+#define SST_SSTSS_DEFAULT	0x00000000	/* Default SSP TX Time Slot Stat */
+#define SST_SSCR2_DEFAULT	0x00000000	/* Default SSP Control 2 */
+#define SST_SSPSP2_DEFAULT	0x00000000	/* Default SSP Protocol 2 */
+
+/* Legacy aliases */
 #define SST_SSCFS_DEFAULT	0x00200000	/* Default SSCFS */
 #define SST_SSCFS_38_4KHZ	0x00200000	/* 38.4 kHz reference */
-#define SST_CLKCTL_DEFAULT	0x02000000	/* Default CLKCTL (SMOS=2) */
 
 /*
- * CSR Bits
+ * CSR (CS1) Bits - from Linux catpt registers.h
+ *
+ * CRITICAL: These bit positions are verified against the Linux catpt driver.
+ * STALL is at BIT(10), NOT BIT(0) as in some older Intel SST drivers.
+ * RST is at BIT(1).
  */
 #define SST_CSR_RST		(1 << 1)	/* DSP Reset */
-#define SST_CSR_STALL		(1 << 0)	/* DSP Stall */
-#define SST_CSR_PWAITMODE	(1 << 2)	/* Power Wait Mode */
+#define SST_CSR_SBCS(ssp)	(1 << (2 + (ssp))) /* SSP Bank Clock Select */
+#define SST_CSR_SBCS0		(1 << 2)	/* SSP0 Bank Clock Select */
+#define SST_CSR_SBCS1		(1 << 3)	/* SSP1 Bank Clock Select */
 #define SST_CSR_DCS_MASK	(0x7 << 4)	/* DSP Clock Select Mask */
 #define SST_CSR_DCS_SHIFT	4
-#define SST_CSR_SBCS_MASK	(0x7 << 8)	/* SRAM Bank Clock Select */
-#define SST_CSR_SBCS_SHIFT	8
+#define SST_CSR_DCS_HIGH	(0x4 << 4)	/* DSP core & audio fabric high clock */
+#define SST_CSR_STALL		(1 << 10)	/* DSP Stall (BIT 10!) */
+#define SST_CSR_SDPM(ssp)	(1 << (11 + (ssp))) /* SSP Disable Power Mode */
+#define SST_CSR_PCE		(1 << 15)	/* Power Control Enable */
 #define SST_CSR_S0IOCS		(1 << 21)	/* S0 Idle Clock Select */
 #define SST_CSR_S1IOCS		(1 << 23)	/* S1 Idle Clock Select */
-#define SST_CSR_LPCS		(1 << 31)	/* Low Power Clock Select */
+#define SST_CSR_SFCR(ssp)	(1 << (27 + (ssp))) /* SSP Frame Clock Rate */
+#define SST_CSR_LPCS		(1U << 31)	/* Low Power Clock Select */
+
+/*
+ * CS1 Default value - from Linux catpt registers.h CATPT_CS_DEFAULT
+ * Includes: LPCS, bit26, S1IOCS, STALL, SBCS1, SBCS0, RST
+ */
+#define SST_CS_DEFAULT		0x8480040E
 
 /*
  * IPC Bits
@@ -246,10 +284,10 @@
 
 /*
  * DMA Registers
- * DW-DMA controller at offset 0x98000 within BAR0
+ * DW-DMA controllers within BAR0 (WPT offsets)
  */
-#define SST_DMA_OFFSET		0x98000
-#define SST_DMA_SIZE		0x1000
+#define SST_DMA_OFFSET		SST_DMA0_OFFSET
+#define SST_DMA_SIZE		0x400
 
 /*
  * Firmware Memory Block Types

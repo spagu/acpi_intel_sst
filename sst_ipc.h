@@ -70,10 +70,25 @@
 #define SST_FMT_WMA			0x03
 
 /*
- * IPC Header Format
+ * IPC Header Format (catpt)
  *
- * |31    |30    |29:24 |23:20 |19:16 |15:8  |7:0   |
- * |BUSY  |DONE  |TYPE  |RSVD  |MSG   |SIZE  |RSVD  |
+ * From Linux catpt union catpt_global_msg:
+ * |31   |30   |29      |28:24           |23:5    |4:0    |
+ * |BUSY |DONE |FW_READY|GLOBAL_MSG_TYPE |CONTEXT |STATUS |
+ *
+ * Note: This differs from older Intel SST IPC formats.
+ * The FW_READY bit (29) is critical for boot detection.
+ */
+#define SST_IPC_FW_READY	(1U << 29)	/* FW Ready bit in IPCD */
+#define SST_IPC_MSG_TYPE_SHIFT	24
+#define SST_IPC_MSG_TYPE_MASK	(0x1F << SST_IPC_MSG_TYPE_SHIFT)
+#define SST_IPC_STATUS_MASK	0x1F		/* bits 0-4 */
+#define SST_IPC_CONTEXT_SHIFT	5
+#define SST_IPC_CONTEXT_MASK	(0x7FFFF << SST_IPC_CONTEXT_SHIFT)
+
+/*
+ * Legacy IPC header format (used by sst_ipc.c send/recv)
+ * TODO: Migrate to catpt format once IPC is fully working
  */
 #define SST_IPC_TYPE_SHIFT	24
 #define SST_IPC_TYPE_MASK	(0x3F << SST_IPC_TYPE_SHIFT)
@@ -94,6 +109,22 @@
 #define SST_IPC_REPLY_ERROR		0x01
 #define SST_IPC_REPLY_BUSY		0x02
 #define SST_IPC_REPLY_PENDING		0x03
+
+/*
+ * FW_READY Mailbox (from Linux catpt messages.h: struct catpt_fw_ready)
+ * DSP writes this to the outbox (DRAM) on boot completion.
+ * Contains inbox/outbox configuration for subsequent IPC.
+ */
+#define SST_FW_INFO_SIZE_MAX	100
+
+struct sst_fw_ready {
+	uint32_t	inbox_offset;	/* Host -> DSP mailbox offset (in DRAM) */
+	uint32_t	outbox_offset;	/* DSP -> Host mailbox offset (in DRAM) */
+	uint32_t	inbox_size;	/* Inbox size */
+	uint32_t	outbox_size;	/* Outbox size */
+	uint32_t	fw_info_size;	/* FW info string size */
+	char		fw_info[SST_FW_INFO_SIZE_MAX]; /* FW info string */
+} __packed;
 
 /*
  * Firmware Version Structure

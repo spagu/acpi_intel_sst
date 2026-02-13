@@ -57,7 +57,15 @@ sst_fw_validate_header(struct sst_softc *sc, const struct sst_fw_header *hdr,
 }
 
 /*
- * Load a single block to DSP memory
+ * Load a single block to DSP memory via MMIO
+ *
+ * Based on Linux catpt_load_block():
+ *   IRAM (type 1) -> IRAM region
+ *   DRAM (type 2) -> DRAM region
+ *   INSTANCE (type 3) -> DRAM region (module initial state)
+ *
+ * Linux catpt uses DMA for this, but MMIO writes should also work
+ * (the older sst-dsp.c driver uses memcpy_toio for SRAM access).
  */
 static int
 sst_fw_load_block(struct sst_softc *sc, const struct sst_block_header *blk,
@@ -65,35 +73,106 @@ sst_fw_load_block(struct sst_softc *sc, const struct sst_block_header *blk,
 {
 	bus_addr_t offset;
 	size_t max_size;
+	const char *type_name;
+	uint32_t readback;
 
-	switch (blk->type) {
+	switch (blk->ram_type) {
 	case SST_BLK_TYPE_IRAM:
 		offset = SST_IRAM_OFFSET + blk->ram_offset;
 		max_size = SST_IRAM_SIZE;
+		type_name = "IRAM";
 		break;
 	case SST_BLK_TYPE_DRAM:
+	case SST_BLK_TYPE_INSTANCE:
+		/* Both DRAM and INSTANCE blocks go to DRAM (catpt: default case) */
 		offset = SST_DRAM_OFFSET + blk->ram_offset;
 		max_size = SST_DRAM_SIZE;
+		type_name = (blk->ram_type == SST_BLK_TYPE_DRAM) ?
+		    "DRAM" : "INSTANCE";
 		break;
 	default:
-		device_printf(sc->dev, "Unknown block type: %u\n", blk->type);
+		device_printf(sc->dev, "Unknown block type: %u\n",
+		    blk->ram_type);
 		return (EINVAL);
 	}
 
 	if (blk->ram_offset + blk->size > max_size) {
-		device_printf(sc->dev, "Block exceeds memory: off=%u, size=%u\n",
-			      blk->ram_offset, blk->size);
+		device_printf(sc->dev,
+		    "Block exceeds %s: off=0x%x, size=0x%x, max=0x%zx\n",
+		    type_name, blk->ram_offset, blk->size, max_size);
 		return (EINVAL);
 	}
 
-	/* Write block data to DSP memory */
-	bus_write_region_1(sc->mem_res, offset, data, blk->size);
+	device_printf(sc->dev,
+	    "  Block: type=%s(%u) offset=0x%x size=0x%x -> BAR0+0x%lx\n",
+	    type_name, blk->ram_type, blk->ram_offset, blk->size,
+	    (unsigned long)offset);
+
+	/*
+	 * Write block data to DSP SRAM.
+	 *
+	 * IMPORTANT: Use 32-bit (DWORD) writes, not byte writes!
+	 * PCH SRAM controllers on Intel Broadwell may not support
+	 * sub-DWORD writes via MMIO. bus_write_region_1 uses byte
+	 * writes that don't persist in SRAM.
+	 *
+	 * Write aligned 32-bit words first, then handle any remainder.
+	 */
+	{
+		uint32_t dwords = blk->size / 4;
+		uint32_t remainder = blk->size % 4;
+		uint32_t k;
+		const uint8_t *src = data;
+
+		/* Write 32-bit words */
+		for (k = 0; k < dwords; k++) {
+			uint32_t val;
+			memcpy(&val, src + (k * 4), 4);
+			bus_write_4(sc->mem_res, offset + (k * 4), val);
+		}
+
+		/* Handle remainder bytes (pack into a 32-bit write) */
+		if (remainder > 0) {
+			uint32_t val = 0;
+			memcpy(&val, src + (dwords * 4), remainder);
+			bus_write_4(sc->mem_res, offset + (dwords * 4), val);
+		}
+	}
+
+	/* Readback verification - check first and last 4 bytes */
+	if (blk->size >= 4) {
+		readback = bus_read_4(sc->mem_res, offset);
+		if (readback == SST_INVALID_REG_VALUE) {
+			device_printf(sc->dev,
+			    "  WARNING: Readback 0xFFFFFFFF at 0x%lx"
+			    " - SRAM may not be accessible!\n",
+			    (unsigned long)offset);
+		} else {
+			uint32_t expected;
+			memcpy(&expected, data, 4);
+			if (readback != expected) {
+				device_printf(sc->dev,
+				    "  WARNING: Readback mismatch at 0x%lx:"
+				    " wrote=0x%08x read=0x%08x\n",
+				    (unsigned long)offset, expected, readback);
+			}
+		}
+	}
 
 	return (0);
 }
 
 /*
  * Parse and load a module
+ *
+ * Based on Linux catpt_load_module().
+ *
+ * IMPORTANT: mod_size is the size of the module DATA (all block headers +
+ * block data), NOT including the module header itself. To advance to the
+ * next module: offset += sizeof(mod_header) + mod_size.
+ *
+ * Linux catpt also subtracts 4 from the entry point:
+ *   "DSP expects address from module header subtracted by 4"
  */
 static int
 sst_fw_load_module(struct sst_softc *sc, const uint8_t *data, size_t size,
@@ -101,7 +180,8 @@ sst_fw_load_module(struct sst_softc *sc, const uint8_t *data, size_t size,
 {
 	const struct sst_module_header *mod;
 	const struct sst_block_header *blk;
-	const uint8_t *ptr;
+	size_t total_size;
+	uint32_t offset;
 	uint32_t i;
 	int error;
 
@@ -118,89 +198,78 @@ sst_fw_load_module(struct sst_softc *sc, const uint8_t *data, size_t size,
 		return (EINVAL);
 	}
 
-	if (mod->mod_size > size) {
-		device_printf(sc->dev, "Module size exceeds data: %u > %zu\n",
-			      mod->mod_size, size);
+	/* Total size in file = module header + mod_size (data portion) */
+	total_size = sizeof(struct sst_module_header) + mod->mod_size;
+	if (total_size > size) {
+		device_printf(sc->dev,
+		    "Module exceeds data: hdr(%zu)+data(%u) = %zu > %zu\n",
+		    sizeof(struct sst_module_header), mod->mod_size,
+		    total_size, size);
 		return (EINVAL);
 	}
 
-	device_printf(sc->dev, "Module: size=%u, blocks=%u, entry=0x%08x\n",
-		      mod->mod_size, mod->blocks, mod->entry_point);
+	device_printf(sc->dev,
+	    "Module[%u]: slot=%u, size=%u, blocks=%u, entry=0x%08x,"
+	    " persist=%u, scratch=%u\n",
+	    mod->module_id, mod->slot, mod->mod_size, mod->blocks,
+	    mod->entry_point, mod->persistent_size, mod->scratch_size);
 
-	/* Store entry point from first module */
-	if (sc->fw.entry_point == 0)
-		sc->fw.entry_point = mod->entry_point;
+	/*
+	 * Store entry point from first module.
+	 * Linux catpt: "DSP expects address from module header subtracted by 4"
+	 * Only subtract if entry point is non-zero (zero means IRAM base).
+	 */
+	if (sc->fw.entry_point == 0 && mod->entry_point != 0)
+		sc->fw.entry_point = mod->entry_point - 4;
 
-	/* Load each block */
-	ptr = data + sizeof(struct sst_module_header);
+	/* Load each block - starting from after module header */
+	offset = sizeof(struct sst_module_header);
 	for (i = 0; i < mod->blocks; i++) {
-		if ((size_t)(ptr - data) + sizeof(struct sst_block_header) >
-		    mod->mod_size) {
-			device_printf(sc->dev, "Block header exceeds module\n");
+		if (offset + sizeof(struct sst_block_header) > total_size) {
+			device_printf(sc->dev,
+			    "Block %u header exceeds module\n", i);
 			return (EINVAL);
 		}
 
-		blk = (const struct sst_block_header *)ptr;
-		ptr += sizeof(struct sst_block_header);
+		blk = (const struct sst_block_header *)(data + offset);
+		offset += sizeof(struct sst_block_header);
 
-		if ((size_t)(ptr - data) + blk->size > mod->mod_size) {
-			device_printf(sc->dev, "Block data exceeds module\n");
+		if (offset + blk->size > total_size) {
+			device_printf(sc->dev,
+			    "Block %u data exceeds module: offset=%u"
+			    " blk_size=%u total=%zu\n",
+			    i, offset, blk->size, total_size);
 			return (EINVAL);
 		}
 
-		error = sst_fw_load_block(sc, blk, ptr);
+		error = sst_fw_load_block(sc, blk, data + offset);
 		if (error)
 			return (error);
 
-		ptr += blk->size;
+		offset += blk->size;
 	}
 
-	*consumed = mod->mod_size;
+	*consumed = total_size;
 	return (0);
 }
 
 /*
- * Load raw binary firmware (format >= 256)
- * These firmwares have no $MOD headers - data is directly IRAM/DRAM blocks
- */
-static int
-sst_fw_load_raw(struct sst_softc *sc, const uint8_t *data, size_t size)
-{
-	size_t iram_size, dram_size;
-
-	/*
-	 * For Haswell/Broadwell SST firmware (format 256):
-	 * The binary is split: first half to IRAM, second half to DRAM
-	 * Default entry point is IRAM base (0x0)
-	 */
-
-	/* Calculate split - use half for each, capped at memory size */
-	iram_size = MIN(size / 2, SST_IRAM_SIZE);
-	dram_size = MIN(size - iram_size, SST_DRAM_SIZE);
-
-	device_printf(sc->dev, "Loading raw firmware: IRAM=%zu, DRAM=%zu\n",
-		      iram_size, dram_size);
-
-	/* Write to IRAM */
-	if (iram_size > 0) {
-		bus_write_region_1(sc->mem_res, SST_IRAM_OFFSET,
-				   data, iram_size);
-	}
-
-	/* Write to DRAM */
-	if (dram_size > 0) {
-		bus_write_region_1(sc->mem_res, SST_DRAM_OFFSET,
-				   data + iram_size, dram_size);
-	}
-
-	/* Entry point at IRAM base */
-	sc->fw.entry_point = 0;
-
-	return (0);
-}
-
-/*
- * Parse firmware and load to DSP
+ * Parse firmware and load modules to DSP
+ *
+ * Based on Linux catpt_load_firmware().
+ *
+ * The Intel SST firmware (IntcSST2.bin) has this layout:
+ *   [sst_fw_header]  - signature "$SST", file_size, modules count
+ *   [sst_module_header 0] - signature "$SST", mod_size, blocks, entry_point
+ *     [sst_block_header 0] [block_data 0]
+ *     [sst_block_header 1] [block_data 1]
+ *     ...
+ *   [sst_module_header 1]
+ *     [sst_block_header 0] [block_data 0]
+ *     ...
+ *
+ * Linux catpt validates: fw_hdr.signature == mod_hdr.signature == "$SST"
+ * Both SST_FW_SIGNATURE and SST_MOD_SIGNATURE are "$SST".
  */
 static int
 sst_fw_parse(struct sst_softc *sc)
@@ -219,42 +288,37 @@ sst_fw_parse(struct sst_softc *sc)
 
 	sc->fw.modules = hdr->modules;
 
+	/* Dump first bytes after header for debugging */
 	ptr = sc->fw.data + sizeof(struct sst_fw_header);
 	remaining = sc->fw.size - sizeof(struct sst_fw_header);
 
-	/*
-	 * Check firmware format:
-	 * - Format < 256: Uses $MOD module headers
-	 * - Format >= 256: Raw binary (Haswell/Broadwell Windows driver FW)
-	 *
-	 * Some firmwares (like IntcSST2.bin) have format < 256 but use $SST
-	 * signatures for modules instead of $MOD. Fall back to raw loading.
-	 */
-	if (hdr->file_format >= 256) {
-		device_printf(sc->dev, "Using raw binary format (v%u)\n",
-			      hdr->file_format);
-		return sst_fw_load_raw(sc, ptr, remaining);
-	}
-
-	/* Check if first module has $MOD or $SST signature */
 	if (remaining >= 4) {
-		if (memcmp(ptr, SST_MOD_SIGNATURE, 4) != 0) {
-			/* Not $MOD - check if it's $SST (nested header) */
-			if (memcmp(ptr, SST_FW_SIGNATURE, 4) == 0) {
-				device_printf(sc->dev,
-				    "Firmware has nested $SST headers, using raw format\n");
-				return sst_fw_load_raw(sc, ptr, remaining);
-			}
-			/* Unknown signature - try raw anyway */
-			device_printf(sc->dev,
-			    "Unknown module signature: %.4s, trying raw format\n",
-			    (const char *)ptr);
-			return sst_fw_load_raw(sc, ptr, remaining);
-		}
+		device_printf(sc->dev,
+		    "First module bytes: %02x %02x %02x %02x (\"%.4s\")\n",
+		    ptr[0], ptr[1], ptr[2], ptr[3], (const char *)ptr);
 	}
 
-	/* Standard format with $MOD modules */
+	/*
+	 * Linux catpt_load_firmware() validates that each module signature
+	 * matches the firmware header signature (both "$SST").
+	 * Parse modules sequentially.
+	 */
 	for (i = 0; i < hdr->modules; i++) {
+		if (remaining < sizeof(struct sst_module_header)) {
+			device_printf(sc->dev,
+			    "Insufficient data for module %u: %zu bytes left\n",
+			    i, remaining);
+			return (EINVAL);
+		}
+
+		/* Validate module signature matches firmware signature */
+		if (memcmp(ptr, hdr->signature, SST_FW_SIGN_SIZE) != 0) {
+			device_printf(sc->dev,
+			    "Module %u signature mismatch: \"%.4s\" != \"%.4s\"\n",
+			    i, (const char *)ptr, hdr->signature);
+			return (EINVAL);
+		}
+
 		error = sst_fw_load_module(sc, ptr, remaining, &consumed);
 		if (error)
 			return (error);
@@ -262,6 +326,10 @@ sst_fw_parse(struct sst_softc *sc)
 		ptr += consumed;
 		remaining -= consumed;
 	}
+
+	device_printf(sc->dev,
+	    "All %u modules loaded, %zu bytes remaining in firmware\n",
+	    hdr->modules, remaining);
 
 	return (0);
 }
@@ -364,6 +432,15 @@ sst_fw_unload(struct sst_softc *sc)
 
 /*
  * Boot DSP with loaded firmware
+ *
+ * Based on Linux catpt catpt_boot_firmware():
+ * 1. Stall DSP (STALL=BIT(10), not BIT(0)!)
+ * 2. Firmware was already loaded to IRAM/DRAM
+ * 3. Unstall DSP - DSP begins execution
+ * 4. Wait for FW_READY IPC message (250ms timeout in Linux)
+ *
+ * The DSP should already be in stalled+unreset state from
+ * the SHIM configuration done during attach.
  */
 int
 sst_fw_boot(struct sst_softc *sc)
@@ -376,59 +453,271 @@ sst_fw_boot(struct sst_softc *sc)
 		return (EINVAL);
 	}
 
-	device_printf(sc->dev, "Booting DSP...\n");
-
-	/*
-	 * For Broadwell-U (WPT/catpt), SHIM is at BAR0+0xE7000.
-	 * CSR (Control/Status Register) is at SHIM offset 0x00.
-	 */
+	device_printf(sc->dev, "Booting DSP (catpt sequence)...\n");
 
 	/* Read initial CSR state */
 	csr = sst_shim_read(sc, SST_SHIM_CSR);
-	device_printf(sc->dev, "  Initial CSR: 0x%08x\n", csr);
+	device_printf(sc->dev, "  Initial CSR: 0x%08x (STALL=%d RST=%d)\n",
+	    csr, !!(csr & SST_CSR_STALL), !!(csr & SST_CSR_RST));
 
-	/* 1. Ensure DSP is in reset and stalled */
-	csr |= (SST_CSR_RST | SST_CSR_STALL);
-	sst_shim_write(sc, SST_SHIM_CSR, csr);
-	DELAY(SST_RESET_DELAY_US);
-	csr = sst_shim_read(sc, SST_SHIM_CSR);
-	device_printf(sc->dev, "  After RST+STALL: 0x%08x\n", csr);
-
-	/* 2. Clear reset but keep stall (allows memory access) */
-	csr &= ~SST_CSR_RST;
-	sst_shim_write(sc, SST_SHIM_CSR, csr);
-	DELAY(SST_RESET_DELAY_US);
-	csr = sst_shim_read(sc, SST_SHIM_CSR);
-	device_printf(sc->dev, "  After clear RST: 0x%08x\n", csr);
-
-	/* 3. Unmask IPC interrupts */
-	sst_shim_write(sc, SST_SHIM_IMRX, 0);
-	sst_shim_write(sc, SST_SHIM_IMRD, 0);
-	device_printf(sc->dev, "  IMRX/IMRD unmasked\n");
-
-	/* 4. Clear stall - DSP starts running */
-	csr = sst_shim_read(sc, SST_SHIM_CSR);
-	csr &= ~SST_CSR_STALL;
-	sst_shim_write(sc, SST_SHIM_CSR, csr);
-	DELAY(1000); /* Small delay before reading back */
-	csr = sst_shim_read(sc, SST_SHIM_CSR);
-	device_printf(sc->dev, "  After clear STALL: 0x%08x (DSP should run)\n", csr);
-
-	device_printf(sc->dev, "DSP running, waiting for ready...\n");
-
-	/* 5. Wait for firmware to signal ready */
-	error = sst_ipc_wait_ready(sc, SST_BOOT_TIMEOUT_MS);
+	/*
+	 * Step 1: Ensure DSP is stalled (set STALL at BIT(10))
+	 * DSP should already be stalled from register defaults,
+	 * but ensure it explicitly.
+	 */
+	error = sst_dsp_stall(sc, true);
 	if (error) {
-		device_printf(sc->dev, "DSP boot timeout\n");
-		/* Reset DSP on failure */
+		device_printf(sc->dev, "  Failed to stall DSP\n");
+	}
+	csr = sst_shim_read(sc, SST_SHIM_CSR);
+	device_printf(sc->dev, "  After stall: CSR=0x%08x (STALL=%d)\n",
+	    csr, !!(csr & SST_CSR_STALL));
+
+	/*
+	 * Step 2: Firmware data is already loaded to IRAM/DRAM
+	 * (done by sst_fw_load/sst_fw_parse before this function)
+	 *
+	 * Verify SRAM is accessible by reading back some data.
+	 */
+	{
+		uint32_t iram0, iram4, dram0, dram4;
+
+		iram0 = bus_read_4(sc->mem_res, SST_IRAM_OFFSET);
+		iram4 = bus_read_4(sc->mem_res, SST_IRAM_OFFSET + 4);
+		dram0 = bus_read_4(sc->mem_res, SST_DRAM_OFFSET);
+		dram4 = bus_read_4(sc->mem_res, SST_DRAM_OFFSET + 4);
+		device_printf(sc->dev,
+		    "  SRAM check: IRAM[0]=0x%08x [4]=0x%08x"
+		    " DRAM[0]=0x%08x [4]=0x%08x\n",
+		    iram0, iram4, dram0, dram4);
+		if (iram0 == 0xFFFFFFFF && dram0 == 0xFFFFFFFF) {
+			device_printf(sc->dev,
+			    "  WARNING: SRAM reads 0xFFFFFFFF!"
+			    " Firmware may not have been written.\n");
+		}
+	}
+
+	/*
+	 * Step 3: Reset IPC state and prepare for FW_READY detection
+	 *
+	 * CRITICAL: IPCD may contain stale data from a previous boot
+	 * (Windows/BIOS). We cannot reliably clear IPCD - the BUSY/DONE
+	 * bits are hardware-controlled. Instead, record the current value
+	 * and only accept FW_READY if IPCD CHANGES to a new value with
+	 * the fw_ready bit (bit 29) set.
+	 *
+	 * The correct way to clear the DSP doorbell is to write
+	 * ISC.IPCDB (not write 0 to IPCD).
+	 */
+	sc->ipc.ready = false;
+	sst_shim_write(sc, SST_SHIM_IPCX, 0);
+	/* Clear ISC doorbell bits (proper way to ACK stale IPC) */
+	sst_shim_update_bits(sc, SST_SHIM_ISRX,
+	    SST_IMC_IPCDB | SST_IMC_IPCCD,
+	    SST_IMC_IPCDB | SST_IMC_IPCCD);
+
+	/* Unmask IPC doorbell and completion interrupts */
+	sst_shim_update_bits(sc, SST_SHIM_IMRX,
+	    SST_IMC_IPCDB | SST_IMC_IPCCD, 0);
+
+	/* Record stale IPCD value BEFORE unstall */
+	{
+		uint32_t stale_ipcd = sst_shim_read(sc, SST_SHIM_IPCD);
+		uint32_t stale_isrx = sst_shim_read(sc, SST_SHIM_ISRX);
+		device_printf(sc->dev,
+		    "  Pre-boot: IPCD=0x%08x ISRX=0x%08x IMRX=0x%08x\n",
+		    stale_ipcd, stale_isrx,
+		    sst_shim_read(sc, SST_SHIM_IMRX));
+
+		/*
+		 * Step 4: Clear stall - DSP starts executing firmware
+		 */
+		device_printf(sc->dev,
+		    "  Clearing STALL (BIT 10) to start DSP...\n");
+		error = sst_dsp_stall(sc, false);
+		if (error) {
+			device_printf(sc->dev, "  Failed to unstall DSP!\n");
+			return (error);
+		}
 		csr = sst_shim_read(sc, SST_SHIM_CSR);
-		csr |= (SST_CSR_RST | SST_CSR_STALL);
-		sst_shim_write(sc, SST_SHIM_CSR, csr);
+		device_printf(sc->dev,
+		    "  After unstall: CSR=0x%08x (STALL=%d RST=%d)\n",
+		    csr, !!(csr & SST_CSR_STALL), !!(csr & SST_CSR_RST));
+
+		device_printf(sc->dev,
+		    "DSP running, waiting for FW ready...\n");
+
+		/*
+		 * Step 5: Wait for firmware to signal ready via IPC
+		 *
+		 * Detection strategy:
+		 * 1. Check ISC.IPCDB (doorbell) - indicates NEW IPC from DSP
+		 * 2. If doorbell set, read IPCD and check fw_ready bit (29)
+		 * 3. Also check if IPCD changed from stale value
+		 * 4. Only accept if BOTH doorbell and fw_ready are set
+		 *
+		 * Fallback: if IPCD changes to a value with fw_ready=1,
+		 * accept even without doorbell (some HW configs).
+		 */
+		{
+			int elapsed = 0;
+			int poll_ms = 10;
+			uint32_t ipcd, isrx;
+
+			while (elapsed < SST_BOOT_TIMEOUT_MS) {
+				isrx = sst_shim_read(sc, SST_SHIM_ISRX);
+				ipcd = sst_shim_read(sc, SST_SHIM_IPCD);
+
+				/*
+				 * Check for NEW IPC from DSP:
+				 * - ISC doorbell (IPCDB) is set, OR
+				 * - IPCD value changed from stale
+				 */
+				if ((isrx & SST_IMC_IPCDB) ||
+				    (ipcd != stale_ipcd)) {
+					/*
+					 * Validate: must have fw_ready
+					 * bit (29) AND busy bit (31)
+					 */
+					if ((ipcd & SST_IPC_FW_READY) &&
+					    (ipcd & SST_IPC_BUSY)) {
+						device_printf(sc->dev,
+						    "DSP FW_READY! "
+						    "IPCD=0x%08x "
+						    "(was 0x%08x) "
+						    "ISRX=0x%08x "
+						    "(%dms)\n",
+						    ipcd, stale_ipcd,
+						    isrx, elapsed);
+						/* ACK doorbell */
+						sst_shim_update_bits(sc,
+						    SST_SHIM_ISRX,
+						    SST_IMC_IPCDB,
+						    SST_IMC_IPCDB);
+						sc->ipc.ready = true;
+						break;
+					}
+					/*
+					 * IPCD changed but no fw_ready -
+					 * log it but keep waiting
+					 */
+					if (ipcd != stale_ipcd) {
+						device_printf(sc->dev,
+						    "  IPCD changed: "
+						    "0x%08x -> 0x%08x "
+						    "(fw_ready=%d) "
+						    "(%dms)\n",
+						    stale_ipcd, ipcd,
+						    !!(ipcd &
+						    SST_IPC_FW_READY),
+						    elapsed);
+						stale_ipcd = ipcd;
+					}
+				}
+
+				/* Periodic status dump */
+				if (elapsed > 0 && elapsed % 1000 == 0) {
+					device_printf(sc->dev,
+					    "  Boot poll %ds: "
+					    "CSR=0x%08x "
+					    "IPCD=0x%08x "
+					    "ISRX=0x%08x\n",
+					    elapsed / 1000,
+					    sst_shim_read(sc,
+					    SST_SHIM_CSR),
+					    ipcd, isrx);
+				}
+
+				DELAY(poll_ms * 1000);
+				elapsed += poll_ms;
+			}
+
+			if (!sc->ipc.ready)
+				error = ETIMEDOUT;
+			else
+				error = 0;
+		}
+	}
+
+	if (error) {
+		/* Dump diagnostic info */
+		csr = sst_shim_read(sc, SST_SHIM_CSR);
+		device_printf(sc->dev,
+		    "DSP boot timeout! CSR=0x%08x IPCD=0x%08x IPCX=0x%08x\n",
+		    csr,
+		    sst_shim_read(sc, SST_SHIM_IPCD),
+		    sst_shim_read(sc, SST_SHIM_IPCX));
+		device_printf(sc->dev,
+		    "  ISRX=0x%08x IMRX=0x%08x ISRD=0x%08x IMRD=0x%08x\n",
+		    sst_shim_read(sc, SST_SHIM_ISRX),
+		    sst_shim_read(sc, SST_SHIM_IMRX),
+		    sst_shim_read(sc, SST_SHIM_ISRD),
+		    sst_shim_read(sc, SST_SHIM_IMRD));
+
+		/* Reset DSP on failure */
+		sst_dsp_stall(sc, true);
+		sst_dsp_reset(sc, true);
 		return (error);
 	}
 
 	sc->fw.state = SST_FW_STATE_RUNNING;
-	device_printf(sc->dev, "DSP firmware running\n");
+	device_printf(sc->dev, "DSP firmware running!\n");
+
+	/*
+	 * Parse FW_READY mailbox from DSP
+	 *
+	 * The DSP writes a catpt_fw_ready struct to the outbox (in DRAM)
+	 * containing the inbox/outbox configuration for IPC.
+	 * Mailbox address is at DRAM base + outbox_offset initially,
+	 * but the fw_ready message itself tells us the real offsets.
+	 */
+	{
+		struct sst_fw_ready fw_ready;
+		uint32_t mbox_offset = SST_DRAM_OFFSET; /* Default outbox */
+		uint32_t k, *dst;
+
+		/* Read fw_ready struct from outbox via 32-bit reads */
+		dst = (uint32_t *)&fw_ready;
+		for (k = 0; k < sizeof(fw_ready) / 4; k++) {
+			dst[k] = bus_read_4(sc->mem_res,
+			    mbox_offset + k * 4);
+		}
+
+		device_printf(sc->dev,
+		    "FW_READY mailbox: inbox=0x%x outbox=0x%x "
+		    "in_sz=0x%x out_sz=0x%x info_sz=%u\n",
+		    fw_ready.inbox_offset, fw_ready.outbox_offset,
+		    fw_ready.inbox_size, fw_ready.outbox_size,
+		    fw_ready.fw_info_size);
+
+		/* Update IPC mailbox configuration if offsets look valid */
+		if (fw_ready.inbox_offset < SST_DRAM_SIZE &&
+		    fw_ready.outbox_offset < SST_DRAM_SIZE &&
+		    fw_ready.inbox_size > 0 &&
+		    fw_ready.outbox_size > 0) {
+			/*
+			 * Offsets from DSP are relative to DRAM.
+			 * Convert to BAR0 offsets for host access.
+			 */
+			sc->ipc.mbox_in = SST_DRAM_OFFSET +
+			    fw_ready.inbox_offset;
+			sc->ipc.mbox_out = SST_DRAM_OFFSET +
+			    fw_ready.outbox_offset;
+			device_printf(sc->dev,
+			    "IPC mailbox updated: in=BAR0+0x%lx "
+			    "out=BAR0+0x%lx\n",
+			    (unsigned long)sc->ipc.mbox_in,
+			    (unsigned long)sc->ipc.mbox_out);
+		}
+
+		/* Print firmware info string if available */
+		if (fw_ready.fw_info_size > 0 &&
+		    fw_ready.fw_info_size <= SST_FW_INFO_SIZE_MAX) {
+			fw_ready.fw_info[SST_FW_INFO_SIZE_MAX - 1] = '\0';
+			device_printf(sc->dev, "FW info: %s\n",
+			    fw_ready.fw_info);
+		}
+	}
 
 	return (0);
 }
