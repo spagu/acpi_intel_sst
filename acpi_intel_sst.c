@@ -2896,7 +2896,19 @@ sst_acpi_attach(device_t dev)
 
 	/* ---- Full DSP Initialization Path ---- */
 dsp_init:
-	/* Allocate Interrupt */
+	/*
+	 * Initialize IPC subsystem BEFORE registering IRQ handler.
+	 * The ISR calls sst_ipc_intr() which takes sc->ipc.lock.
+	 * With shared IRQs, the handler can fire immediately after
+	 * bus_setup_intr(), so the mutex must be initialized first.
+	 */
+	error = sst_ipc_init(sc);
+	if (error) {
+		device_printf(dev, "IPC init failed\n");
+		goto fail;
+	}
+
+	/* Allocate Interrupt (after IPC init - ISR needs ipc.lock) */
 	sc->irq_rid = 0;
 	sc->irq_res = bus_alloc_resource_any(dev, SYS_RES_IRQ,
 	    &sc->irq_rid, RF_ACTIVE | RF_SHAREABLE);
@@ -2908,13 +2920,6 @@ dsp_init:
 			device_printf(dev, "Failed to setup IRQ: %d\n", error);
 			sc->irq_cookie = NULL;
 		}
-	}
-
-	/* Initialize subsystems */
-	error = sst_ipc_init(sc);
-	if (error) {
-		device_printf(dev, "IPC init failed\n");
-		goto fail;
 	}
 
 	error = sst_fw_init(sc);

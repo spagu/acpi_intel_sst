@@ -329,6 +329,10 @@ sst_ipc_intr(struct sst_softc *sc)
 	ipcx = sst_shim_read(sc, SST_SHIM_IPCX);
 	ipcd = sst_shim_read(sc, SST_SHIM_IPCD);
 
+	/* Ignore spurious interrupts (hardware not ready or powered down) */
+	if (isr == 0xFFFFFFFF || ipcx == 0xFFFFFFFF || ipcd == 0xFFFFFFFF)
+		return;
+
 	/*
 	 * Check for reply to our message (DONE in IPCX).
 	 * DSP sets DONE in IPCX after processing our command.

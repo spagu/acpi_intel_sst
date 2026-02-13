@@ -908,12 +908,13 @@ sst_pcm_child_detach(device_t dev)
 
 	sc = device_get_ivars(dev);
 
-	error = pcm_unregister(dev);
-	if (error)
-		return (error);
-
-	if (sc != NULL)
+	/* Only unregister if registration actually succeeded */
+	if (sc != NULL && sc->pcm.registered) {
+		error = pcm_unregister(dev);
+		if (error)
+			return (error);
 		sc->pcm.registered = false;
+	}
 
 	return (0);
 }

@@ -696,11 +696,17 @@ sst_fw_boot(struct sst_softc *sc)
 		    ipcd_val, ipcd_val & SST_IPC_MBOX_ADDR_MASK,
 		    mbox_offset);
 
-		/* Sanity check: offset must be within BAR0 mapped region */
-		if (mbox_offset >= SST_DRAM_OFFSET + SST_DRAM_SIZE) {
+		/*
+		 * Sanity check: offset + read size must fit within BAR0.
+		 * The read loop below reads sizeof(fw_ready) bytes starting
+		 * at mbox_offset, so the entire range must be valid.
+		 */
+		if (mbox_offset > SST_DRAM_OFFSET + SST_DRAM_SIZE -
+		    sizeof(fw_ready)) {
 			device_printf(sc->dev,
-			    "WARNING: mbox_offset 0x%x out of DRAM range, "
-			    "trying DRAM base\n", mbox_offset);
+			    "WARNING: mbox_offset 0x%x out of DRAM range "
+			    "(need %zu bytes), using DRAM base\n",
+			    mbox_offset, sizeof(fw_ready));
 			mbox_offset = SST_DRAM_OFFSET;
 		}
 
