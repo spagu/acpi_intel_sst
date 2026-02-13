@@ -786,10 +786,16 @@ sst_pcm_register(struct sst_softc *sc)
 	}
 
 	/* Build status string */
-	snprintf(status, sizeof(status),
-	    "at mmio 0x%lx irq %lu",
-	    rman_get_start(sc->mem_res),
-	    rman_get_start(sc->irq_res));
+	if (sc->irq_res != NULL) {
+		snprintf(status, sizeof(status),
+		    "at mmio 0x%lx irq %lu",
+		    rman_get_start(sc->mem_res),
+		    rman_get_start(sc->irq_res));
+	} else {
+		snprintf(status, sizeof(status),
+		    "at mmio 0x%lx (polled)",
+		    rman_get_start(sc->mem_res));
+	}
 
 	/* Register with sound subsystem */
 	error = pcm_register(sc->pcm.dev, status);
