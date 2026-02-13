@@ -3174,8 +3174,13 @@ sst_pci_attach(device_t dev)
 		}
 
 		/* Register PCM device if firmware is running */
+		device_printf(dev, "PCI: fw.state=%d, SST_FW_STATE_RUNNING=%d\n",
+		    sc->fw.state, SST_FW_STATE_RUNNING);
 		if (sc->fw.state == SST_FW_STATE_RUNNING) {
+			device_printf(dev, "PCI: Calling sst_pcm_register()\n");
 			sst_pcm_register(sc);
+		} else {
+			device_printf(dev, "PCI: Skipping PCM registration (fw not running)\n");
 		}
 
 		/* Jack detection */
