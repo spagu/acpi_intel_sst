@@ -38,11 +38,11 @@
 /*
  * RT286 HDA Verb Encoding Macros
  *
- * HDA verbs are encoded as: (NID << 20) | (verb << 8) | param
+ * HDA verbs are encoded as: (NID << 24) | (verb << 8) | param
  * For "set" verbs the format varies; we use explicit register addresses.
  */
 #define RT286_VERB_CMD(nid, verb, param) \
-	(((uint32_t)(nid) << 20) | ((uint32_t)(verb) << 8) | (uint32_t)(param))
+	(((uint32_t)(nid) << 24) | ((uint32_t)(verb) << 8) | (uint32_t)(param))
 
 /*
  * HDA Node IDs (NIDs) for RT286
@@ -61,44 +61,44 @@
 /*
  * HDA Verb Register Addresses (pre-encoded as 32-bit I2C register values)
  *
- * Format: (NID << 20) | (verb_id << 8) | param
+ * rl6347a I2C format: (NID << 24) | verb_data[23:0]
  * For GET verbs, bit 19 is set by the read function.
  */
 
 /* Power State (verb 0x705 set, 0xF05 get) */
-#define RT286_SET_POWER(nid)	(((uint32_t)(nid) << 20) | 0x70500)
-#define RT286_GET_POWER(nid)	(((uint32_t)(nid) << 20) | 0xF0500)
+#define RT286_SET_POWER(nid)	(((uint32_t)(nid) << 24) | 0x70500)
+#define RT286_GET_POWER(nid)	(((uint32_t)(nid) << 24) | 0xF0500)
 
 /* Pin Widget Control (verb 0x707 set, 0xF07 get) */
-#define RT286_SET_PIN_CTRL(nid)	(((uint32_t)(nid) << 20) | 0x70700)
-#define RT286_GET_PIN_CTRL(nid)	(((uint32_t)(nid) << 20) | 0xF0700)
+#define RT286_SET_PIN_CTRL(nid)	(((uint32_t)(nid) << 24) | 0x70700)
+#define RT286_GET_PIN_CTRL(nid)	(((uint32_t)(nid) << 24) | 0xF0700)
 
 /* EAPD/BTL Enable (verb 0x70C set, 0xF0C get) */
-#define RT286_SET_EAPD(nid)	(((uint32_t)(nid) << 20) | 0x70C00)
+#define RT286_SET_EAPD(nid)	(((uint32_t)(nid) << 24) | 0x70C00)
 
 /* Amp Gain/Mute - Output (verb 0x3 set, left/right encoded in data) */
-/* Left:  (NID << 20) | 0xA0 << 8 | gain  (bit 15=out, bit 13=left, bit 12=set) */
-/* Right: (NID << 20) | 0x90 << 8 | gain  (bit 15=out, bit 14=right, bit 12=set) */
-#define RT286_SET_AMP_OUT_L(nid)  (((uint32_t)(nid) << 20) | 0x3A000)
-#define RT286_SET_AMP_OUT_R(nid)  (((uint32_t)(nid) << 20) | 0x39000)
-#define RT286_SET_AMP_OUT_LR(nid) (((uint32_t)(nid) << 20) | 0x3B000)
+/* Left:  (NID << 24) | 0xA0 << 8 | gain  (bit 15=out, bit 13=left, bit 12=set) */
+/* Right: (NID << 24) | 0x90 << 8 | gain  (bit 15=out, bit 14=right, bit 12=set) */
+#define RT286_SET_AMP_OUT_L(nid)  (((uint32_t)(nid) << 24) | 0x3A000)
+#define RT286_SET_AMP_OUT_R(nid)  (((uint32_t)(nid) << 24) | 0x39000)
+#define RT286_SET_AMP_OUT_LR(nid) (((uint32_t)(nid) << 24) | 0x3B000)
 
 /* Connection Select (verb 0x701) */
-#define RT286_SET_CONNECT(nid)	(((uint32_t)(nid) << 20) | 0x70100)
+#define RT286_SET_CONNECT(nid)	(((uint32_t)(nid) << 24) | 0x70100)
 
 /* Stream Format (verb 0x2 set, 0xA get) */
-#define RT286_SET_FORMAT(nid)	(((uint32_t)(nid) << 20) | 0x20000)
+#define RT286_SET_FORMAT(nid)	(((uint32_t)(nid) << 24) | 0x20000)
 
 /* Get Parameter (verb 0xF00) */
-#define RT286_GET_PARAM(nid, param)  (((uint32_t)(nid) << 20) | 0xF0000 | (param))
+#define RT286_GET_PARAM(nid, param)  (((uint32_t)(nid) << 24) | 0xF0000 | (param))
 
 /* GPIO (on AFG NID 0x01) */
-#define RT286_SET_GPIO_MASK	(((uint32_t)0x01 << 20) | 0x71600)
-#define RT286_SET_GPIO_DIR	(((uint32_t)0x01 << 20) | 0x71700)
-#define RT286_SET_GPIO_DATA	(((uint32_t)0x01 << 20) | 0x71500)
+#define RT286_SET_GPIO_MASK	(((uint32_t)0x01 << 24) | 0x71600)
+#define RT286_SET_GPIO_DIR	(((uint32_t)0x01 << 24) | 0x71700)
+#define RT286_SET_GPIO_DATA	(((uint32_t)0x01 << 24) | 0x71500)
 
 /* Mixer unmute (verb 0x370 on NID 0x0C, index in low bits) */
-#define RT286_SET_MIX_DAC	(((uint32_t)0x0C << 20) | 0x37000)
+#define RT286_SET_MIX_DAC	(((uint32_t)0x0C << 24) | 0x37000)
 
 /*
  * Index Register Access (via Vendor-defined verb)
@@ -106,9 +106,9 @@
  * COEF_INDEX = verb 0x500 on NID 0x20
  * PROC_COEF  = verb 0x400/0xC00 (set/get) on NID 0x20
  */
-#define RT286_COEF_INDEX	(((uint32_t)0x20 << 20) | 0x50000)
-#define RT286_PROC_COEF_SET	(((uint32_t)0x20 << 20) | 0x40000)
-#define RT286_PROC_COEF_GET	(((uint32_t)0x20 << 20) | 0xC0000)
+#define RT286_COEF_INDEX	(((uint32_t)0x20 << 24) | 0x50000)
+#define RT286_PROC_COEF_SET	(((uint32_t)0x20 << 24) | 0x40000)
+#define RT286_PROC_COEF_GET	(((uint32_t)0x20 << 24) | 0xC0000)
 
 /*
  * Index Register Addresses

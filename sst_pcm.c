@@ -772,6 +772,16 @@ sst_chan_trigger(kobj_t obj, void *data, int go)
 		if (ch->state == SST_PCM_STATE_RUNNING)
 			return (0);
 
+		/*
+		 * Skip capture stream allocation for now.
+		 * The DSP firmware doesn't support simultaneous
+		 * playback and capture on the same SSP port.
+		 */
+		if (ch->dir == PCMDIR_REC) {
+			ch->state = SST_PCM_STATE_RUNNING;
+			return (0);
+		}
+
 		/* DSP firmware must be running */
 		if (sc->fw.state != SST_FW_STATE_RUNNING) {
 			device_printf(sc->dev,
