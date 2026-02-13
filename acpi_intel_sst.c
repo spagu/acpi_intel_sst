@@ -3387,13 +3387,17 @@ static driver_t sst_pci_driver = {
 };
 
 /*
- * Register BOTH ACPI and PCI drivers
- * - ACPI driver: handles INT3438 when device is hidden on PCI
- * - PCI driver: handles 8086:9CB6 when device is visible on PCI
+ * PCI driver only - ACPI driver causes SRAM reset!
+ * The ACPI driver's probing/diagnostics reset the SRAM state machine,
+ * which breaks the PCI driver that depends on pre-activated SRAM.
+ *
+ * When device is hidden on PCI bus:
+ * 1. Unhide via: devctl set driver pci0 acpi_intel_sst (triggers IOBP)
+ * 2. Or use ACPI _DSM to unhide before PCI enumeration
  */
-DRIVER_MODULE(acpi_intel_sst, acpi, sst_driver, 0, 0);
+/* DISABLED: DRIVER_MODULE(acpi_intel_sst, acpi, sst_driver, 0, 0); */
 DRIVER_MODULE(sst_pci, pci, sst_pci_driver, 0, 0);
-MODULE_DEPEND(acpi_intel_sst, acpi, 1, 1, 1);
+/* DISABLED: MODULE_DEPEND(acpi_intel_sst, acpi, 1, 1, 1); */
 MODULE_DEPEND(acpi_intel_sst, pci, 1, 1, 1);
 MODULE_DEPEND(acpi_intel_sst, firmware, 1, 1, 1);
 MODULE_VERSION(acpi_intel_sst, 8);
