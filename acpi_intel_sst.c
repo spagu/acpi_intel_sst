@@ -3452,6 +3452,9 @@ static device_method_t sst_methods[] = {
 	DEVMETHOD(device_detach,	sst_acpi_detach),
 	DEVMETHOD(device_suspend,	sst_acpi_suspend),
 	DEVMETHOD(device_resume,	sst_acpi_resume),
+	/* Bus interface for child PCM device */
+	DEVMETHOD(bus_print_child,	bus_generic_print_child),
+	DEVMETHOD(bus_driver_added,	bus_generic_driver_added),
 	DEVMETHOD_END
 };
 

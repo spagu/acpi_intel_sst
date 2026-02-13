@@ -666,17 +666,52 @@ sst_fw_boot(struct sst_softc *sc)
 	/*
 	 * Parse FW_READY mailbox from DSP
 	 *
-	 * The DSP writes a catpt_fw_ready struct to the outbox (in DRAM)
-	 * containing the inbox/outbox configuration for IPC.
-	 * Mailbox address is at DRAM base + outbox_offset initially,
-	 * but the fw_ready message itself tells us the real offsets.
+	 * Per Linux catpt protocol (ipc.c catpt_dsp_process_response):
+	 * 1. Extract mailbox_address from IPCD bits[28:0]
+	 * 2. Shift left by 3 to recover actual byte offset in BAR0
+	 * 3. Read catpt_fw_ready struct from that offset
+	 * 4. Use inbox_offset/outbox_offset from struct for future IPC
+	 *
+	 * The firmware originally right-shifted the address by 3 to fit
+	 * it into 29 bits of the IPCD register.
 	 */
 	{
 		struct sst_fw_ready fw_ready;
-		uint32_t mbox_offset = SST_DRAM_OFFSET; /* Default outbox */
+		uint32_t ipcd_val, mbox_offset;
 		uint32_t k, *dst;
 
-		/* Read fw_ready struct from outbox via 32-bit reads */
+		/* Re-read IPCD to get the mailbox address */
+		ipcd_val = sst_shim_read(sc, SST_SHIM_IPCD);
+
+		/*
+		 * Extract mailbox offset from IPCD header.
+		 * catpt format: bits[28:0] = mailbox_address >> 3
+		 * Actual byte offset = mailbox_address << 3
+		 */
+		mbox_offset = SST_IPC_MBOX_OFFSET(ipcd_val);
+
+		device_printf(sc->dev,
+		    "FW_READY: IPCD=0x%08x mbox_addr_raw=0x%x "
+		    "mbox_offset=0x%x\n",
+		    ipcd_val, ipcd_val & SST_IPC_MBOX_ADDR_MASK,
+		    mbox_offset);
+
+		/* Sanity check: offset must be within BAR0 mapped region */
+		if (mbox_offset >= SST_DRAM_OFFSET + SST_DRAM_SIZE) {
+			device_printf(sc->dev,
+			    "WARNING: mbox_offset 0x%x out of DRAM range, "
+			    "trying DRAM base\n", mbox_offset);
+			mbox_offset = SST_DRAM_OFFSET;
+		}
+
+		/* Also dump what's at DRAM[0] for comparison */
+		device_printf(sc->dev,
+		    "  DRAM[0x000000]=0x%08x DRAM[0x%06x]=0x%08x\n",
+		    bus_read_4(sc->mem_res, SST_DRAM_OFFSET),
+		    mbox_offset,
+		    bus_read_4(sc->mem_res, mbox_offset));
+
+		/* Read fw_ready struct from correct mailbox offset */
 		dst = (uint32_t *)&fw_ready;
 		for (k = 0; k < sizeof(fw_ready) / 4; k++) {
 			dst[k] = bus_read_4(sc->mem_res,
@@ -684,8 +719,9 @@ sst_fw_boot(struct sst_softc *sc)
 		}
 
 		device_printf(sc->dev,
-		    "FW_READY mailbox: inbox=0x%x outbox=0x%x "
+		    "FW_READY mailbox @0x%x: inbox=0x%x outbox=0x%x "
 		    "in_sz=0x%x out_sz=0x%x info_sz=%u\n",
+		    mbox_offset,
 		    fw_ready.inbox_offset, fw_ready.outbox_offset,
 		    fw_ready.inbox_size, fw_ready.outbox_size,
 		    fw_ready.fw_info_size);
@@ -696,19 +732,28 @@ sst_fw_boot(struct sst_softc *sc)
 		    fw_ready.inbox_size > 0 &&
 		    fw_ready.outbox_size > 0) {
 			/*
-			 * Offsets from DSP are relative to DRAM.
-			 * Convert to BAR0 offsets for host access.
+			 * catpt fw_ready offsets are absolute from BAR0.
+			 * Use them directly for host MMIO access.
 			 */
-			sc->ipc.mbox_in = SST_DRAM_OFFSET +
-			    fw_ready.inbox_offset;
-			sc->ipc.mbox_out = SST_DRAM_OFFSET +
-			    fw_ready.outbox_offset;
+			sc->ipc.mbox_in = fw_ready.inbox_offset;
+			sc->ipc.mbox_out = fw_ready.outbox_offset;
 			device_printf(sc->dev,
-			    "IPC mailbox updated: in=BAR0+0x%lx "
-			    "out=BAR0+0x%lx\n",
+			    "IPC mailbox configured: "
+			    "in=BAR0+0x%lx (%lu bytes) "
+			    "out=BAR0+0x%lx (%lu bytes)\n",
 			    (unsigned long)sc->ipc.mbox_in,
-			    (unsigned long)sc->ipc.mbox_out);
+			    (unsigned long)fw_ready.inbox_size,
+			    (unsigned long)sc->ipc.mbox_out,
+			    (unsigned long)fw_ready.outbox_size);
+		} else {
+			device_printf(sc->dev,
+			    "WARNING: fw_ready offsets invalid, "
+			    "keeping defaults\n");
 		}
+
+		/* Acknowledge FW_READY: clear BUSY, set DONE in IPCD */
+		sst_shim_update_bits(sc, SST_SHIM_IPCD,
+		    SST_IPC_BUSY | SST_IPC_DONE, SST_IPC_DONE);
 
 		/* Print firmware info string if available */
 		if (fw_ready.fw_info_size > 0 &&

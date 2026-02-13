@@ -151,14 +151,15 @@ sst_ipc_recv(struct sst_softc *sc, uint32_t *header, void *data, size_t *size)
 	if (header != NULL)
 		*header = ipcd;
 
-	/* Read data from mailbox */
-	recv_size = (ipcd & SST_IPC_SIZE_MASK) >> SST_IPC_SIZE_SHIFT;
-	if (recv_size > SST_MBOX_SIZE_OUT)
-		recv_size = SST_MBOX_SIZE_OUT;
-
+	/*
+	 * Read data from outbox mailbox.
+	 * In catpt, reply size is not in the header - caller specifies
+	 * expected size. Read up to caller's buffer size from outbox.
+	 */
 	if (data != NULL && size != NULL && *size > 0) {
-		if (recv_size > *size)
-			recv_size = *size;
+		recv_size = *size;
+		if (recv_size > SST_MBOX_SIZE_OUT)
+			recv_size = SST_MBOX_SIZE_OUT;
 		bus_read_region_1(sc->mem_res, sc->ipc.mbox_out, data,
 				  recv_size);
 		*size = recv_size;
@@ -307,67 +308,73 @@ sst_ipc_wait_ready(struct sst_softc *sc, int timeout_ms)
  * IPC interrupt handler
  * Called from main interrupt handler
  *
- * IPC protocol:
- *   IPCD (DSP->Host): DSP sets BUSY to send notification, Host clears BUSY + sets DONE
- *   IPCX (Host->DSP): DSP sets DONE when our command completes
+ * catpt IPC protocol (from Linux catpt ipc.c):
+ *
+ * Host->DSP (IPCX register):
+ *   Host sets BUSY to send command.  DSP clears BUSY and sets DONE
+ *   when it has processed the command.  Host reads reply from outbox,
+ *   then clears DONE.
+ *
+ * DSP->Host (IPCD register):
+ *   DSP sets BUSY to send notification.  Host processes notification,
+ *   then clears BUSY and sets DONE to acknowledge.
  */
 void
 sst_ipc_intr(struct sst_softc *sc)
 {
-	uint32_t isr, ipcd;
+	uint32_t isr, ipcx, ipcd;
 
 	/* Read interrupt status */
 	isr = sst_shim_read(sc, SST_SHIM_ISRX);
+	ipcx = sst_shim_read(sc, SST_SHIM_IPCX);
 	ipcd = sst_shim_read(sc, SST_SHIM_IPCD);
 
-	/* Check for notification from DSP (BUSY in IPCD) */
-	if (ipcd & SST_IPC_BUSY) {
-		/* Acknowledge: clear BUSY, set DONE */
-		sst_shim_write(sc, SST_SHIM_IPCD,
-			       (ipcd & ~SST_IPC_BUSY) | SST_IPC_DONE);
+	/*
+	 * Check for reply to our message (DONE in IPCX).
+	 * DSP sets DONE in IPCX after processing our command.
+	 */
+	if (ipcx & SST_IPC_DONE) {
+		/* Clear DONE in IPCX */
+		sst_shim_write(sc, SST_SHIM_IPCX, ipcx & ~SST_IPC_DONE);
 
 		mtx_lock(&sc->ipc.lock);
 
-		/* First message after boot is "ready" notification */
-		if (!sc->ipc.ready) {
-			sc->ipc.ready = true;
-			device_printf(sc->dev, "DSP signaled ready: IPCD=0x%08x\n",
-				      ipcd);
-		} else {
-			device_printf(sc->dev, "IPC: DSP notification: 0x%08x\n",
-				      ipcd);
-		}
-
-		/* Store reply and wake up waiter */
-		sc->ipc.msg.reply = ipcd;
+		/* Extract status from reply (bits 4:0) */
+		sc->ipc.msg.reply = ipcx;
+		sc->ipc.msg.status = ipcx & SST_IPC_STATUS_MASK;
+		sc->ipc.state = SST_IPC_STATE_DONE;
 		cv_signal(&sc->ipc.wait_cv);
+
+		device_printf(sc->dev,
+		    "IPC reply: IPCX=0x%08x status=%d\n",
+		    ipcx, sc->ipc.msg.status);
 
 		mtx_unlock(&sc->ipc.lock);
 	}
 
 	/*
-	 * Check for reply completion (DONE in IPCD)
-	 * On WPT, DSP may use DONE for ready notification too.
+	 * Check for notification from DSP (BUSY in IPCD).
+	 * DSP sets BUSY in IPCD to send unsolicited notification.
 	 */
-	if (ipcd & SST_IPC_DONE) {
-		/* Clear DONE bit */
-		sst_shim_write(sc, SST_SHIM_IPCD, ipcd & ~SST_IPC_DONE);
-
+	if (ipcd & SST_IPC_BUSY) {
 		mtx_lock(&sc->ipc.lock);
 
-		/* First DONE after boot may be ready notification on WPT */
+		/* First notification after boot is FW_READY */
 		if (!sc->ipc.ready) {
 			sc->ipc.ready = true;
 			device_printf(sc->dev,
-			    "DSP signaled ready via DONE: IPCD=0x%08x\n", ipcd);
+			    "IPC: DSP ready notification: IPCD=0x%08x\n",
+			    ipcd);
+		} else {
+			device_printf(sc->dev,
+			    "IPC: DSP notification: IPCD=0x%08x\n", ipcd);
 		}
 
-		/* Store reply and wake up sender */
-		sc->ipc.msg.reply = ipcd;
-		sc->ipc.state = SST_IPC_STATE_DONE;
-		cv_signal(&sc->ipc.wait_cv);
-
 		mtx_unlock(&sc->ipc.lock);
+
+		/* Acknowledge: clear BUSY, set DONE in IPCD */
+		sst_shim_write(sc, SST_SHIM_IPCD,
+		    (ipcd & ~SST_IPC_BUSY) | SST_IPC_DONE);
 	}
 
 	/* Clear interrupt status */
@@ -607,7 +614,7 @@ sst_ipc_set_dx(struct sst_softc *sc, uint32_t state)
 	memset(&dx, 0, sizeof(dx));
 	dx.state = state;
 
-	header = SST_IPC_HEADER(SST_IPC_GLBL_SET_DX, 0, sizeof(dx));
+	header = SST_IPC_HEADER(SST_IPC_GLBL_ENTER_DX_STATE, 0, 0);
 
 	device_printf(sc->dev, "IPC: Setting DX state to %u\n", state);
 

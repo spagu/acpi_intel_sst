@@ -18,20 +18,19 @@
 
 /*
  * IPC Message Types (Global)
- * Based on Linux catpt driver messages.h
+ * From Linux catpt driver: enum catpt_global_msg_type (messages.h)
+ * These go into bits[28:24] of IPCX header.
  */
-#define SST_IPC_GLBL_REPLY		0x00
-#define SST_IPC_GLBL_GET_FW_VERSION	0x01
-#define SST_IPC_GLBL_ALLOCATE_STREAM	0x02
-#define SST_IPC_GLBL_FREE_STREAM	0x03
-#define SST_IPC_GLBL_STREAM_MESSAGE	0x04
-#define SST_IPC_GLBL_REQUEST_DUMP	0x05
-#define SST_IPC_GLBL_SET_DEVICE_FORMATS	0x06
-#define SST_IPC_GLBL_SET_DX		0x07
-#define SST_IPC_GLBL_ENTER_DX_STATE	0x08
-#define SST_IPC_GLBL_GET_MIXER_PARAMS	0x09
-#define SST_IPC_GLBL_SET_MIXER_PARAMS	0x0A
-#define SST_IPC_GLBL_NOTIFICATION	0x0F
+#define SST_IPC_GLBL_GET_FW_VERSION	0	/* CATPT_GLB_GET_FW_VERSION */
+#define SST_IPC_GLBL_ALLOCATE_STREAM	3	/* CATPT_GLB_ALLOCATE_STREAM */
+#define SST_IPC_GLBL_FREE_STREAM	4	/* CATPT_GLB_FREE_STREAM */
+#define SST_IPC_GLBL_STREAM_MESSAGE	6	/* CATPT_GLB_STREAM_MESSAGE */
+#define SST_IPC_GLBL_REQUEST_DUMP	7	/* CATPT_GLB_REQUEST_CORE_DUMP */
+#define SST_IPC_GLBL_SET_DEVICE_FORMATS	10	/* CATPT_GLB_SET_DEVICE_FORMATS */
+#define SST_IPC_GLBL_ENTER_DX_STATE	12	/* CATPT_GLB_ENTER_DX_STATE */
+#define SST_IPC_GLBL_GET_MIXER_PARAMS	13	/* CATPT_GLB_GET_MIXER_STREAM_INFO */
+#define SST_IPC_GLBL_SET_MIXER_PARAMS	13	/* Uses same type as GET (data in mailbox) */
+#define SST_IPC_GLBL_NOTIFICATION	15	/* CATPT_GLB_NOTIFICATION */
 
 /*
  * Stream Message Types
@@ -72,12 +71,16 @@
 /*
  * IPC Header Format (catpt)
  *
- * From Linux catpt union catpt_global_msg:
+ * From Linux catpt union catpt_global_msg (messages.h):
  * |31   |30   |29      |28:24           |23:5    |4:0    |
  * |BUSY |DONE |FW_READY|GLOBAL_MSG_TYPE |CONTEXT |STATUS |
  *
- * Note: This differs from older Intel SST IPC formats.
- * The FW_READY bit (29) is critical for boot detection.
+ * From Linux catpt union catpt_notify_msg (FW_READY):
+ * |31   |30   |29      |28:0                            |
+ * |BUSY |DONE |FW_READY|MAILBOX_ADDRESS (>> 3)          |
+ *
+ * The firmware stores (actual_address >> 3) in bits[28:0].
+ * Driver recovers actual offset by shifting left by 3.
  */
 #define SST_IPC_FW_READY	(1U << 29)	/* FW Ready bit in IPCD */
 #define SST_IPC_MSG_TYPE_SHIFT	24
@@ -86,21 +89,36 @@
 #define SST_IPC_CONTEXT_SHIFT	5
 #define SST_IPC_CONTEXT_MASK	(0x7FFFF << SST_IPC_CONTEXT_SHIFT)
 
-/*
- * Legacy IPC header format (used by sst_ipc.c send/recv)
- * TODO: Migrate to catpt format once IPC is fully working
- */
-#define SST_IPC_TYPE_SHIFT	24
-#define SST_IPC_TYPE_MASK	(0x3F << SST_IPC_TYPE_SHIFT)
-#define SST_IPC_MSG_SHIFT	16
-#define SST_IPC_MSG_MASK	(0xF << SST_IPC_MSG_SHIFT)
-#define SST_IPC_SIZE_SHIFT	8
-#define SST_IPC_SIZE_MASK	(0xFF << SST_IPC_SIZE_SHIFT)
+/* FW_READY mailbox address extraction from IPCD */
+#define SST_IPC_MBOX_ADDR_MASK	0x1FFFFFFFU	/* bits [28:0] */
+#define SST_IPC_MBOX_ADDR_SHIFT	3		/* left-shift to get byte offset */
+#define SST_IPC_MBOX_OFFSET(ipcd) \
+	(((ipcd) & SST_IPC_MBOX_ADDR_MASK) << SST_IPC_MBOX_ADDR_SHIFT)
 
-#define SST_IPC_HEADER(type, msg, size) \
-	(((type) << SST_IPC_TYPE_SHIFT) | \
-	 ((msg) << SST_IPC_MSG_SHIFT) | \
-	 ((size) << SST_IPC_SIZE_SHIFT))
+/*
+ * catpt IPC header format (global messages)
+ *
+ * For Host->DSP (IPCX): set global_msg_type in bits[28:24], BUSY in bit 31.
+ * Context/data goes in bits[23:5] if needed.
+ */
+/*
+ * catpt stream message header format (bits differ from global):
+ * |31:29 |28:24           |23:20           |19:16        |15:12       |4:0   |
+ * |flags |GLOBAL_MSG_TYPE |STREAM_MSG_TYPE |STREAM_HW_ID |STAGE_ACTION|STATUS|
+ */
+#define SST_IPC_STR_MSG_TYPE_SHIFT	20
+#define SST_IPC_STR_HW_ID_SHIFT	16
+#define SST_IPC_STR_STAGE_SHIFT		12
+
+#define SST_IPC_HEADER(type, ctx, ...) \
+	(((uint32_t)(type) << SST_IPC_MSG_TYPE_SHIFT) | \
+	 ((uint32_t)(ctx) << SST_IPC_CONTEXT_SHIFT))
+
+/* Stream message header: type=STREAM_MESSAGE, sub=stream_msg_type */
+#define SST_IPC_STREAM_HEADER(str_type, stream_id) \
+	(((uint32_t)SST_IPC_GLBL_STREAM_MESSAGE << SST_IPC_MSG_TYPE_SHIFT) | \
+	 ((uint32_t)(str_type) << SST_IPC_STR_MSG_TYPE_SHIFT) | \
+	 ((uint32_t)(stream_id) << SST_IPC_STR_HW_ID_SHIFT))
 
 /*
  * IPC Reply Status

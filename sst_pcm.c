@@ -248,6 +248,9 @@ sst_chan_init(kobj_t obj, void *devinfo, struct snd_dbuf *b,
 	struct sst_pcm_channel *ch;
 	int error;
 
+	device_printf(sc->dev, "PCM: chan_init dir=%d b=%p c=%p\n",
+	    dir, b, c);
+
 	/* Allocate channel slot from pool */
 	ch = sst_pcm_alloc_channel(sc, dir);
 	if (ch == NULL) {
@@ -255,6 +258,8 @@ sst_chan_init(kobj_t obj, void *devinfo, struct snd_dbuf *b,
 		    (dir == PCMDIR_PLAY) ? "playback" : "capture");
 		return (NULL);
 	}
+
+	device_printf(sc->dev, "PCM: chan slot %d allocated\n", ch->index);
 
 	/* SSP port: 0 for playback, 1 for capture */
 	ch->ssp_port = (dir == PCMDIR_PLAY) ? 0 : 1;
@@ -264,11 +269,17 @@ sst_chan_init(kobj_t obj, void *devinfo, struct snd_dbuf *b,
 	ch->pcm_ch = c;
 
 	/* Allocate DMA buffer */
+	device_printf(sc->dev, "PCM: allocating DMA buffer\n");
 	error = sst_pcm_alloc_buffer(sc, ch);
 	if (error) {
+		device_printf(sc->dev, "PCM: DMA buffer alloc failed: %d\n",
+		    error);
 		sst_pcm_release_channel(sc, ch);
 		return (NULL);
 	}
+
+	device_printf(sc->dev, "PCM: DMA buf=%p size=%zu\n",
+	    ch->buf, ch->buf_size);
 
 	/* Allocate DMA channel */
 	ch->dma_ch = sst_dma_alloc(sc);
@@ -280,6 +291,8 @@ sst_chan_init(kobj_t obj, void *devinfo, struct snd_dbuf *b,
 	}
 
 	/* Setup sound buffer */
+	device_printf(sc->dev, "PCM: sndbuf_setup buf=%p size=%zu\n",
+	    ch->buf, ch->buf_size);
 	if (sndbuf_setup(b, ch->buf, ch->buf_size) != 0) {
 		device_printf(sc->dev, "Failed to setup sound buffer\n");
 		sst_dma_free(sc, ch->dma_ch);
@@ -297,7 +310,7 @@ sst_chan_init(kobj_t obj, void *devinfo, struct snd_dbuf *b,
 	ch->stream_id = 0;
 	ch->stream_allocated = false;
 
-	device_printf(sc->dev, "PCM: Allocated %s stream %d\n",
+	device_printf(sc->dev, "PCM: Allocated %s channel %d\n",
 	    (dir == PCMDIR_PLAY) ? "playback" : "capture", ch->index);
 
 	return (ch);
@@ -767,24 +780,81 @@ sst_pcm_fini(struct sst_softc *sc)
 /*
  * Register PCM device with sound(4)
  *
- * FreeBSD 15 sound(4) API:
- *   1. pcm_init(dev, devinfo) - Initialize PCM with driver data
- *   2. pcm_addchan(dev, dir, class, devinfo) - Add channels
- *   3. pcm_register(dev, status) - Finalize registration with status string
+ * Sound(4) requires device_get_softc() to return a snddev_info of
+ * size PCM_SOFTC_SIZE.  Since our ACPI device uses sst_softc, we
+ * create a child "pcm" device whose softc is owned by sound(4).
+ * Our sst_softc is passed via device_set_ivars().
  */
 int
 sst_pcm_register(struct sst_softc *sc)
 {
-	int error;
-	int i;
-	char status[SND_STATUSLEN];
-
-	device_printf(sc->dev, "PCM: sst_pcm_register() called\n");
+	device_printf(sc->dev, "PCM: Creating child pcm device\n");
 
 	if (sc->pcm.registered) {
-		device_printf(sc->dev, "PCM: Already registered, returning\n");
+		device_printf(sc->dev, "PCM: Already registered\n");
 		return (0);
 	}
+
+	sc->pcm.pcm_dev = device_add_child(sc->dev, "pcm", DEVICE_UNIT_ANY);
+	if (sc->pcm.pcm_dev == NULL) {
+		device_printf(sc->dev, "PCM: Failed to add child device\n");
+		return (ENXIO);
+	}
+
+	/* Pass our softc to the child via ivars */
+	device_set_ivars(sc->pcm.pcm_dev, sc);
+
+	bus_attach_children(sc->dev);
+	return (0);
+}
+
+/*
+ * Unregister PCM device
+ */
+void
+sst_pcm_unregister(struct sst_softc *sc)
+{
+	if (!sc->pcm.registered)
+		return;
+
+	if (sc->pcm.pcm_dev != NULL) {
+		pcm_unregister(sc->pcm.pcm_dev);
+		sc->pcm.pcm_dev = NULL;
+	}
+
+	sc->pcm.registered = false;
+}
+
+/* ================================================================
+ * Child PCM Driver (probe/attach/detach)
+ *
+ * This driver attaches as a child of acpi_intel_sst.  Its softc is
+ * PCM_SOFTC_SIZE (struct snddev_info) so that sound(4) can use it.
+ * The parent's sst_softc is retrieved via device_get_ivars().
+ * ================================================================ */
+
+static int
+sst_pcm_child_probe(device_t dev)
+{
+	device_set_desc(dev, "Intel SST Audio");
+	return (BUS_PROBE_DEFAULT);
+}
+
+static int
+sst_pcm_child_attach(device_t dev)
+{
+	struct sst_softc *sc;
+	char status[SND_STATUSLEN];
+	int error, i;
+
+	sc = device_get_ivars(dev);
+	if (sc == NULL) {
+		device_printf(dev, "PCM: No parent softc\n");
+		return (ENXIO);
+	}
+
+	device_printf(dev, "PCM child attach: parent=%s\n",
+	    device_get_nameunit(sc->dev));
 
 	/* Build status string */
 	if (sc->irq_res != NULL) {
@@ -798,70 +868,70 @@ sst_pcm_register(struct sst_softc *sc)
 		    rman_get_start(sc->mem_res));
 	}
 
-	device_printf(sc->dev, "PCM: Status string: %s\n", status);
-
 	/*
-	 * FreeBSD 15 sound(4) registration:
-	 * 1. pcm_init() - initialize with driver data pointer
-	 * 2. pcm_addchan() - add playback/capture channels
-	 * 3. pcm_register() - finalize with status string
+	 * sound(4) registration on the CHILD device:
+	 * device_get_softc(dev) returns snddev_info (PCM_SOFTC_SIZE).
+	 * Our sst_softc is passed as devinfo to pcm_init.
 	 */
-
-	/* Initialize PCM device with our softc as devinfo */
-	device_printf(sc->dev, "PCM: Calling pcm_init()\n");
-	pcm_init(sc->dev, sc);
+	pcm_init(dev, sc);
 
 	/* Add playback channels */
-	device_printf(sc->dev, "PCM: Adding %d playback channels\n", SST_PCM_MAX_PLAY);
-	for (i = 0; i < SST_PCM_MAX_PLAY; i++) {
-		pcm_addchan(sc->dev, PCMDIR_PLAY, &sst_chan_class, sc);
-	}
+	for (i = 0; i < SST_PCM_MAX_PLAY; i++)
+		pcm_addchan(dev, PCMDIR_PLAY, &sst_chan_class, sc);
 
 	/* Add capture channels */
-	device_printf(sc->dev, "PCM: Adding %d capture channels\n", SST_PCM_MAX_REC);
-	for (i = 0; i < SST_PCM_MAX_REC; i++) {
-		pcm_addchan(sc->dev, PCMDIR_REC, &sst_chan_class, sc);
-	}
+	for (i = 0; i < SST_PCM_MAX_REC; i++)
+		pcm_addchan(dev, PCMDIR_REC, &sst_chan_class, sc);
 
-	/* Finalize registration with status string */
-	device_printf(sc->dev, "PCM: Calling pcm_register()\n");
-	error = pcm_register(sc->dev, status);
+	error = pcm_register(dev, status);
 	if (error) {
-		device_printf(sc->dev, "PCM: pcm_register() failed: %d\n", error);
+		device_printf(dev, "PCM: pcm_register failed: %d\n", error);
 		return (error);
 	}
 
-	device_printf(sc->dev, "PCM: pcm_register() succeeded\n");
-
 	/* Register mixer */
-	device_printf(sc->dev, "PCM: Calling mixer_init()\n");
-	error = mixer_init(sc->dev, &sst_mixer_class, sc);
-	if (error) {
-		device_printf(sc->dev, "PCM: mixer_init() failed: %d\n", error);
-		/* Non-fatal - continue without mixer */
-	}
+	mixer_init(dev, &sst_mixer_class, sc);
 
 	sc->pcm.registered = true;
 
-	device_printf(sc->dev, "PCM device registered: /dev/dsp (%d play, %d rec)\n",
-	    SST_PCM_MAX_PLAY, SST_PCM_MAX_REC);
+	device_printf(dev, "PCM registered: %s (%d play, %d rec)\n",
+	    status, SST_PCM_MAX_PLAY, SST_PCM_MAX_REC);
 
 	return (0);
 }
 
-/*
- * Unregister PCM device
- */
-void
-sst_pcm_unregister(struct sst_softc *sc)
+static int
+sst_pcm_child_detach(device_t dev)
 {
-	if (!sc->pcm.registered)
-		return;
+	struct sst_softc *sc;
+	int error;
 
-	pcm_unregister(sc->dev);
+	sc = device_get_ivars(dev);
 
-	sc->pcm.registered = false;
+	error = pcm_unregister(dev);
+	if (error)
+		return (error);
+
+	if (sc != NULL)
+		sc->pcm.registered = false;
+
+	return (0);
 }
+
+static device_method_t sst_pcm_methods[] = {
+	DEVMETHOD(device_probe,		sst_pcm_child_probe),
+	DEVMETHOD(device_attach,	sst_pcm_child_attach),
+	DEVMETHOD(device_detach,	sst_pcm_child_detach),
+	DEVMETHOD_END
+};
+
+static driver_t sst_pcm_driver = {
+	"pcm",
+	sst_pcm_methods,
+	PCM_SOFTC_SIZE,
+};
+
+DRIVER_MODULE(snd_intel_sst, acpi_intel_sst, sst_pcm_driver, NULL, NULL);
 
 /*
  * PCM interrupt handler (called from DMA completion)

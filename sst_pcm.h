@@ -85,11 +85,14 @@ struct sst_pcm_channel {
 /*
  * PCM Device Context
  *
- * Note: We use sc->dev directly with pcm_register() rather than
- * creating a child device. The sound subsystem attaches to our device.
+ * Sound(4) requires that the device passed to pcm_init() has a softc
+ * of size PCM_SOFTC_SIZE (struct snddev_info).  Since our ACPI device
+ * has sst_softc, we create a child "pcm" device for sound(4) and keep
+ * our own state here.
  */
 struct sst_pcm {
 	struct sst_softc	*sc;		/* Parent softc */
+	device_t		pcm_dev;	/* Child "pcm" device */
 
 	/* Multi-stream channels */
 	struct sst_pcm_channel	play[SST_PCM_MAX_PLAY];	/* Playback streams */
