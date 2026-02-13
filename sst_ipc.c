@@ -324,22 +324,35 @@ sst_ipc_intr(struct sst_softc *sc)
 {
 	uint32_t isr, ipcx, ipcd;
 
-	/* Read interrupt status */
+	/*
+	 * catpt IPC interrupt handler (matches Linux catpt_irq_handler).
+	 *
+	 * ISRX (ISC in catpt) tells us WHAT fired:
+	 *   bit 0 (IPCCD) = DSP set DONE in IPCX → reply to our command
+	 *   bit 1 (IPCDB) = DSP set BUSY in IPCD → notification from DSP
+	 *
+	 * Protocol per channel:
+	 *   1. Mask interrupt in IMRX (IMC)
+	 *   2. Read register, extract data
+	 *   3. Clear register bits
+	 *   4. Unmask interrupt in IMRX
+	 */
 	isr = sst_shim_read(sc, SST_SHIM_ISRX);
-	ipcx = sst_shim_read(sc, SST_SHIM_IPCX);
-	ipcd = sst_shim_read(sc, SST_SHIM_IPCD);
 
 	/* Ignore spurious interrupts (hardware not ready or powered down) */
-	if (isr == 0xFFFFFFFF || ipcx == 0xFFFFFFFF || ipcd == 0xFFFFFFFF)
+	if (isr == 0 || isr == 0xFFFFFFFF)
 		return;
 
 	/*
-	 * Check for reply to our message (DONE in IPCX).
-	 * DSP sets DONE in IPCX after processing our command.
+	 * IPCCD (bit 0): Reply to our command.
+	 * DSP cleared BUSY and set DONE in IPCX (IPCC).
 	 */
-	if (ipcx & SST_IPC_DONE) {
-		/* Clear DONE in IPCX */
-		sst_shim_write(sc, SST_SHIM_IPCX, ipcx & ~SST_IPC_DONE);
+	if (isr & SST_IMC_IPCCD) {
+		/* Mask IPCCD interrupt */
+		sst_shim_update_bits(sc, SST_SHIM_IMRX,
+		    SST_IMC_IPCCD, SST_IMC_IPCCD);
+
+		ipcx = sst_shim_read(sc, SST_SHIM_IPCX);
 
 		mtx_lock(&sc->ipc.lock);
 
@@ -354,35 +367,51 @@ sst_ipc_intr(struct sst_softc *sc)
 		    ipcx, sc->ipc.msg.status);
 
 		mtx_unlock(&sc->ipc.lock);
+
+		/* Clear DONE in IPCX, unmask IPCCD interrupt */
+		sst_shim_update_bits(sc, SST_SHIM_IPCX,
+		    SST_IPC_DONE, 0);
+		sst_shim_update_bits(sc, SST_SHIM_IMRX,
+		    SST_IMC_IPCCD, 0);
 	}
 
 	/*
-	 * Check for notification from DSP (BUSY in IPCD).
-	 * DSP sets BUSY in IPCD to send unsolicited notification.
+	 * IPCDB (bit 1): Notification from DSP.
+	 * DSP set BUSY in IPCD.
 	 */
-	if (ipcd & SST_IPC_BUSY) {
-		mtx_lock(&sc->ipc.lock);
+	if (isr & SST_IMC_IPCDB) {
+		/* Mask IPCDB interrupt */
+		sst_shim_update_bits(sc, SST_SHIM_IMRX,
+		    SST_IMC_IPCDB, SST_IMC_IPCDB);
 
-		/* First notification after boot is FW_READY */
-		if (!sc->ipc.ready) {
-			sc->ipc.ready = true;
-			device_printf(sc->dev,
-			    "IPC: DSP ready notification: IPCD=0x%08x\n",
-			    ipcd);
-		} else {
-			device_printf(sc->dev,
-			    "IPC: DSP notification: IPCD=0x%08x\n", ipcd);
+		ipcd = sst_shim_read(sc, SST_SHIM_IPCD);
+
+		if (ipcd & SST_IPC_BUSY) {
+			mtx_lock(&sc->ipc.lock);
+
+			/* First notification after boot is FW_READY */
+			if (!sc->ipc.ready) {
+				sc->ipc.ready = true;
+				device_printf(sc->dev,
+				    "IPC: DSP ready: IPCD=0x%08x\n",
+				    ipcd);
+			} else {
+				device_printf(sc->dev,
+				    "IPC: DSP notify: IPCD=0x%08x\n",
+				    ipcd);
+			}
+
+			mtx_unlock(&sc->ipc.lock);
+
+			/* ACK: clear BUSY, set DONE in IPCD */
+			sst_shim_update_bits(sc, SST_SHIM_IPCD,
+			    SST_IPC_BUSY | SST_IPC_DONE, SST_IPC_DONE);
 		}
 
-		mtx_unlock(&sc->ipc.lock);
-
-		/* Acknowledge: clear BUSY, set DONE in IPCD */
-		sst_shim_write(sc, SST_SHIM_IPCD,
-		    (ipcd & ~SST_IPC_BUSY) | SST_IPC_DONE);
+		/* Unmask IPCDB interrupt */
+		sst_shim_update_bits(sc, SST_SHIM_IMRX,
+		    SST_IMC_IPCDB, 0);
 	}
-
-	/* Clear interrupt status */
-	sst_shim_write(sc, SST_SHIM_ISRX, isr);
 }
 
 /*

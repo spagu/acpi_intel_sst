@@ -790,7 +790,7 @@ sst_pcm_register(struct sst_softc *sc)
 {
 	device_printf(sc->dev, "PCM: Creating child pcm device\n");
 
-	if (sc->pcm.registered) {
+	if (sc->pcm.pcm_dev != NULL || sc->pcm.registered) {
 		device_printf(sc->dev, "PCM: Already registered\n");
 		return (0);
 	}
@@ -803,7 +803,16 @@ sst_pcm_register(struct sst_softc *sc)
 
 	/* Pass our softc to the child via ivars */
 	device_set_ivars(sc->pcm.pcm_dev, sc);
+	device_printf(sc->dev,
+	    "PCM: child=%p ivars set to sc=%p sc->dev=%p\n",
+	    sc->pcm.pcm_dev, sc, sc->dev);
 
+	/*
+	 * bus_attach_children triggers child probe+attach synchronously.
+	 * bus_generic_driver_added (our bus method) also calls it, so
+	 * the child may already be attached by the time we return.
+	 * Mark pcm_dev non-NULL above to prevent re-entry.
+	 */
 	bus_attach_children(sc->dev);
 	return (0);
 }
@@ -848,13 +857,15 @@ sst_pcm_child_attach(device_t dev)
 	int error, i;
 
 	sc = device_get_ivars(dev);
-	if (sc == NULL) {
-		device_printf(dev, "PCM: No parent softc\n");
+	if (sc == NULL || sc->dev == NULL) {
+		device_printf(dev,
+		    "PCM: invalid ivars sc=%p sc->dev=%p\n",
+		    sc, sc ? sc->dev : NULL);
 		return (ENXIO);
 	}
 
-	device_printf(dev, "PCM child attach: parent=%s\n",
-	    device_get_nameunit(sc->dev));
+	device_printf(dev, "PCM child attach: parent=%s sc=%p\n",
+	    device_get_nameunit(sc->dev), sc);
 
 	/* Build status string */
 	if (sc->irq_res != NULL) {

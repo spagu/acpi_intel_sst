@@ -95,15 +95,23 @@ static void
 sst_intr(void *arg)
 {
 	struct sst_softc *sc = arg;
-	uint32_t pisr;
+	uint32_t isr;
 
-	pisr = sst_shim_read(sc, SST_SHIM_PISR);
-	if (pisr == 0 || pisr == SST_INVALID_REG_VALUE)
+	/*
+	 * Check ISRX (ISC in catpt terms) directly - NOT PISR.
+	 * Linux catpt checks ISC register (offset 0x18) for:
+	 *   bit 0 (IPCCD) = reply to our command (DONE in IPCX)
+	 *   bit 1 (IPCDB) = notification from DSP (BUSY in IPCD)
+	 * PISR may not reflect all IPC events on WPT/Broadwell.
+	 */
+	isr = sst_shim_read(sc, SST_SHIM_ISRX);
+	if (isr == 0 || isr == SST_INVALID_REG_VALUE)
 		return;
 
-	sst_ipc_intr(sc);
+	if (isr & (SST_IMC_IPCCD | SST_IMC_IPCDB))
+		sst_ipc_intr(sc);
+
 	sst_dma_intr(sc);
-	sst_shim_write(sc, SST_SHIM_PISR, pisr);
 }
 
 /* ================================================================
@@ -3459,7 +3467,6 @@ static device_method_t sst_methods[] = {
 	DEVMETHOD(device_resume,	sst_acpi_resume),
 	/* Bus interface for child PCM device */
 	DEVMETHOD(bus_print_child,	bus_generic_print_child),
-	DEVMETHOD(bus_driver_added,	bus_generic_driver_added),
 	DEVMETHOD_END
 };
 
