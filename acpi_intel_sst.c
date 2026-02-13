@@ -420,13 +420,13 @@ sst_wpt_power_down(struct sst_softc *sc)
 	vdrtctl2 |= SST_VDRTCTL2_DTCGE;
 	bus_write_4(sc->shim_res, SST_PCI_VDRTCTL2, vdrtctl2);
 
-	/* 7. Gate DRAM (set DSRAMPGE bits) + 60us settle */
+	/* 7. Gate DRAM: SET DSRAMPGE bits (1 = gate enabled = OFF) + 60us */
 	vdrtctl0 = bus_read_4(sc->shim_res, SST_PCI_VDRTCTL0);
 	vdrtctl0 |= SST_WPT_VDRTCTL0_DSRAMPGE_MASK;
 	bus_write_4(sc->shim_res, SST_PCI_VDRTCTL0, vdrtctl0);
 	DELAY(60);
 
-	/* 8. Gate IRAM (set ISRAMPGE bits) + 60us settle */
+	/* 8. Gate IRAM: SET ISRAMPGE bits (1 = gate enabled = OFF) + 60us */
 	vdrtctl0 = bus_read_4(sc->shim_res, SST_PCI_VDRTCTL0);
 	vdrtctl0 |= SST_WPT_VDRTCTL0_ISRAMPGE_MASK;
 	bus_write_4(sc->shim_res, SST_PCI_VDRTCTL0, vdrtctl0);
@@ -517,42 +517,57 @@ sst_wpt_power_up(struct sst_softc *sc)
 	pmcs = bus_read_4(sc->shim_res, SST_PCI_PMCS);
 	pmcs = (pmcs & ~SST_PMCS_PS_MASK) | SST_PMCS_PS_D0;
 	bus_write_4(sc->shim_res, SST_PCI_PMCS, pmcs);
+	DELAY(100);	/* Let D0 settle */
+
+	pmcs = bus_read_4(sc->shim_res, SST_PCI_PMCS);
+	vdrtctl0 = bus_read_4(sc->shim_res, SST_PCI_VDRTCTL0);
+	device_printf(sc->dev, "  After D0: PMCS=0x%08x(D%d) V0=0x%08x\n",
+	    pmcs, pmcs & SST_PMCS_PS_MASK, vdrtctl0);
 
 	/* 4. Set D3PGD + D3SRAMPGD (disable power gating) */
 	vdrtctl0 = bus_read_4(sc->shim_res, SST_PCI_VDRTCTL0);
 	vdrtctl0 |= (SST_WPT_VDRTCTL0_D3PGD |
 	    SST_WPT_VDRTCTL0_D3SRAMPGD);
 	bus_write_4(sc->shim_res, SST_PCI_VDRTCTL0, vdrtctl0);
+	vdrtctl0 = bus_read_4(sc->shim_res, SST_PCI_VDRTCTL0);
+	device_printf(sc->dev, "  After D3PGD: V0=0x%08x\n", vdrtctl0);
 
 	/*
-	 * 5a. Ungate DRAM: clear DSRAMPGE bits + 60us settle
-	 * Linux catpt_dsp_set_srampge() does DRAM and IRAM separately,
-	 * each with udelay(60) + dummy readback per block.
-	 * Dummy reads happen in sst_sram_sanitize() after BAR0 allocation.
+	 * 5a. Ungate DRAM: CLEAR DSRAMPGE bits (0 = gate disabled = ON)
+	 *
+	 * Linux catpt catpt_dsp_set_srampge() confirms:
+	 *   power_up passes new=0 (CLEAR bits = SRAM powered ON)
+	 *   power_down passes new=mask (SET bits = SRAM gated OFF)
+	 * "Power Gate Enable": 1=gate enabled=off, 0=gate disabled=on
 	 */
 	vdrtctl0 = bus_read_4(sc->shim_res, SST_PCI_VDRTCTL0);
+	device_printf(sc->dev, "  Pre-DRAM PGE: V0=0x%08x\n", vdrtctl0);
 	vdrtctl0 &= ~SST_WPT_VDRTCTL0_DSRAMPGE_MASK;
 	bus_write_4(sc->shim_res, SST_PCI_VDRTCTL0, vdrtctl0);
-	DELAY(60);	/* 60us - wait for SRAM power gating to propagate */
+	DELAY(60);
+	vdrtctl0 = bus_read_4(sc->shim_res, SST_PCI_VDRTCTL0);
+	device_printf(sc->dev, "  Post-DRAM PGE: V0=0x%08x\n", vdrtctl0);
 
-	/* 5b. Ungate IRAM: clear ISRAMPGE bits + 60us settle */
+	/* 5b. Ungate IRAM: CLEAR ISRAMPGE bits (0 = gate disabled = ON) */
 	vdrtctl0 = bus_read_4(sc->shim_res, SST_PCI_VDRTCTL0);
 	vdrtctl0 &= ~SST_WPT_VDRTCTL0_ISRAMPGE_MASK;
 	bus_write_4(sc->shim_res, SST_PCI_VDRTCTL0, vdrtctl0);
-	DELAY(60);	/* 60us - wait for SRAM power gating to propagate */
+	DELAY(60);
+	vdrtctl0 = bus_read_4(sc->shim_res, SST_PCI_VDRTCTL0);
+	device_printf(sc->dev, "  Post-IRAM PGE: V0=0x%08x\n", vdrtctl0);
 
 	/*
 	 * NOTE: Linux catpt does register defaults, MCLK restore,
 	 * LP clock select, SSP bank clocks, and reset release HERE
 	 * (steps 6-10), but we need BAR0/SHIM access for those.
 	 * They are done in the dsp_init section after BAR0 allocation.
-	 * Re-enable DCLCGE here (step 11) as Linux does.
+	 *
+	 * IMPORTANT: Do NOT re-enable DCLCGE here (step 11)!
+	 * DCLCGE must remain disabled until firmware is loaded to SRAM.
+	 * With DCLCGE enabled, MMIO writes to SRAM are silently lost
+	 * (Linux catpt avoids this by using DMA for firmware loading).
+	 * We re-enable DCLCGE after firmware boot in sst_fw_boot().
 	 */
-
-	/* 11. Re-enable DCLCGE */
-	vdrtctl2 = bus_read_4(sc->shim_res, SST_PCI_VDRTCTL2);
-	vdrtctl2 |= SST_VDRTCTL2_DCLCGE;
-	bus_write_4(sc->shim_res, SST_PCI_VDRTCTL2, vdrtctl2);
 
 	/* Final state */
 	vdrtctl0 = bus_read_4(sc->shim_res, SST_PCI_VDRTCTL0);
@@ -2137,6 +2152,35 @@ sst_acpi_attach(device_t dev)
 	device_printf(dev, "BAR0: 0x%lx (size: 0x%lx)\n",
 	    rman_get_start(sc->mem_res), rman_get_size(sc->mem_res));
 
+	/* Immediate SRAM write test - before any SHIM manipulation */
+	{
+		uint32_t t0, t1, t2, t3;
+
+		t0 = bus_read_4(sc->mem_res, SST_DRAM_OFFSET);
+		t1 = bus_read_4(sc->mem_res, SST_IRAM_OFFSET);
+		device_printf(dev,
+		    "SRAM pre-test: DRAM[0]=0x%08x IRAM[0]=0x%08x\n",
+		    t0, t1);
+
+		bus_write_4(sc->mem_res, SST_DRAM_OFFSET, 0xCAFEBABE);
+		bus_barrier(sc->mem_res, SST_DRAM_OFFSET, 4,
+		    BUS_SPACE_BARRIER_WRITE);
+		t2 = bus_read_4(sc->mem_res, SST_DRAM_OFFSET);
+
+		bus_write_4(sc->mem_res, SST_IRAM_OFFSET, 0xDEADBEEF);
+		bus_barrier(sc->mem_res, SST_IRAM_OFFSET, 4,
+		    BUS_SPACE_BARRIER_WRITE);
+		t3 = bus_read_4(sc->mem_res, SST_IRAM_OFFSET);
+
+		device_printf(dev,
+		    "SRAM write test: DRAM[0]=0x%08x (want 0xCAFEBABE) "
+		    "IRAM[0]=0x%08x (want 0xDEADBEEF)\n", t2, t3);
+
+		/* Restore */
+		bus_write_4(sc->mem_res, SST_DRAM_OFFSET, t0);
+		bus_write_4(sc->mem_res, SST_IRAM_OFFSET, t1);
+	}
+
 	/* Enable SRAM power via control register */
 	error = sst_enable_sram(sc);
 	if (error != 0) {
@@ -2755,13 +2799,13 @@ dsp_init:
 		    "(STALL=%d RST=%d)\n",
 		    csr, !!(csr & SST_CSR_STALL), !!(csr & SST_CSR_RST));
 
-		/* Step 6: Re-enable DCLCGE */
-		{
-			uint32_t vdrtctl2 = bus_read_4(sc->shim_res,
-			    SST_PCI_VDRTCTL2);
-			vdrtctl2 |= SST_VDRTCTL2_DCLCGE;
-			bus_write_4(sc->shim_res, SST_PCI_VDRTCTL2, vdrtctl2);
-		}
+		/*
+		 * Step 6: Do NOT re-enable DCLCGE yet!
+		 * DCLCGE blocks MMIO writes to SRAM. Since we load firmware
+		 * via MMIO (not DMA like Linux catpt), DCLCGE must stay
+		 * disabled until after firmware is loaded.
+		 * Re-enabled in sst_fw_boot() after successful load.
+		 */
 
 		/* Step 7: Clear IPC interrupt deassert (unmask IPC in IMC) */
 		sst_shim_update_bits(sc, SST_SHIM_IMRX,
@@ -2794,7 +2838,19 @@ dsp_init:
 		goto fail;
 	}
 
-	/* Load firmware */
+	/*
+	 * Load firmware with DSP stalled but NOT in reset.
+	 * Linux catpt_boot_firmware(): stall only, no RST assertion.
+	 * RST was already cleared in SHIM config step 5.
+	 * DCLCGE must stay disabled for MMIO writes (Linux uses DMA instead).
+	 */
+	sst_dsp_stall(sc, true);   /* Ensure STALL is set */
+	{
+		uint32_t pre_csr = sst_shim_read(sc, SST_SHIM_CSR);
+		device_printf(dev, "Pre-FW load: CSR=0x%08x (STALL=%d RST=%d)\n",
+		    pre_csr, !!(pre_csr & SST_CSR_STALL),
+		    !!(pre_csr & SST_CSR_RST));
+	}
 	error = sst_fw_load(sc);
 	if (error) {
 		device_printf(dev, "Firmware load failed: %d\n", error);

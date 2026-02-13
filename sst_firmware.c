@@ -622,7 +622,9 @@ sst_fw_boot(struct sst_softc *sc)
 		    sst_shim_read(sc, SST_SHIM_IMRX));
 
 		/*
-		 * Step 4: Clear stall - DSP starts executing firmware
+		 * Step 4: Clear STALL - DSP starts executing firmware.
+		 * RST is already cleared (done in SHIM config during attach).
+		 * Linux catpt: only toggles STALL, RST stays cleared.
 		 */
 		device_printf(sc->dev,
 		    "  Clearing STALL (BIT 10) to start DSP...\n");
@@ -863,6 +865,22 @@ sst_fw_boot(struct sst_softc *sc)
 			device_printf(sc->dev, "FW info: %s\n",
 			    fw_ready.fw_info);
 		}
+	}
+
+	/*
+	 * Re-enable DCLCGE (step 11 of catpt_dsp_power_up).
+	 *
+	 * DCLCGE was left disabled during power_up so that MMIO writes
+	 * to SRAM would not be clock-gated. Now that firmware is loaded
+	 * and the DSP is running, we can safely re-enable it.
+	 */
+	if (sc->shim_res != NULL) {
+		uint32_t vdrtctl2;
+
+		vdrtctl2 = bus_read_4(sc->shim_res, SST_PCI_VDRTCTL2);
+		vdrtctl2 |= SST_VDRTCTL2_DCLCGE;
+		bus_write_4(sc->shim_res, SST_PCI_VDRTCTL2, vdrtctl2);
+		device_printf(sc->dev, "DCLCGE re-enabled after FW boot\n");
 	}
 
 	return (0);
