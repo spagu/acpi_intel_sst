@@ -779,8 +779,12 @@ sst_pcm_register(struct sst_softc *sc)
 	int i;
 	char status[SND_STATUSLEN];
 
-	if (sc->pcm.registered)
+	device_printf(sc->dev, "PCM: sst_pcm_register() called\n");
+
+	if (sc->pcm.registered) {
+		device_printf(sc->dev, "PCM: Already registered, returning\n");
 		return (0);
+	}
 
 	/* Build status string */
 	if (sc->irq_res != NULL) {
@@ -794,6 +798,8 @@ sst_pcm_register(struct sst_softc *sc)
 		    rman_get_start(sc->mem_res));
 	}
 
+	device_printf(sc->dev, "PCM: Status string: %s\n", status);
+
 	/*
 	 * FreeBSD 15 sound(4) registration:
 	 * 1. pcm_init() - initialize with driver data pointer
@@ -802,29 +808,36 @@ sst_pcm_register(struct sst_softc *sc)
 	 */
 
 	/* Initialize PCM device with our softc as devinfo */
+	device_printf(sc->dev, "PCM: Calling pcm_init()\n");
 	pcm_init(sc->dev, sc);
 
 	/* Add playback channels */
+	device_printf(sc->dev, "PCM: Adding %d playback channels\n", SST_PCM_MAX_PLAY);
 	for (i = 0; i < SST_PCM_MAX_PLAY; i++) {
 		pcm_addchan(sc->dev, PCMDIR_PLAY, &sst_chan_class, sc);
 	}
 
 	/* Add capture channels */
+	device_printf(sc->dev, "PCM: Adding %d capture channels\n", SST_PCM_MAX_REC);
 	for (i = 0; i < SST_PCM_MAX_REC; i++) {
 		pcm_addchan(sc->dev, PCMDIR_REC, &sst_chan_class, sc);
 	}
 
 	/* Finalize registration with status string */
+	device_printf(sc->dev, "PCM: Calling pcm_register()\n");
 	error = pcm_register(sc->dev, status);
 	if (error) {
-		device_printf(sc->dev, "pcm_register failed: %d\n", error);
+		device_printf(sc->dev, "PCM: pcm_register() failed: %d\n", error);
 		return (error);
 	}
 
+	device_printf(sc->dev, "PCM: pcm_register() succeeded\n");
+
 	/* Register mixer */
+	device_printf(sc->dev, "PCM: Calling mixer_init()\n");
 	error = mixer_init(sc->dev, &sst_mixer_class, sc);
 	if (error) {
-		device_printf(sc->dev, "mixer_init failed: %d\n", error);
+		device_printf(sc->dev, "PCM: mixer_init() failed: %d\n", error);
 		/* Non-fatal - continue without mixer */
 	}
 
