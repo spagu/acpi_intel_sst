@@ -832,6 +832,12 @@ void
 sst_pcm_fini(struct sst_softc *sc)
 {
 	sst_pcm_unregister(sc);
+
+	/*
+	 * Delete any remaining children (e.g. stale pcm devices left
+	 * over from a previous module load that didn't get cleaned up).
+	 */
+	device_delete_children(sc->dev);
 }
 
 /*
@@ -851,6 +857,13 @@ sst_pcm_register(struct sst_softc *sc)
 		device_printf(sc->dev, "PCM: Already registered\n");
 		return (0);
 	}
+
+	/*
+	 * Clean up any stale children from a previous module load.
+	 * After kldunload + kldload, old child devices may still exist
+	 * with ivars pointing to the old (freed) softc.
+	 */
+	device_delete_children(sc->dev);
 
 	sc->pcm.pcm_dev = device_add_child(sc->dev, "pcm", DEVICE_UNIT_ANY);
 	if (sc->pcm.pcm_dev == NULL) {
@@ -880,11 +893,18 @@ sst_pcm_register(struct sst_softc *sc)
 void
 sst_pcm_unregister(struct sst_softc *sc)
 {
-	if (!sc->pcm.registered)
+	if (!sc->pcm.registered && sc->pcm.pcm_dev == NULL)
 		return;
 
 	if (sc->pcm.pcm_dev != NULL) {
-		pcm_unregister(sc->pcm.pcm_dev);
+		if (sc->pcm.registered)
+			pcm_unregister(sc->pcm.pcm_dev);
+		/*
+		 * Delete the child device so it doesn't survive a
+		 * module reload with stale ivars pointing to freed
+		 * memory (the old softc).
+		 */
+		device_delete_child(sc->dev, sc->pcm.pcm_dev);
 		sc->pcm.pcm_dev = NULL;
 	}
 
