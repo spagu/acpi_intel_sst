@@ -50,7 +50,7 @@
 #define PCI_DEVICE_SST_BDW	0x9CB6
 #define PCI_DEVICE_SST_HSW	0x9C76 /* Haswell pending testing */
 
-#define SST_DRV_VERSION "0.41.0-fix-stale-ipcd"
+#define SST_DRV_VERSION "0.42.0-fix-sram-sanitize"
 
 /* Forward declarations */
 static int sst_acpi_probe(device_t dev);
@@ -68,6 +68,7 @@ static void sst_init(struct sst_softc *sc);
 /* New functions */
 static void sst_acpi_power_up(struct sst_softc *sc);
 static int sst_wpt_power_up(struct sst_softc *sc);
+static void sst_sram_sanitize(struct sst_softc *sc);
 static bool sst_test_bar0(struct sst_softc *sc);
 static int sst_enable_sram(struct sst_softc *sc);
 static int sst_enable_sram_direct(device_t dev);
@@ -358,40 +359,84 @@ sst_acpi_power_up(struct sst_softc *sc)
 /*
  * sst_wpt_power_down - catpt_dsp_power_down() via BAR1
  *
- * Linux catpt power-down keeps D3PGD=1 (register state preserved)
- * but clears D3SRAMPGD and gates all SRAM, then enters D3hot.
+ * Full Linux catpt sequence:
+ * 1. Disable DCLCGE
+ * 2. Assert reset
+ * 3. Set SSP bank clocks
+ * 4. Select LP clock + disable MCLK
+ * 5. Set register defaults
+ * 6. VDRTCTL2 clock gating (CGEALL pattern + DTCGE)
+ * 7. Gate DRAM (set DSRAMPGE + udelay 60)
+ * 8. Gate IRAM (set ISRAMPGE + udelay 60)
+ * 9. Set D3PGD, clear D3SRAMPGD
+ * 10. D3hot + udelay 50
+ * 11. Re-enable DCLCGE + udelay 50
  */
 static void
 sst_wpt_power_down(struct sst_softc *sc)
 {
-	uint32_t vdrtctl0, vdrtctl2, pmcs;
+	uint32_t vdrtctl0, vdrtctl2, pmcs, mask, val;
 
-	device_printf(sc->dev, "  --- Power-Down (catpt) ---\n");
+	device_printf(sc->dev, "  --- Power-Down (catpt-exact) ---\n");
 
 	/* 1. Disable DCLCGE */
 	vdrtctl2 = bus_read_4(sc->shim_res, SST_PCI_VDRTCTL2);
 	vdrtctl2 &= ~SST_VDRTCTL2_DCLCGE;
 	bus_write_4(sc->shim_res, SST_PCI_VDRTCTL2, vdrtctl2);
 
-	/* 2. Gate ALL SRAM (set all PGE bits) */
-	vdrtctl0 = bus_read_4(sc->shim_res, SST_PCI_VDRTCTL0);
-	vdrtctl0 |= (SST_WPT_VDRTCTL0_ISRAMPGE_MASK |
-	    SST_WPT_VDRTCTL0_DSRAMPGE_MASK);
-	bus_write_4(sc->shim_res, SST_PCI_VDRTCTL0, vdrtctl0);
+	/* 2. Assert reset (if SHIM is accessible) */
+	if (sc->mem_res != NULL)
+		sst_dsp_reset(sc, true);
 
-	/* 3. Set D3PGD=1, clear D3SRAMPGD (per Linux catpt) */
+	/* 3-5. Set SSP bank clocks, LP clock, register defaults
+	 * (only if SHIM accessible - during initial power cycle it may not be) */
+	if (sc->mem_res != NULL) {
+		sst_shim_update_bits(sc, SST_SHIM_CSR,
+		    SST_CSR_SBCS0 | SST_CSR_SBCS1,
+		    SST_CSR_SBCS0 | SST_CSR_SBCS1);
+		sst_shim_update_bits(sc, SST_SHIM_CSR, SST_CSR_LPCS,
+		    SST_CSR_LPCS);
+		sst_shim_update_bits(sc, SST_SHIM_CLKCTL,
+		    SST_CLKCTL_SMOS_MASK, 0);
+		sst_dsp_set_regs_defaults(sc);
+	}
+
+	/* 6. VDRTCTL2 clock gating: set CGEALL & ~DCLCGE, clear DTCGE first */
+	mask = SST_VDRTCTL2_CGEALL & ~SST_VDRTCTL2_DCLCGE;
+	val = mask & ~SST_VDRTCTL2_DTCGE;
+	vdrtctl2 = bus_read_4(sc->shim_res, SST_PCI_VDRTCTL2);
+	vdrtctl2 = (vdrtctl2 & ~mask) | val;
+	bus_write_4(sc->shim_res, SST_PCI_VDRTCTL2, vdrtctl2);
+	/* Then enable DTCGE */
+	vdrtctl2 = bus_read_4(sc->shim_res, SST_PCI_VDRTCTL2);
+	vdrtctl2 |= SST_VDRTCTL2_DTCGE;
+	bus_write_4(sc->shim_res, SST_PCI_VDRTCTL2, vdrtctl2);
+
+	/* 7. Gate DRAM (set DSRAMPGE bits) + 60us settle */
+	vdrtctl0 = bus_read_4(sc->shim_res, SST_PCI_VDRTCTL0);
+	vdrtctl0 |= SST_WPT_VDRTCTL0_DSRAMPGE_MASK;
+	bus_write_4(sc->shim_res, SST_PCI_VDRTCTL0, vdrtctl0);
+	DELAY(60);
+
+	/* 8. Gate IRAM (set ISRAMPGE bits) + 60us settle */
+	vdrtctl0 = bus_read_4(sc->shim_res, SST_PCI_VDRTCTL0);
+	vdrtctl0 |= SST_WPT_VDRTCTL0_ISRAMPGE_MASK;
+	bus_write_4(sc->shim_res, SST_PCI_VDRTCTL0, vdrtctl0);
+	DELAY(60);
+
+	/* 9. Set D3PGD=1, clear D3SRAMPGD (per Linux catpt) */
 	vdrtctl0 = bus_read_4(sc->shim_res, SST_PCI_VDRTCTL0);
 	vdrtctl0 |= SST_WPT_VDRTCTL0_D3PGD;
 	vdrtctl0 &= ~SST_WPT_VDRTCTL0_D3SRAMPGD;
 	bus_write_4(sc->shim_res, SST_PCI_VDRTCTL0, vdrtctl0);
 
-	/* 4. Enter D3hot */
+	/* 10. Enter D3hot + 50us */
 	pmcs = bus_read_4(sc->shim_res, SST_PCI_PMCS);
 	pmcs = (pmcs & ~SST_PMCS_PS_MASK) | SST_PMCS_PS_D3;
 	bus_write_4(sc->shim_res, SST_PCI_PMCS, pmcs);
 	DELAY(50);
 
-	/* 5. Re-enable DCLCGE */
+	/* 11. Re-enable DCLCGE + 50us */
 	vdrtctl2 = bus_read_4(sc->shim_res, SST_PCI_VDRTCTL2);
 	vdrtctl2 |= SST_VDRTCTL2_DCLCGE;
 	bus_write_4(sc->shim_res, SST_PCI_VDRTCTL2, vdrtctl2);
@@ -407,19 +452,21 @@ sst_wpt_power_down(struct sst_softc *sc)
 /*
  * sst_wpt_power_up - catpt_dsp_power_up() via BAR1
  *
- * Exact sequence from Linux catpt dsp.c:
+ * Full Linux catpt sequence from dsp.c:
  * 1. Disable DCLCGE
- * 2. Set D0
- * 3. Set D3PGD + D3SRAMPGD (disable power gating)
- * 4. Clear SRAM PGE (ungate all SRAM)
- * 5. Re-enable DCLCGE
- *
- * Linux does NOT poll CPA - it just sets the registers and proceeds.
+ * 2. VDRTCTL2 clock gating: set CGEALL & ~DCLCGE, clear DTCGE
+ * 3. Transition to D0
+ * 4. Set D3PGD + D3SRAMPGD (disable power gating)
+ * 5a. Ungate DRAM: clear DSRAMPGE + udelay(60)
+ * 5b. Ungate IRAM: clear ISRAMPGE + udelay(60)
+ * (dummy reads happen later in sst_sram_sanitize after BAR0 is allocated)
+ * 6-10. Register defaults, MCLK, clock, reset - done in dsp_init section
+ * 11. Re-enable DCLCGE
  */
 static int
 sst_wpt_power_up(struct sst_softc *sc)
 {
-	uint32_t vdrtctl0, vdrtctl2, pmcs;
+	uint32_t vdrtctl0, vdrtctl2, pmcs, mask, val;
 
 	if (sc->shim_res == NULL) {
 		device_printf(sc->dev, "WPT power-up: no BAR1 resource\n");
@@ -451,30 +498,53 @@ sst_wpt_power_up(struct sst_softc *sc)
 	vdrtctl2 &= ~SST_VDRTCTL2_DCLCGE;
 	bus_write_4(sc->shim_res, SST_PCI_VDRTCTL2, vdrtctl2);
 
-	/* 2. Transition to D0 */
+	/* 2. VDRTCTL2 clock gating: enable CGEALL except DCLCGE and DTCGE */
+	mask = SST_VDRTCTL2_CGEALL & ~SST_VDRTCTL2_DCLCGE;
+	val = mask & ~SST_VDRTCTL2_DTCGE;
+	vdrtctl2 = bus_read_4(sc->shim_res, SST_PCI_VDRTCTL2);
+	vdrtctl2 = (vdrtctl2 & ~mask) | val;
+	bus_write_4(sc->shim_res, SST_PCI_VDRTCTL2, vdrtctl2);
+
+	/* 3. Transition to D0 */
 	pmcs = bus_read_4(sc->shim_res, SST_PCI_PMCS);
 	pmcs = (pmcs & ~SST_PMCS_PS_MASK) | SST_PMCS_PS_D0;
 	bus_write_4(sc->shim_res, SST_PCI_PMCS, pmcs);
 
-	/* 3. Set D3PGD + D3SRAMPGD (disable power gating) */
+	/* 4. Set D3PGD + D3SRAMPGD (disable power gating) */
 	vdrtctl0 = bus_read_4(sc->shim_res, SST_PCI_VDRTCTL0);
 	vdrtctl0 |= (SST_WPT_VDRTCTL0_D3PGD |
 	    SST_WPT_VDRTCTL0_D3SRAMPGD);
 	bus_write_4(sc->shim_res, SST_PCI_VDRTCTL0, vdrtctl0);
 
-	/* 4. Ungate ALL SRAM (clear PGE bits) */
+	/*
+	 * 5a. Ungate DRAM: clear DSRAMPGE bits + 60us settle
+	 * Linux catpt_dsp_set_srampge() does DRAM and IRAM separately,
+	 * each with udelay(60) + dummy readback per block.
+	 * Dummy reads happen in sst_sram_sanitize() after BAR0 allocation.
+	 */
 	vdrtctl0 = bus_read_4(sc->shim_res, SST_PCI_VDRTCTL0);
-	vdrtctl0 &= ~(SST_WPT_VDRTCTL0_ISRAMPGE_MASK |
-	    SST_WPT_VDRTCTL0_DSRAMPGE_MASK);
+	vdrtctl0 &= ~SST_WPT_VDRTCTL0_DSRAMPGE_MASK;
 	bus_write_4(sc->shim_res, SST_PCI_VDRTCTL0, vdrtctl0);
+	DELAY(60);	/* 60us - wait for SRAM power gating to propagate */
 
-	/* 5. Re-enable DCLCGE */
+	/* 5b. Ungate IRAM: clear ISRAMPGE bits + 60us settle */
+	vdrtctl0 = bus_read_4(sc->shim_res, SST_PCI_VDRTCTL0);
+	vdrtctl0 &= ~SST_WPT_VDRTCTL0_ISRAMPGE_MASK;
+	bus_write_4(sc->shim_res, SST_PCI_VDRTCTL0, vdrtctl0);
+	DELAY(60);	/* 60us - wait for SRAM power gating to propagate */
+
+	/*
+	 * NOTE: Linux catpt does register defaults, MCLK restore,
+	 * LP clock select, SSP bank clocks, and reset release HERE
+	 * (steps 6-10), but we need BAR0/SHIM access for those.
+	 * They are done in the dsp_init section after BAR0 allocation.
+	 * Re-enable DCLCGE here (step 11) as Linux does.
+	 */
+
+	/* 11. Re-enable DCLCGE */
 	vdrtctl2 = bus_read_4(sc->shim_res, SST_PCI_VDRTCTL2);
 	vdrtctl2 |= SST_VDRTCTL2_DCLCGE;
 	bus_write_4(sc->shim_res, SST_PCI_VDRTCTL2, vdrtctl2);
-
-	/* Allow hardware to settle */
-	DELAY(100000);
 
 	/* Final state */
 	vdrtctl0 = bus_read_4(sc->shim_res, SST_PCI_VDRTCTL0);
@@ -507,6 +577,95 @@ sst_wpt_power_up(struct sst_softc *sc)
 	}
 
 	return (0);
+}
+
+/*
+ * sst_sram_sanitize - Dummy readback after SRAM power-up
+ *
+ * From Linux catpt dsp.c catpt_dsp_set_srampge():
+ *   "Dummy read as the very first access after block enable
+ *    to prevent byte loss in future operations."
+ *
+ * After SRAM blocks are ungated (PGE bits cleared in VDRTCTL0),
+ * the first access to each newly-powered block must be a dummy read.
+ * Without this, subsequent writes may be silently lost.
+ *
+ * Must be called AFTER BAR0 is allocated (sc->mem_res != NULL).
+ */
+static void
+sst_sram_sanitize(struct sst_softc *sc)
+{
+	int i;
+	uint32_t dummy;
+	int dram_ok = 0, dram_fail = 0;
+	int iram_ok = 0, iram_fail = 0;
+
+	if (sc->mem_res == NULL)
+		return;
+
+	device_printf(sc->dev, "=== SRAM Sanitize (dummy reads) ===\n");
+
+	/* Dummy read from each DRAM block (20 blocks x 32KB) */
+	for (i = 0; i < 20; i++) {
+		dummy = bus_read_4(sc->mem_res,
+		    SST_DRAM_OFFSET + i * SST_MEMBLOCK_SIZE);
+		if (dummy == SST_INVALID_REG_VALUE)
+			dram_fail++;
+		else
+			dram_ok++;
+	}
+	device_printf(sc->dev,
+	    "  DRAM: %d/%d blocks accessible (%d dead)\n",
+	    dram_ok, 20, dram_fail);
+
+	/* Dummy read from each IRAM block (10 blocks x 32KB) */
+	for (i = 0; i < 10; i++) {
+		dummy = bus_read_4(sc->mem_res,
+		    SST_IRAM_OFFSET + i * SST_MEMBLOCK_SIZE);
+		if (dummy == SST_INVALID_REG_VALUE)
+			iram_fail++;
+		else
+			iram_ok++;
+	}
+	device_printf(sc->dev,
+	    "  IRAM: %d/%d blocks accessible (%d dead)\n",
+	    iram_ok, 10, iram_fail);
+
+	/*
+	 * Now verify DRAM write-readback at critical offsets.
+	 * Test block 16 (offset 0x80000) which is where firmware
+	 * DRAM block at 0x84000 falls.
+	 */
+	{
+		uint32_t test_offsets[] = {
+		    0x000000,	/* DRAM block 0 */
+		    0x008000,	/* DRAM block 1 */
+		    0x080000,	/* DRAM block 16 (firmware DRAM target) */
+		    0x084000,	/* Exact firmware DRAM offset */
+		    0x098000,	/* DRAM block 19 */
+		};
+		int n;
+
+		device_printf(sc->dev,
+		    "  DRAM write-readback test:\n");
+		for (n = 0; n < 5; n++) {
+			uint32_t off = test_offsets[n];
+			uint32_t orig, test_val, readback;
+
+			orig = bus_read_4(sc->mem_res, off);
+			test_val = 0xDEADBEEF;
+			bus_write_4(sc->mem_res, off, test_val);
+			readback = bus_read_4(sc->mem_res, off);
+			/* Restore original */
+			bus_write_4(sc->mem_res, off, orig);
+
+			device_printf(sc->dev,
+			    "    [0x%06x] orig=0x%08x "
+			    "wrote=0x%08x read=0x%08x %s\n",
+			    off, orig, test_val, readback,
+			    (readback == test_val) ? "OK" : "FAIL");
+		}
+	}
 }
 
 /* ================================================================
@@ -2197,6 +2356,14 @@ sst_acpi_attach(device_t dev)
 		device_printf(dev, "SRAM enable returned %d, continuing anyway\n", error);
 	}
 
+	/*
+	 * SRAM Sanitize: dummy reads from all SRAM blocks.
+	 * Linux catpt_dsp_set_srampge() does this immediately after ungating.
+	 * We do it here because BAR0 wasn't available during sst_wpt_power_up().
+	 * This prevents "byte loss" on first write to newly-powered SRAM blocks.
+	 */
+	sst_sram_sanitize(sc);
+
 	/* Test BAR0 */
 	bar0_ok = sst_test_bar0(sc);
 	device_printf(dev, "BAR0 test: %s\n",
@@ -2964,6 +3131,9 @@ sst_pci_attach(device_t dev)
 		    error);
 		sst_enable_sram_direct(dev);
 	}
+
+	/* SRAM Sanitize: dummy reads to prevent byte loss */
+	sst_sram_sanitize(sc);
 
 	/* Test BAR0 */
 	bar0_ok = sst_test_bar0(sc);

@@ -259,6 +259,7 @@
 #define SST_CLKCTL_SMOS_SHIFT	24
 #define SST_CLKCTL_MASK		(0x3 << 16)
 #define SST_CLKCTL_DCPLCG	(1 << 18)	/* Disable Clock Power Gating */
+#define SST_CLKCTL_CFCIP	(1U << 31)	/* Clock Freq Change In Progress */
 
 /*
  * CSR2 Bits
