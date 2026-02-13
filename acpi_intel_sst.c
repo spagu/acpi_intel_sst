@@ -3387,14 +3387,14 @@ static driver_t sst_pci_driver = {
 	sizeof(struct sst_softc),
 };
 
-/* Register PCI driver ONLY - ACPI driver causes SRAM reset!
- * When both drivers are active, the ACPI driver attaches first (SRAM alive),
- * but something resets the SRAM before PCI driver can attach.
- * Disabling ACPI driver allows PCI driver to work with pre-activated SRAM.
+/*
+ * Register BOTH ACPI and PCI drivers
+ * - ACPI driver: handles INT3438 when device is hidden on PCI
+ * - PCI driver: handles 8086:9CB6 when device is visible on PCI
  */
-/* DISABLED: DRIVER_MODULE(acpi_intel_sst, acpi, sst_driver, 0, 0); */
+DRIVER_MODULE(acpi_intel_sst, acpi, sst_driver, 0, 0);
 DRIVER_MODULE(sst_pci, pci, sst_pci_driver, 0, 0);
-/* DISABLED: MODULE_DEPEND(acpi_intel_sst, acpi, 1, 1, 1); */
+MODULE_DEPEND(acpi_intel_sst, acpi, 1, 1, 1);
 MODULE_DEPEND(acpi_intel_sst, pci, 1, 1, 1);
 MODULE_DEPEND(acpi_intel_sst, firmware, 1, 1, 1);
 MODULE_VERSION(acpi_intel_sst, 8);
