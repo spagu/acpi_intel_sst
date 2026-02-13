@@ -5,6 +5,42 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.29.0] - 2026-02-13
+
+### CRITICAL FIX: WPT/Broadwell DSP Ready Uses DONE Bit, Not BUSY
+
+- **Root Cause Found**: DSP ready detection missed DONE bit!
+  - WPT (Broadwell) DSP uses DONE (bit 30) for ready notification
+  - Code was only checking BUSY (bit 31) for ready
+  - IPCD=0x44200209 has DONE=1 → DSP WAS signaling ready!
+
+- **Fix Applied to `sst_ipc.c`**:
+  - `sst_ipc_poll_ready()`: Now also sets `sc->ipc.ready = true` on DONE
+  - `sst_ipc_intr()`: Same fix for interrupt mode
+  - First DONE after boot is treated as ready notification on WPT
+
+- **Code Change**:
+  ```c
+  /* BEFORE: Only checked BUSY for ready */
+  if (ipcd & SST_IPC_DONE) {
+      /* Processed DONE but didn't set ready! */
+  }
+
+  /* AFTER: Also set ready on first DONE */
+  if (ipcd & SST_IPC_DONE) {
+      if (!sc->ipc.ready) {
+          sc->ipc.ready = true;
+          device_printf(sc->dev,
+              "DSP signaled ready via DONE (polled): IPCD=0x%08x\n", ipcd);
+      }
+  }
+  ```
+
+- **Expected Result**: DSP boot should succeed, fw.state becomes RUNNING,
+  PCM registration should proceed
+
+---
+
 ## [0.28.0] - 2026-02-13
 
 ### CRITICAL FIX: pcm_register() API - Missing pcm_init() Call

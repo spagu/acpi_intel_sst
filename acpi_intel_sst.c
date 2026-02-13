@@ -50,7 +50,7 @@
 #define PCI_DEVICE_SST_BDW	0x9CB6
 #define PCI_DEVICE_SST_HSW	0x9C76 /* Haswell pending testing */
 
-#define SST_DRV_VERSION "0.29.0-wpt-done-ready"
+#define SST_DRV_VERSION "0.30.0-wpt-power-up"
 
 /* Forward declarations */
 static int sst_acpi_probe(device_t dev);
@@ -2981,82 +2981,14 @@ sst_pci_attach(device_t dev)
 		    bus_read_4(sc->shim_res, offset + 12));
 	}
 
-	/* SKIP D3->D0 cycling - it RESETS the SRAM control register!
-	 * Discovered through RWEverything experiments: D3->D0 cycle
-	 * resets 0xFB000 control register back to 0x8480040e,
-	 * which turns off SRAM power.
-	 */
-	device_printf(dev, "Skipping D3->D0 cycle (would reset SRAM control)\n");
+	/* WPT Power-Up Sequence - enables SRAM by clearing power gate bits */
+	sst_wpt_power_up(sc);
 
-	/* === CRITICAL: Enable SRAM FIRST before any other operations === */
+	/* Enable SRAM via control register (if not already done by power-up) */
 	error = sst_enable_sram(sc);
 	if (error != 0) {
 		device_printf(dev, "SRAM enable returned %d\n", error);
 	}
-
-	/* EXPERIMENTAL PHASE 2: "The Windows Mirror"
-	 * 1. Force VDRTCTL2 to exact Windows value: 0x80000FFF
-	 *    (Bit 31=1 APLL, Bit 12=0, Bit 10=1)
-	 * 2. Force VDRTCTL0 to 0 (Power On)
-	 * 3. Force Register 0x80 to release Reset (Bit 1)
-	 */
-	
-	/* 1. VDRTCTL2 - Clock Configuration */
-	{
-		uint32_t valA8;
-		device_printf(dev, "Step 1: Setting VDRTCTL2 (0xA8) to Windows value 0x80000FFF...\n");
-		valA8 = bus_read_4(sc->shim_res, 0xA8);
-		device_printf(dev, "  VDRTCTL2 before: 0x%08x\n", valA8);
-		
-		valA8 = 0x80000FFF; // Exact match from dump
-		
-		bus_write_4(sc->shim_res, 0xA8, valA8);
-		DELAY(10000);
-		
-		valA8 = bus_read_4(sc->shim_res, 0xA8);
-		device_printf(dev, "  VDRTCTL2 after:  0x%08x\n", valA8);
-	}
-
-	/* 2. VDRTCTL0 - Power Up */
-	{
-		uint32_t valA0 = bus_read_4(sc->shim_res, 0xA0);
-		device_printf(dev, "Step 2: Attempting VDRTCTL0 (0xA0) Power Up...\n");
-		if (1) { // Force try always
-			bus_write_4(sc->shim_res, 0xA0, 0x00000000);
-			DELAY(50000);
-			valA0 = bus_read_4(sc->shim_res, 0xA0);
-			device_printf(dev, "  VDRTCTL0 after:  0x%08x\n", valA0);
-		}
-	}
-
-	/* 3. Register 0x80 - DSP Reset Release (ATTEMPT 2)
-	 * Theory: 0x40030001 (Windows Dump) is SLEEP state (Reset Active).
-	 * To wake up, maybe we need to CLEAR the reset bits?
-	 * Let's try clearing Bit 0 and Bit 1.
-	 */
-	{
-		uint32_t val80 = bus_read_4(sc->shim_res, 0x80);
-		device_printf(dev, "Step 3: Attempting to CLEAR Reset Bits 0/1 in 0x80...\n");
-		device_printf(dev, "  Reg 0x80 before: 0x%08x\n", val80);
-		
-		val80 &= ~(0x3); // Clear Bit 0 and Bit 1
-		
-		bus_write_4(sc->shim_res, 0x80, val80);
-		DELAY(50000);
-		
-		val80 = bus_read_4(sc->shim_res, 0x80);
-		device_printf(dev, "  Reg 0x80 after:  0x%08x\n", val80);
-	}
-
-	/* WPT Power-Up Sequence - SKIPPED */
-	// sst_wpt_power_up(sc);
-
-	device_printf(dev, "Skipped WPT Power-Up. Final State Check:\n");
-	device_printf(dev, "  VDRTCTL0: 0x%08x\n", bus_read_4(sc->shim_res, 0xA0));
-	device_printf(dev, "  VDRTCTL2: 0x%08x\n", bus_read_4(sc->shim_res, 0xA8));
-	device_printf(dev, "  Reg 0x80: 0x%08x\n", bus_read_4(sc->shim_res, 0x80));
-
-	/* SRAM enable already called above - no duplicate needed */
 
 	/* Test BAR0 */
 	bar0_ok = sst_test_bar0(sc);
