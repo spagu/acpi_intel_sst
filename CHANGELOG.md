@@ -5,6 +5,42 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.28.0] - 2026-02-13
+
+### CRITICAL FIX: pcm_register() API - Missing pcm_init() Call
+
+- **Root Cause Found**: `pcm_init()` was never called before `pcm_register()`!
+  - FreeBSD 15 sound(4) API requires initialization before registration
+  - Code was jumping directly to `pcm_register()` without setting up devinfo
+
+- **FreeBSD 15 sound(4) API Sequence**:
+  1. `pcm_init(dev, devinfo)` - Initialize PCM with driver data pointer
+  2. `pcm_addchan(dev, dir, class, devinfo)` - Add playback/capture channels
+  3. `pcm_register(dev, status)` - Finalize registration with status string
+
+- **Fix Applied to `sst_pcm.c`**:
+  ```c
+  /* BEFORE (wrong order): */
+  sc->pcm.dev = device_add_child(sc->dev, "pcm", -1);
+  error = pcm_register(sc->pcm.dev, status);
+  pcm_addchan(...);  /* Called AFTER register */
+
+  /* AFTER (correct order): */
+  pcm_init(sc->dev, sc);              /* 1. Initialize with devinfo */
+  pcm_addchan(sc->dev, PCMDIR_PLAY, &sst_chan_class, sc);  /* 2. Add channels */
+  pcm_addchan(sc->dev, PCMDIR_REC, &sst_chan_class, sc);
+  error = pcm_register(sc->dev, status);  /* 3. Finalize registration */
+  ```
+
+- **Also Fixed**:
+  - Removed unnecessary `device_add_child()` - not needed for sound(4)
+  - Removed unused `sc->pcm.dev` field from `struct sst_pcm`
+  - Updated `sst_pcm_unregister()` to use `sc->dev`
+
+- **Expected Result**: `/dev/dsp` should now appear and `/dev/sndstat` should list device
+
+---
+
 ## [0.27.0] - 2026-02-12
 
 ### CRITICAL FIX: IPC Protocol - Check BUSY bit for DSP Ready Detection

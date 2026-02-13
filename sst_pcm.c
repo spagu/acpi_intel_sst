@@ -767,11 +767,10 @@ sst_pcm_fini(struct sst_softc *sc)
 /*
  * Register PCM device with sound(4)
  *
- * FreeBSD pcm_register API:
- *   int pcm_register(device_t dev, void *devinfo, int numplay, int numrec)
- *
- * After registration, use pcm_addchan() to add channels and
- * pcm_setstatus() to set the status string.
+ * FreeBSD 15 sound(4) API:
+ *   1. pcm_init(dev, devinfo) - Initialize PCM with driver data
+ *   2. pcm_addchan(dev, dir, class, devinfo) - Add channels
+ *   3. pcm_register(dev, status) - Finalize registration with status string
  */
 int
 sst_pcm_register(struct sst_softc *sc)
@@ -796,18 +795,14 @@ sst_pcm_register(struct sst_softc *sc)
 	}
 
 	/*
-	 * Register with sound subsystem.
-	 * pcm_register(dev, devinfo, numplay, numrec)
-	 * - dev: our device
-	 * - devinfo: pointer to driver data (passed back to channel methods)
-	 * - numplay: number of playback channels
-	 * - numrec: number of record channels
+	 * FreeBSD 15 sound(4) registration:
+	 * 1. pcm_init() - initialize with driver data pointer
+	 * 2. pcm_addchan() - add playback/capture channels
+	 * 3. pcm_register() - finalize with status string
 	 */
-	error = pcm_register(sc->dev, sc, SST_PCM_MAX_PLAY, SST_PCM_MAX_REC);
-	if (error) {
-		device_printf(sc->dev, "Failed to register PCM: %d\n", error);
-		return (error);
-	}
+
+	/* Initialize PCM device with our softc as devinfo */
+	pcm_init(sc->dev, sc);
 
 	/* Add playback channels */
 	for (i = 0; i < SST_PCM_MAX_PLAY; i++) {
@@ -819,13 +814,17 @@ sst_pcm_register(struct sst_softc *sc)
 		pcm_addchan(sc->dev, PCMDIR_REC, &sst_chan_class, sc);
 	}
 
-	/* Set status string */
-	pcm_setstatus(sc->dev, status);
+	/* Finalize registration with status string */
+	error = pcm_register(sc->dev, status);
+	if (error) {
+		device_printf(sc->dev, "pcm_register failed: %d\n", error);
+		return (error);
+	}
 
 	/* Register mixer */
 	error = mixer_init(sc->dev, &sst_mixer_class, sc);
 	if (error) {
-		device_printf(sc->dev, "Failed to register mixer: %d\n", error);
+		device_printf(sc->dev, "mixer_init failed: %d\n", error);
 		/* Non-fatal - continue without mixer */
 	}
 
