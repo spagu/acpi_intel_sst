@@ -85,6 +85,18 @@ enum sst_fw_state {
 };
 
 /*
+ * Per-module info extracted during firmware parsing
+ */
+#define SST_MAX_MODULES		16
+
+struct sst_fw_mod_info {
+	uint32_t	entry_point;
+	uint32_t	persistent_size;
+	uint32_t	scratch_size;
+	bool		present;
+};
+
+/*
  * Firmware Context
  */
 struct sst_firmware {
@@ -94,6 +106,9 @@ struct sst_firmware {
 	uint32_t		entry_point;	/* DSP entry address */
 	uint32_t		modules;	/* Number of modules */
 	enum sst_fw_state	state;		/* Current state */
+
+	/* Module info table (indexed by module_id) */
+	struct sst_fw_mod_info	mod[SST_MAX_MODULES];
 };
 
 /* Forward declaration */

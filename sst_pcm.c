@@ -409,55 +409,112 @@ sst_chan_setblocksize(kobj_t obj, void *data, uint32_t blocksize)
 }
 
 /*
- * Allocate DSP stream via IPC
+ * Allocate DSP stream via IPC (catpt protocol)
  */
 static int
 sst_pcm_alloc_dsp_stream(struct sst_softc *sc, struct sst_pcm_channel *ch)
 {
 	struct sst_alloc_stream_req req;
+	struct sst_alloc_stream_rsp rsp;
+	struct sst_module_entry mod;
+	uint32_t page_table[SST_MAX_RING_PAGES];
+	uint32_t mod_id, num_pages, i;
 	int error;
 
 	if (ch->stream_allocated)
 		return (0);
 
 	memset(&req, 0, sizeof(req));
+	memset(&rsp, 0, sizeof(rsp));
 
-	/* Set stream type */
-	req.stream_type = (ch->dir == PCMDIR_PLAY) ?
-	    SST_STREAM_TYPE_RENDER : SST_STREAM_TYPE_CAPTURE;
+	/* Path and stream type */
+	if (ch->dir == PCMDIR_PLAY) {
+		req.path_id = SST_PATH_SSP0_OUT;
+		req.stream_type = SST_STREAM_TYPE_SYSTEM;
+		mod_id = SST_MODID_PCM_SYSTEM;
+	} else {
+		req.path_id = SST_PATH_SSP0_IN;
+		req.stream_type = SST_STREAM_TYPE_CAPTURE;
+		mod_id = SST_MODID_PCM_CAPTURE;
+	}
+	req.format_id = SST_FMT_PCM;
 
-	/* Set audio path (SSP port) */
-	req.path_id = ch->ssp_port;
-
-	/* Set audio format */
+	/* Audio format (catpt_audio_format layout) */
 	req.format.sample_rate = ch->speed;
 	req.format.bit_depth = AFMT_BIT(ch->format);
-	req.format.channels = ch->channels;
-	req.format.format_id = SST_FMT_PCM;
-	req.format.interleaving = 1;	/* Interleaved */
+	req.format.valid_bit_depth = req.format.bit_depth;
+	req.format.num_channels = ch->channels;
+	req.format.interleaving = SST_INTERLEAVING_PER_SAMPLE;
 
-	/* Channel map: stereo = 0x03 (front left + front right) */
-	if (ch->channels == 2)
-		req.format.channel_map = 0x03;
-	else
-		req.format.channel_map = (1 << ch->channels) - 1;
+	if (ch->channels == 2) {
+		req.format.channel_config = SST_CHAN_CONFIG_STEREO;
+		req.format.channel_map = 0x00000201; /* FL=1,FR=2 */
+	} else {
+		req.format.channel_config = SST_CHAN_CONFIG_MONO;
+		req.format.channel_map = 0x00000001;
+	}
 
-	/* Set DMA buffer info */
-	req.ring_buf_addr = (uint32_t)ch->dma_addr;
-	req.ring_buf_size = ch->buf_size;
-	req.period_count = ch->blk_count;
+	/*
+	 * Ring buffer: catpt uses a page table (array of PFNs).
+	 * Our DMA buffer is contiguous, so build a simple PFN array.
+	 */
+	num_pages = (ch->buf_size + PAGE_SIZE - 1) / PAGE_SIZE;
+	if (num_pages > SST_MAX_RING_PAGES)
+		num_pages = SST_MAX_RING_PAGES;
+
+	for (i = 0; i < num_pages; i++)
+		page_table[i] = (ch->dma_addr + i * PAGE_SIZE) >> PAGE_SHIFT;
+
+	/*
+	 * We need a physical address for the page table itself.
+	 * Since we're already in a DMA-accessible buffer scenario,
+	 * write the PFN array into the start of DRAM scratch area.
+	 * For now, pass the physical address of the first page and
+	 * set page_table_addr to our DMA buffer address (the firmware
+	 * uses this to locate the ring buffer pages).
+	 */
+	req.ring.page_table_addr = (uint32_t)ch->dma_addr;
+	req.ring.num_pages = num_pages;
+	req.ring.size = ch->buf_size;
+	req.ring.offset = 0;
+	req.ring.first_pfn = (uint32_t)(ch->dma_addr >> PAGE_SHIFT);
+
+	/* Module entry */
+	req.num_entries = 1;
+	memset(&mod, 0, sizeof(mod));
+	mod.module_id = mod_id;
+	if (mod_id < SST_MAX_MODULES && sc->fw.mod[mod_id].present)
+		mod.entry_point = sc->fw.mod[mod_id].entry_point;
+
+	/* Persistent and scratch memory from firmware module info */
+	if (mod_id < SST_MAX_MODULES && sc->fw.mod[mod_id].present) {
+		req.persistent_mem.size = sc->fw.mod[mod_id].persistent_size;
+		req.scratch_mem.size = sc->fw.mod[mod_id].scratch_size;
+	}
+	/* Offsets left as 0 - firmware will allocate */
+
+	req.num_notifications = 1; /* Position notification */
+
+	device_printf(sc->dev,
+	    "DSP stream alloc: type=%u path=%u mod=0x%x persist=%u scratch=%u\n",
+	    req.stream_type, req.path_id, mod_id,
+	    req.persistent_mem.size, req.scratch_mem.size);
 
 	/* Allocate stream on DSP */
-	error = sst_ipc_alloc_stream(sc, &req, &ch->stream_id);
+	error = sst_ipc_alloc_stream(sc, &req, &mod, 1, &rsp);
 	if (error) {
-		device_printf(sc->dev, "PCM: DSP stream allocation failed\n");
+		device_printf(sc->dev, "DSP stream alloc failed: %d\n", error);
 		return (error);
 	}
 
+	ch->stream_id = rsp.stream_hw_id;
 	ch->stream_allocated = true;
-	device_printf(sc->dev, "PCM: Allocated DSP stream %u for %s\n",
-		      ch->stream_id,
-		      (ch->dir == PCMDIR_PLAY) ? "playback" : "capture");
+
+	device_printf(sc->dev,
+	    "PCM: Allocated DSP stream %u for %s (read_pos=0x%x)\n",
+	    ch->stream_id,
+	    (ch->dir == PCMDIR_PLAY) ? "playback" : "capture",
+	    rsp.read_pos_regaddr);
 
 	return (0);
 }

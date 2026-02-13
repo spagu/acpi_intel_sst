@@ -402,29 +402,8 @@ sst_topology_start_pipeline(struct sst_softc *sc, uint32_t pipe_id)
 		return (EINVAL);
 	}
 
-	/* Allocate DSP stream if not already done */
-	if (!pipe->stream_allocated && sc->fw.state == SST_FW_STATE_RUNNING) {
-		memset(&req, 0, sizeof(req));
-		req.stream_type = (pipe->type == SST_PIPE_PLAYBACK) ?
-		    SST_STREAM_TYPE_RENDER : SST_STREAM_TYPE_CAPTURE;
-		req.path_id = pipe->ssp_port;
-		req.format.sample_rate = 48000;
-		req.format.bit_depth = 16;
-		req.format.channels = 2;
-		req.format.format_id = SST_FMT_PCM;
-		req.format.interleaving = 1;
-		req.format.channel_map = 0x03;
-		req.period_count = pipe->period_count;
-
-		error = sst_ipc_alloc_stream(sc, &req, &pipe->stream_id);
-		if (error) {
-			device_printf(sc->dev,
-			    "Topology: Failed to allocate stream for '%s'\n",
-			    pipe->name);
-			return (error);
-		}
-		pipe->stream_allocated = true;
-	}
+	/* Stream allocation is now handled by sst_pcm via chan_trigger */
+	(void)req;
 
 	/* Resume stream */
 	if (pipe->stream_allocated) {

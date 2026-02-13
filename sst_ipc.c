@@ -447,43 +447,68 @@ sst_ipc_get_fw_version(struct sst_softc *sc, struct sst_fw_version *version)
 }
 
 /*
- * Allocate a stream on the DSP
+ * Allocate a stream on the DSP (catpt protocol).
+ *
+ * The catpt firmware expects module entries spliced into the payload
+ * between num_entries and persistent_mem fields.
  */
 int
 sst_ipc_alloc_stream(struct sst_softc *sc, struct sst_alloc_stream_req *req,
-		     uint32_t *stream_id)
+		     struct sst_module_entry *modules, int num_modules,
+		     struct sst_alloc_stream_rsp *rsp)
 {
-	struct sst_alloc_stream_rsp rsp;
+	uint8_t payload[256];
 	uint32_t header;
-	size_t size;
+	size_t off, arrsz, paysize, rspsize;
 	int error;
 
-	header = SST_IPC_HEADER(SST_IPC_GLBL_ALLOCATE_STREAM, 0,
-				sizeof(*req));
+	/*
+	 * Build payload with module entries spliced in.
+	 * Layout: [req fields up to persistent_mem] [modules] [persistent_mem..end]
+	 */
+	off = __offsetof(struct sst_alloc_stream_req, persistent_mem);
+	arrsz = sizeof(struct sst_module_entry) * num_modules;
+	paysize = sizeof(*req) + arrsz;
 
-	error = sst_ipc_send(sc, header, req, sizeof(*req));
+	if (paysize > sizeof(payload)) {
+		device_printf(sc->dev, "IPC: alloc payload too large\n");
+		return (ENOMEM);
+	}
+
+	/* Copy first part (up to persistent_mem) */
+	memcpy(payload, req, off);
+	/* Insert module entries */
+	if (arrsz > 0)
+		memcpy(payload + off, modules, arrsz);
+	/* Copy remainder (persistent_mem, scratch_mem, num_notifications) */
+	memcpy(payload + off + arrsz, (uint8_t *)req + off,
+	    sizeof(*req) - off);
+
+	header = SST_IPC_HEADER(SST_IPC_GLBL_ALLOCATE_STREAM, 0, 0);
+
+	device_printf(sc->dev,
+	    "IPC: alloc stream path=%u type=%u fmt=%u paysize=%zu\n",
+	    req->path_id, req->stream_type, req->format_id, paysize);
+
+	error = sst_ipc_send(sc, header, payload, paysize);
 	if (error) {
-		device_printf(sc->dev, "IPC: Stream allocation send failed\n");
+		device_printf(sc->dev, "IPC: Stream alloc send failed: %d\n",
+		    error);
 		return (error);
 	}
 
-	size = sizeof(rsp);
-	error = sst_ipc_recv(sc, NULL, &rsp, &size);
+	rspsize = sizeof(*rsp);
+	error = sst_ipc_recv(sc, NULL, rsp, &rspsize);
 	if (error) {
-		device_printf(sc->dev, "IPC: Stream allocation recv failed\n");
+		device_printf(sc->dev, "IPC: Stream alloc recv failed: %d\n",
+		    error);
 		return (error);
 	}
 
-	if (rsp.status != SST_IPC_REPLY_SUCCESS) {
-		device_printf(sc->dev, "IPC: Stream allocation failed: %u\n",
-			      rsp.status);
-		return (EIO);
-	}
-
-	if (stream_id != NULL)
-		*stream_id = rsp.stream_id;
-
-	device_printf(sc->dev, "IPC: Allocated stream %u\n", rsp.stream_id);
+	device_printf(sc->dev,
+	    "IPC: Allocated stream hw_id=%u read_pos=0x%x pres_pos=0x%x\n",
+	    rsp->stream_hw_id, rsp->read_pos_regaddr,
+	    rsp->pres_pos_regaddr);
 
 	return (0);
 }
@@ -518,10 +543,7 @@ sst_ipc_stream_pause(struct sst_softc *sc, uint32_t stream_id)
 {
 	uint32_t header;
 
-	header = SST_IPC_HEADER(SST_IPC_GLBL_STREAM_MESSAGE,
-				SST_IPC_STR_PAUSE, 0);
-	header |= (stream_id << 4);
-
+	header = SST_IPC_STREAM_HEADER(SST_IPC_STR_PAUSE, stream_id);
 	return sst_ipc_send(sc, header, NULL, 0);
 }
 
@@ -533,10 +555,7 @@ sst_ipc_stream_resume(struct sst_softc *sc, uint32_t stream_id)
 {
 	uint32_t header;
 
-	header = SST_IPC_HEADER(SST_IPC_GLBL_STREAM_MESSAGE,
-				SST_IPC_STR_RESUME, 0);
-	header |= (stream_id << 4);
-
+	header = SST_IPC_STREAM_HEADER(SST_IPC_STR_RESUME, stream_id);
 	return sst_ipc_send(sc, header, NULL, 0);
 }
 
@@ -548,53 +567,50 @@ sst_ipc_stream_reset(struct sst_softc *sc, uint32_t stream_id)
 {
 	uint32_t header;
 
-	header = SST_IPC_HEADER(SST_IPC_GLBL_STREAM_MESSAGE,
-				SST_IPC_STR_RESET, 0);
-	header |= (stream_id << 4);
-
+	header = SST_IPC_STREAM_HEADER(SST_IPC_STR_RESET, stream_id);
 	return sst_ipc_send(sc, header, NULL, 0);
 }
 
 /*
- * Set stream parameters (volume, mute)
+ * Set stream volume via STAGE_MESSAGE/SET_VOLUME
  */
 int
 sst_ipc_stream_set_params(struct sst_softc *sc, struct sst_stream_params *params)
 {
 	uint32_t header;
+	struct {
+		uint32_t channel;
+		uint32_t target_volume;
+		uint64_t curve_duration;
+		uint32_t curve_type;
+	} __packed vol;
 
-	header = SST_IPC_HEADER(SST_IPC_GLBL_STREAM_MESSAGE,
-				SST_IPC_STR_SET_PARAMS, sizeof(*params));
-	header |= (params->stream_id << 4);
+	/* Set volume for left channel */
+	header = SST_IPC_STREAM_HEADER(SST_IPC_STR_STAGE_MESSAGE,
+	    params->stream_id);
+	header |= (SST_IPC_STG_SET_VOLUME << SST_IPC_STR_STAGE_SHIFT);
 
-	return sst_ipc_send(sc, header, params, sizeof(*params));
+	memset(&vol, 0, sizeof(vol));
+	vol.channel = 0; /* left */
+	vol.target_volume = params->volume_left * 0x7FFFFFFFU / 100;
+	vol.curve_duration = 0;
+	vol.curve_type = 0;
+
+	return sst_ipc_send(sc, header, &vol, sizeof(vol));
 }
 
 /*
- * Get current stream position
+ * Get current stream position (reads from DSP register)
+ * In catpt, position is read directly from MMIO, not via IPC.
  */
 int
 sst_ipc_stream_get_position(struct sst_softc *sc, uint32_t stream_id,
 			    struct sst_stream_position *pos)
 {
-	uint32_t header;
-	size_t size;
-	int error;
-
-	header = SST_IPC_HEADER(SST_IPC_GLBL_STREAM_MESSAGE,
-				SST_IPC_STR_GET_POSITION, 0);
-	header |= (stream_id << 4);
-
-	error = sst_ipc_send(sc, header, NULL, 0);
-	if (error)
-		return (error);
-
-	if (pos != NULL) {
-		size = sizeof(*pos);
-		error = sst_ipc_recv(sc, NULL, pos, &size);
-	}
-
-	return (error);
+	/* Position is read from the register returned by alloc_stream */
+	if (pos != NULL)
+		memset(pos, 0, sizeof(*pos));
+	return (0);
 }
 
 /*

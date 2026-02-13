@@ -33,40 +33,61 @@
 #define SST_IPC_GLBL_NOTIFICATION	15	/* CATPT_GLB_NOTIFICATION */
 
 /*
- * Stream Message Types
+ * Stream Message Types (catpt_stream_msg_type)
  */
-#define SST_IPC_STR_PAUSE		0x00
-#define SST_IPC_STR_RESUME		0x01
-#define SST_IPC_STR_GET_PARAMS		0x02
-#define SST_IPC_STR_SET_PARAMS		0x03
-#define SST_IPC_STR_GET_POSITION	0x04
-#define SST_IPC_STR_RESET		0x05
-#define SST_IPC_STR_MUTE		0x06
-#define SST_IPC_STR_UNMUTE		0x07
+#define SST_IPC_STR_RESET		0	/* CATPT_STRM_RESET_STREAM */
+#define SST_IPC_STR_PAUSE		1	/* CATPT_STRM_PAUSE_STREAM */
+#define SST_IPC_STR_RESUME		2	/* CATPT_STRM_RESUME_STREAM */
+#define SST_IPC_STR_STAGE_MESSAGE	3	/* CATPT_STRM_STAGE_MESSAGE */
+#define SST_IPC_STR_NOTIFICATION	4	/* CATPT_STRM_NOTIFICATION */
+
+/* Stage actions (sub-type of STAGE_MESSAGE) */
+#define SST_IPC_STG_SET_VOLUME		1
+#define SST_IPC_STG_SET_WRITE_POS	2
+#define SST_IPC_STG_MUTE_LOOPBACK	3
 
 /*
  * Notification Types (from DSP)
  */
-#define SST_NOTIFY_POSITION_CHANGED	0x00
-#define SST_NOTIFY_GLITCH		0x01
-#define SST_NOTIFY_UNDERRUN		0x02
-#define SST_NOTIFY_OVERRUN		0x03
+#define SST_NOTIFY_POSITION_CHANGED	0
+#define SST_NOTIFY_GLITCH		1
 
 /*
- * Stream Types
+ * Stream Types (catpt_stream_type)
  */
-#define SST_STREAM_TYPE_RENDER		0x00	/* Playback */
-#define SST_STREAM_TYPE_CAPTURE		0x01	/* Recording */
-#define SST_STREAM_TYPE_SYSTEM		0x02	/* System sounds */
-#define SST_STREAM_TYPE_LOOPBACK	0x03	/* Loopback */
+#define SST_STREAM_TYPE_RENDER		0	/* CATPT_STRM_TYPE_RENDER */
+#define SST_STREAM_TYPE_SYSTEM		1	/* CATPT_STRM_TYPE_SYSTEM */
+#define SST_STREAM_TYPE_CAPTURE		2	/* CATPT_STRM_TYPE_CAPTURE */
+#define SST_STREAM_TYPE_LOOPBACK	3	/* CATPT_STRM_TYPE_LOOPBACK */
+
+/* Path IDs (catpt_path_id) */
+#define SST_PATH_SSP0_OUT		0
+#define SST_PATH_SSP0_IN		1
+#define SST_PATH_SSP1_OUT		2
+#define SST_PATH_SSP1_IN		3
+
+/* Channel configuration (catpt_channel_config) */
+#define SST_CHAN_CONFIG_MONO		0
+#define SST_CHAN_CONFIG_STEREO		1
+
+/* Interleaving style */
+#define SST_INTERLEAVING_PER_CHANNEL	0
+#define SST_INTERLEAVING_PER_SAMPLE	1
 
 /*
- * Audio Format IDs (for DSP)
+ * Audio Format IDs (catpt_format_id)
  */
 #define SST_FMT_PCM			0x00
 #define SST_FMT_MP3			0x01
 #define SST_FMT_AAC			0x02
 #define SST_FMT_WMA			0x03
+
+/* Module IDs (catpt_module_id) */
+#define SST_MODID_BASE_FW		0x0
+#define SST_MODID_PCM_CAPTURE		0xA
+#define SST_MODID_PCM_SYSTEM		0xB
+#define SST_MODID_PCM_REFERENCE		0xC
+#define SST_MODID_PCM			0xD
 
 /*
  * IPC Header Format (catpt)
@@ -121,12 +142,16 @@
 	 ((uint32_t)(stream_id) << SST_IPC_STR_HW_ID_SHIFT))
 
 /*
- * IPC Reply Status
+ * IPC Reply Status (catpt_reply_status)
  */
-#define SST_IPC_REPLY_SUCCESS		0x00
-#define SST_IPC_REPLY_ERROR		0x01
-#define SST_IPC_REPLY_BUSY		0x02
-#define SST_IPC_REPLY_PENDING		0x03
+#define SST_IPC_REPLY_SUCCESS		0
+#define SST_IPC_REPLY_ERROR_INVALID	1	/* Invalid parameter */
+#define SST_IPC_REPLY_UNKNOWN_MSG	2
+#define SST_IPC_REPLY_OUT_OF_RES	3
+#define SST_IPC_REPLY_BUSY		4
+#define SST_IPC_REPLY_PENDING		5
+#define SST_IPC_REPLY_FAILURE		6
+#define SST_IPC_REPLY_INVALID_REQ	7
 
 /*
  * FW_READY Mailbox (from Linux catpt messages.h: struct catpt_fw_ready)
@@ -160,39 +185,79 @@ struct sst_fw_version_reply {
 } __packed;
 
 /*
- * Audio Format Structure
- * Used for stream allocation
+ * Audio Format (catpt_audio_format) - 24 bytes
  */
 struct sst_audio_format {
 	uint32_t	sample_rate;	/* Sample rate in Hz */
 	uint32_t	bit_depth;	/* Bits per sample (16/24/32) */
-	uint32_t	channels;	/* Number of channels */
 	uint32_t	channel_map;	/* Channel layout bitmask */
-	uint32_t	interleaving;	/* Interleaved/non-interleaved */
-	uint32_t	format_id;	/* SST_FMT_* */
-	uint32_t	reserved[2];
+	uint32_t	channel_config;	/* SST_CHAN_CONFIG_* */
+	uint32_t	interleaving;	/* SST_INTERLEAVING_* */
+	uint8_t		num_channels;	/* Number of channels */
+	uint8_t		valid_bit_depth;/* Valid bits in container */
+	uint8_t		reserved[2];
 } __packed;
 
 /*
- * Stream Allocation Request
+ * Ring buffer info (catpt_ring_info) - 20 bytes
+ */
+struct sst_ring_info {
+	uint32_t	page_table_addr;/* Physical addr of PFN array */
+	uint32_t	num_pages;	/* Number of pages */
+	uint32_t	size;		/* Ring buffer size in bytes */
+	uint32_t	offset;		/* Start offset */
+	uint32_t	first_pfn;	/* First page frame number */
+} __packed;
+
+/*
+ * Memory info (catpt_memory_info) - 8 bytes
+ */
+struct sst_mem_info {
+	uint32_t	offset;		/* DRAM offset */
+	uint32_t	size;		/* Size in bytes */
+} __packed;
+
+/*
+ * Module entry for stream allocation - 8 bytes
+ */
+struct sst_module_entry {
+	uint32_t	module_id;	/* SST_MODID_* */
+	uint32_t	entry_point;	/* Module entry point */
+} __packed;
+
+/*
+ * Stream Allocation Request (catpt_alloc_stream_input)
+ * Note: module entries are spliced between num_entries and persistent_mem
+ * when building the actual mailbox payload.
  */
 struct sst_alloc_stream_req {
-	uint32_t		stream_type;	/* SST_STREAM_TYPE_* */
-	uint32_t		path_id;	/* Audio path ID (SSP port) */
-	struct sst_audio_format	format;		/* Audio format */
-	uint32_t		ring_buf_addr;	/* DMA buffer physical address */
-	uint32_t		ring_buf_size;	/* DMA buffer size */
-	uint32_t		period_count;	/* Number of periods */
-	uint32_t		reserved[4];
+	uint8_t			path_id;	/* SST_PATH_* */
+	uint8_t			stream_type;	/* SST_STREAM_TYPE_* */
+	uint8_t			format_id;	/* SST_FMT_* */
+	uint8_t			reserved;
+	struct sst_audio_format	format;		/* Audio format (24 bytes) */
+	struct sst_ring_info	ring;		/* Ring buffer info (20 bytes) */
+	uint8_t			num_entries;	/* Number of module entries */
+	struct sst_mem_info	persistent_mem;	/* Module persistent memory */
+	struct sst_mem_info	scratch_mem;	/* Module scratch memory */
+	uint32_t		num_notifications;
 } __packed;
 
+/* Max DMA pages for ring buffer page table */
+#define SST_MAX_RING_PAGES	16
+
 /*
- * Stream Allocation Response
+ * Stream Allocation Response (catpt_stream_info) - 40 bytes
  */
+#define SST_CHANNELS_MAX	4
+
 struct sst_alloc_stream_rsp {
-	uint32_t	stream_id;	/* Assigned stream ID */
-	uint32_t	status;		/* Status code */
-	uint32_t	reserved[6];
+	uint32_t	stream_hw_id;		/* Assigned stream HW ID */
+	uint32_t	reserved;
+	uint32_t	read_pos_regaddr;	/* Read position register */
+	uint32_t	pres_pos_regaddr;	/* Presentation position register */
+	uint32_t	peak_meter_regaddr[SST_CHANNELS_MAX];
+	uint32_t	volume_regaddr[SST_CHANNELS_MAX];
 } __packed;
 
 /*
@@ -235,8 +300,7 @@ struct sst_dx_state {
 } __packed;
 
 #define SST_DX_STATE_D0		0x00
-#define SST_DX_STATE_D0I3	0x03
-#define SST_DX_STATE_D3		0x04
+#define SST_DX_STATE_D3		0x03	/* CATPT_DX_STATE_D3 */
 
 /*
  * IPC State
@@ -315,7 +379,9 @@ int	sst_ipc_get_fw_version(struct sst_softc *sc,
 /* Stream management */
 int	sst_ipc_alloc_stream(struct sst_softc *sc,
 			     struct sst_alloc_stream_req *req,
-			     uint32_t *stream_id);
+			     struct sst_module_entry *modules,
+			     int num_modules,
+			     struct sst_alloc_stream_rsp *rsp);
 int	sst_ipc_free_stream(struct sst_softc *sc, uint32_t stream_id);
 
 /* Stream control */

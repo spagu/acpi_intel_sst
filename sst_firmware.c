@@ -214,6 +214,15 @@ sst_fw_load_module(struct sst_softc *sc, const uint8_t *data, size_t size,
 	    mod->module_id, mod->slot, mod->mod_size, mod->blocks,
 	    mod->entry_point, mod->persistent_size, mod->scratch_size);
 
+	/* Store module info for later IPC use */
+	if (mod->module_id < SST_MAX_MODULES) {
+		sc->fw.mod[mod->module_id].entry_point = mod->entry_point;
+		sc->fw.mod[mod->module_id].persistent_size =
+		    mod->persistent_size;
+		sc->fw.mod[mod->module_id].scratch_size = mod->scratch_size;
+		sc->fw.mod[mod->module_id].present = true;
+	}
+
 	/*
 	 * Store entry point from first module.
 	 * Linux catpt: "DSP expects address from module header subtracted by 4"
