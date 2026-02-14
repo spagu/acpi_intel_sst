@@ -259,10 +259,38 @@ sst_pcm_alloc_pgtbl(struct sst_softc *sc, struct sst_pcm_channel *ch)
 		return (error);
 	}
 
-	/* Fill page table with simple uint32_t PFN entries */
-	for (i = 0; i < num_pages; i++)
-		ch->pgtbl_buf[i] = (uint32_t)((ch->dma_addr + i * PAGE_SIZE)
-		    >> PAGE_SHIFT);
+	/*
+	 * Fill page table with packed 20-bit PFN entries.
+	 *
+	 * Linux catpt uses catpt_arrange_page_table() which packs
+	 * two 20-bit PFNs into every 5 bytes (40 bits):
+	 *   Even entry i: pfn stored at byte offset (i*5)/2, bits [19:0]
+	 *   Odd entry i:  pfn stored at byte offset (i*5)/2, bits [23:4]
+	 *
+	 * This packing is critical - the DSP firmware expects this
+	 * exact format. Using simple uint32_t PFNs causes the DSP
+	 * to read from wrong physical addresses → audio distortion.
+	 */
+	{
+		uint8_t *pt = (uint8_t *)ch->pgtbl_buf;
+
+		memset(pt, 0, PAGE_SIZE);
+		for (i = 0; i < num_pages; i++) {
+			uint32_t pfn, offset;
+			uint32_t *entry;
+
+			pfn = (uint32_t)((ch->dma_addr + i * PAGE_SIZE)
+			    >> PAGE_SHIFT);
+			/* Byte offset: (i*4 + i) / 2 = (i*5) / 2 */
+			offset = ((i << 2) + i) >> 1;
+			entry = (uint32_t *)(pt + offset);
+
+			if (i & 1)
+				*entry |= (pfn << 4);
+			else
+				*entry |= pfn;
+		}
+	}
 
 	/* Sync to device */
 	bus_dmamap_sync(ch->pgtbl_tag, ch->pgtbl_map,
@@ -270,7 +298,8 @@ sst_pcm_alloc_pgtbl(struct sst_softc *sc, struct sst_pcm_channel *ch)
 
 	device_printf(sc->dev,
 	    "PCM: pgtbl allocated: %u pages, phys=0x%lx, first_pfn=0x%x\n",
-	    num_pages, (unsigned long)ch->pgtbl_addr, ch->pgtbl_buf[0]);
+	    num_pages, (unsigned long)ch->pgtbl_addr,
+	    (uint32_t)(ch->dma_addr >> PAGE_SHIFT));
 
 	return (0);
 }
@@ -589,15 +618,18 @@ sst_pcm_alloc_dsp_stream(struct sst_softc *sc, struct sst_pcm_channel *ch)
 	if (ch->channels == 2) {
 		req.format.channel_config = SST_CHAN_CONFIG_STEREO;
 		/*
-		 * Channel map: nibble N = source channel for output slot N.
-		 * Linux catpt uses sequential indices (0,1,2,...), NOT the
-		 * catpt_channel_index enum values (LEFT=0, RIGHT=2).
-		 * Stereo: slot 0 ← ch 0, slot 1 ← ch 1, rest = 0xF (unused)
+		 * Channel map: each nibble encodes a catpt_channel_index
+		 * for that output slot.  Unused nibbles = 0xF (INVALID).
+		 *
+		 * Linux catpt_get_channel_map(STEREO):
+		 *   GENMASK(31,8) | CATPT_CHANNEL_LEFT(0)
+		 *                 | (CATPT_CHANNEL_RIGHT(2) << 4)
+		 *   = 0xFFFFFF00 | 0x00 | 0x20 = 0xFFFFFF20
 		 */
-		req.format.channel_map = 0xFFFFFF10;
+		req.format.channel_map = 0xFFFFFF20;
 	} else {
 		req.format.channel_config = SST_CHAN_CONFIG_MONO;
-		/* Mono: slot 0 ← ch 0, rest = 0xF */
+		/* Mono: LEFT only, rest = 0xF */
 		req.format.channel_map = 0xFFFFFFF0;
 	}
 
@@ -622,7 +654,13 @@ sst_pcm_alloc_dsp_stream(struct sst_softc *sc, struct sst_pcm_channel *ch)
 		req.ring.num_pages = num_pages;
 		req.ring.size = ch->buf_size;
 		req.ring.offset = 0;
-		req.ring.first_pfn = ch->pgtbl_buf[0];
+		/*
+		 * first_pfn = PFN_DOWN(first page physical address).
+		 * Computed directly from dma_addr, not from packed
+		 * page table (which uses 20-bit packed format).
+		 */
+		req.ring.first_pfn = (uint32_t)(ch->dma_addr
+		    >> PAGE_SHIFT);
 	}
 
 	/* Module entry */
