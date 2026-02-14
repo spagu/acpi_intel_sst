@@ -293,7 +293,7 @@ struct sst_device_format {
 	uint32_t	mode;		/* SST_SSP_MODE_* */
 	uint16_t	clock_divider;	/* Clock divider */
 	uint8_t		channels;	/* Number of channels */
-} __packed;
+} __packed;	/* 15 bytes - must match Linux catpt_ssp_device_format exactly */
 
 /*
  * Stream Parameters (for SET_PARAMS/GET_PARAMS)

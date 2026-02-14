@@ -270,8 +270,19 @@ sst_ssp_start(struct sst_softc *sc, int port)
 		return (0);
 
 	if (sc->ssp.port[port].state == SST_SSP_STATE_IDLE) {
-		device_printf(sc->dev, "SSP%d: Not configured\n", port);
-		return (EINVAL);
+		/*
+		 * The DSP firmware configures SSP registers via
+		 * SET_DEVICE_FORMATS IPC without updating our state.
+		 * Check if SSCR0 looks programmed (has MOD bit set).
+		 */
+		uint32_t sscr0 = ssp_read(sc, port, SSP_SSCR0);
+		if (sscr0 & SSCR0_MOD) {
+			sc->ssp.port[port].state = SST_SSP_STATE_CONFIGURED;
+		} else {
+			device_printf(sc->dev, "SSP%d: Not configured\n",
+			    port);
+			return (EINVAL);
+		}
 	}
 
 	/* Clear status */

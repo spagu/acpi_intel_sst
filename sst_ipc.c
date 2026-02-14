@@ -450,9 +450,8 @@ sst_ipc_intr(struct sst_softc *sc)
 				    "IPC: DSP ready: IPCD=0x%08x\n",
 				    ipcd);
 			} else {
-				device_printf(sc->dev,
-				    "IPC: DSP notify: IPCD=0x%08x\n",
-				    ipcd);
+				/* DSP notification (position update etc.) */
+				/* Silently ACK - no printf in interrupt path */
 			}
 
 			mtx_unlock(&sc->ipc.lock);

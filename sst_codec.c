@@ -197,6 +197,12 @@ sst_i2c_write(struct sst_softc *sc, const uint8_t *data, int len)
 	bus_space_read_4(codec->mem_tag, codec->i2c_handle,
 	    DW_IC_CLR_TX_ABRT);
 
+	/* Drain stale RX data from previous transactions */
+	while (bus_space_read_4(codec->mem_tag, codec->i2c_handle,
+	    DW_IC_RXFLR) > 0)
+		bus_space_read_4(codec->mem_tag, codec->i2c_handle,
+		    DW_IC_DATA_CMD);
+
 	for (i = 0; i < len; i++) {
 		uint32_t cmd = data[i];
 		if (i == len - 1)
@@ -230,14 +236,16 @@ sst_i2c_write(struct sst_softc *sc, const uint8_t *data, int len)
 }
 
 /*
- * sst_i2c_read - Combined write+read I2C transaction
+ * sst_i2c_recv - Read-only I2C transaction (i2c_master_recv equivalent)
  *
- * Writes addr[] (with RESTART, no STOP), then reads buf_len bytes
- * (with STOP on the last read).
+ * Issues read commands to receive buf_len bytes from the slave.
+ * Generates: START → slave_addr(R) → read bytes → STOP
+ *
+ * The DesignWare controller auto-generates START when the first
+ * command is written after the bus is idle (previous STOP completed).
  */
 static int
-sst_i2c_read(struct sst_softc *sc, const uint8_t *addr, int addr_len,
-    uint8_t *buf, int buf_len)
+sst_i2c_recv(struct sst_softc *sc, uint8_t *buf, int buf_len)
 {
 	struct sst_codec *codec = &sc->codec;
 	uint32_t abort, rxflr;
@@ -247,20 +255,15 @@ sst_i2c_read(struct sst_softc *sc, const uint8_t *addr, int addr_len,
 	bus_space_read_4(codec->mem_tag, codec->i2c_handle,
 	    DW_IC_CLR_TX_ABRT);
 
-	/* Write address bytes (no STOP, RESTART on first byte) */
-	for (i = 0; i < addr_len; i++) {
-		uint32_t cmd = addr[i];
-		if (i == 0)
-			cmd |= DW_IC_DATA_CMD_RESTART;
-		bus_space_write_4(codec->mem_tag, codec->i2c_handle,
-		    DW_IC_DATA_CMD, cmd);
-	}
+	/* Drain any stale RX data */
+	while (bus_space_read_4(codec->mem_tag, codec->i2c_handle,
+	    DW_IC_RXFLR) > 0)
+		bus_space_read_4(codec->mem_tag, codec->i2c_handle,
+		    DW_IC_DATA_CMD);
 
 	/* Issue read commands */
 	for (i = 0; i < buf_len; i++) {
 		uint32_t cmd = DW_IC_DATA_CMD_READ;
-		if (i == 0)
-			cmd |= DW_IC_DATA_CMD_RESTART;
 		if (i == buf_len - 1)
 			cmd |= DW_IC_DATA_CMD_STOP;
 		bus_space_write_4(codec->mem_tag, codec->i2c_handle,
@@ -283,12 +286,12 @@ sst_i2c_read(struct sst_softc *sc, const uint8_t *addr, int addr_len,
 		bus_space_read_4(codec->mem_tag, codec->i2c_handle,
 		    DW_IC_CLR_TX_ABRT);
 		device_printf(sc->dev,
-		    "codec: I2C read abort: 0x%08x\n", abort);
+		    "codec: I2C recv abort: 0x%08x\n", abort);
 		return (EIO);
 	}
 
 	if (timeout <= 0) {
-		device_printf(sc->dev, "codec: I2C read timeout (rxflr=%d)\n",
+		device_printf(sc->dev, "codec: I2C recv timeout (rxflr=%d)\n",
 		    (int)rxflr);
 		return (ETIMEDOUT);
 	}
@@ -337,8 +340,13 @@ sst_codec_write(struct sst_softc *sc, uint32_t reg, uint32_t val)
 /*
  * sst_codec_read - Read a value from the codec
  *
- * Per rl6347a_hw_read(): set bit 19 of reg to make it a GET verb,
- * write 4 bytes, then read 4 bytes back.
+ * Per Linux rl6347a_hw_read(): set bit 19 of reg to make it a GET
+ * verb, send via i2c_master_send (write with STOP), then receive
+ * the 4-byte response via i2c_master_recv (read with STOP).
+ *
+ * These are TWO SEPARATE I2C transactions, not a combined one.
+ * The STOP after the write lets the codec process the command
+ * before we read the response.
  */
 static int
 sst_codec_read(struct sst_softc *sc, uint32_t reg, uint32_t *val)
@@ -347,23 +355,38 @@ sst_codec_read(struct sst_softc *sc, uint32_t reg, uint32_t *val)
 	uint32_t r;
 	int error;
 
-	/* Set bit 19 to indicate read (GET) */
 	r = reg | (1 << 19);
 	wdata[0] = (r >> 24) & 0xFF;
 	wdata[1] = (r >> 16) & 0xFF;
 	wdata[2] = (r >> 8) & 0xFF;
 	wdata[3] = r & 0xFF;
 
+	/* Step 1: Write GET verb (with STOP) - like i2c_master_send */
 	error = sst_i2c_write(sc, wdata, 4);
-	if (error)
+	if (error) {
+		device_printf(sc->dev,
+		    "codec: read write-phase failed reg=0x%08x: %d\n",
+		    reg, error);
 		return (error);
+	}
 
-	error = sst_i2c_read(sc, wdata, 4, rdata, 4);
-	if (error)
+	/* Step 2: Read 4-byte response (with STOP) - like i2c_master_recv */
+	error = sst_i2c_recv(sc, rdata, 4);
+	if (error) {
+		device_printf(sc->dev,
+		    "codec: read recv-phase failed reg=0x%08x: %d\n",
+		    reg, error);
 		return (error);
+	}
 
+	/*
+	 * Reassemble 32-bit response from big-endian I2C bytes.
+	 * Over I2C (rl6347a), the 4-byte response IS the raw 32-bit
+	 * HDA verb response without codec address prefix.
+	 */
 	*val = ((uint32_t)rdata[0] << 24) | ((uint32_t)rdata[1] << 16) |
 	    ((uint32_t)rdata[2] << 8) | rdata[3];
+
 	return (0);
 }
 
@@ -450,30 +473,38 @@ sst_codec_index_update_bits(struct sst_softc *sc, uint32_t index,
  * Index register defaults written during init.
  * From Linux rt286_reg_defaults[] init sequence.
  */
+/*
+ * Index register defaults from Linux rt286_index_def[].
+ * These are written during probe via COEF_INDEX/PROC_COEF.
+ */
 static const struct {
 	uint32_t	index;
 	uint32_t	value;
 } rt286_index_defaults[] = {
-	{ 0x01, 0xACAF },	/* Power control */
-	{ 0x02, 0x8000 },	/* Power control 2 */
+	{ 0x01, 0xaaaa },	/* Power control */
+	{ 0x02, 0x8aaa },	/* Power control 2 */
 	{ 0x03, 0x0002 },	/* Power control 3 */
-	{ 0x04, 0xAF01 },	/* Vendor-specific */
-	{ 0x08, 0x2004 },	/* Vendor-specific */
-	{ 0x09, 0xd010 },	/* I2S control: consumer, I2S mode (Linux default 0xd810 with bit 11 cleared) */
-	{ 0x0A, 0x0000 },	/* I2S control 2 */
-	{ 0x0D, 0x0000 },	/* DC gain calibration */
-	{ 0x0E, 0x2000 },	/* Vendor-specific */
+	{ 0x04, 0xaf01 },	/* Vendor-specific */
+	{ 0x08, 0x000d },	/* Vendor-specific */
+	{ 0x09, 0xd810 },	/* I2S control 1 (default, set_dai_fmt patches later) */
+	{ 0x0a, 0x0120 },	/* I2S control 2 */
+	{ 0x0b, 0x0000 },	/* Clock divider */
+	{ 0x0d, 0x2800 },	/* DC gain calibration */
+	{ 0x0f, 0x0000 },	/* Vendor-specific */
 	{ 0x10, 0x0000 },	/* Analog bias 1 */
 	{ 0x11, 0x0000 },	/* Analog bias 2 */
 	{ 0x12, 0x0000 },	/* Analog bias 3 */
 	{ 0x13, 0x0000 },	/* Analog bias 4 */
-	{ 0x16, 0x0000 },	/* PLL control */
-	{ 0x19, 0x000B },	/* Vendor-specific */
-	{ 0x1B, 0x0000 },	/* Vendor-specific */
-	{ 0x1F, 0x0000 },	/* Vendor-specific */
-	{ 0x20, 0x0000 },	/* Misc control */
-	{ 0x33, 0x0400 },	/* Vendor-specific */
-	{ 0x49, 0x4004 },	/* Vendor-specific */
+	{ 0x19, 0x0a17 },	/* Vendor-specific */
+	{ 0x20, 0x0020 },	/* Misc control */
+	{ 0x33, 0x0208 },	/* Vendor-specific */
+	{ 0x49, 0x0004 },	/* PLL control 1 */
+	{ 0x4f, 0x50e9 },	/* Combo jack config */
+	{ 0x50, 0x2000 },	/* Combo jack config 2 */
+	{ 0x63, 0x2902 },	/* PLL control (PLL disabled by default) */
+	{ 0x67, 0x1111 },	/* Depop control 1 */
+	{ 0x68, 0x1016 },	/* Depop control 2 */
+	{ 0x69, 0x273f },	/* Depop control 3 */
 };
 
 int
@@ -545,8 +576,7 @@ sst_codec_init(struct sst_softc *sc)
 	sst_codec_write(sc, RT286_SET_POWER(RT286_NID_SPK),  RT286_PWR_D1);
 	sst_codec_write(sc, RT286_SET_POWER(RT286_NID_HP),   RT286_PWR_D1);
 
-	/* Step 6: Dell combo jack setup (CBJ index 0x4F) */
-	sst_codec_index_update_bits(sc, RT286_IDX_CBJ, 0xF0, 0x50);
+	/* Step 6: Dell combo jack - already configured in defaults (0x4f=0x50e9) */
 
 	/* Step 7: Dell GPIO6 setup - enable speaker amplifier control */
 	sst_codec_write(sc, RT286_SET_GPIO_MASK, RT286_DELL_GPIO6);
@@ -554,12 +584,9 @@ sst_codec_init(struct sst_softc *sc)
 	sst_codec_write(sc, RT286_SET_GPIO_DATA, RT286_DELL_GPIO6);
 
 	/* GPIO control index: enable GPIO6 output (bit 3) */
-	sst_codec_index_update_bits(sc, RT286_IDX_GPIO_CTRL, 0x08, 0x08);
+	sst_codec_index_write(sc, RT286_IDX_GPIO_CTRL, 0x08);
 
-	/* Step 8: Depop parameters */
-	sst_codec_index_write(sc, RT286_IDX_DEPOP_CTRL1, 0x001E);
-	sst_codec_index_write(sc, RT286_IDX_DEPOP_CTRL2, 0x000A);
-	sst_codec_index_write(sc, RT286_IDX_DEPOP_CTRL3, 0x0005);
+	/* Step 8: Depop - already configured in defaults (0x67-0x69) */
 
 	codec->initialized = true;
 	device_printf(sc->dev, "codec: RT286 initialization complete\n");
@@ -590,35 +617,55 @@ sst_codec_enable_speaker(struct sst_softc *sc)
 	device_printf(sc->dev, "codec: enabling speaker output...\n");
 
 	/*
-	 * Audio Function Group → D0, with PLL clock source.
-	 * Linux catpt sets RT286_SCLK_S_PLL (bit 6 = 0x40) to use
-	 * the codec's internal PLL driven by MCLK from SSP.
+	 * Audio Function Group → D0, PLL clock mode.
+	 *
+	 * Linux rt286_set_dai_sysclk(RT286_SCLK_S_PLL, 24MHz):
+	 *   - bit 6 CLEAR = PLL mode (codec PLL locks to BCLK)
+	 *   - bit 6 SET   = direct MCLK mode (only 12.288/24.576MHz)
+	 *
+	 * The PCH provides 24MHz MCLK, which is NOT a valid frequency
+	 * for direct MCLK mode.  PLL mode uses BCLK as reference
+	 * instead, which works with any MCLK frequency.
 	 */
 	error = sst_codec_write(sc,
-	    RT286_SET_POWER(RT286_NID_AFG), RT286_PWR_D0 | 0x40);
+	    RT286_SET_POWER(RT286_NID_AFG), RT286_PWR_D0);
 	if (error)
 		return (error);
 	DELAY(50000);	/* 50ms for AFG power up */
 
 	/*
-	 * Configure I2S interface for consumer (slave) mode.
-	 * Index 0x09 was set to 0xd010 in init defaults, but
-	 * reinforce it here in case of power cycle.
+	 * Configure I2S interface for consumer (slave) I2S mode.
+	 *
+	 * Linux rt286_set_dai_fmt(CBS_CFS, I2S):
+	 *   Default 0xd810, clear bit11 (slave), clear bits[9:8] (I2S)
+	 *   → 0xd010.  d_len_code for 16-bit: bits[4:3] = 0, no change.
 	 */
-	sst_codec_index_update_bits(sc, RT286_IDX_I2S_CTRL1,
-	    0x0F00, 0x0000);	/* bits[11:8] = 0: consumer, I2S mode */
+	sst_codec_index_write(sc, RT286_IDX_I2S_CTRL1, 0xd010);
 
-	/* DC gain calibration: set bit 9, wait, clear */
-	sst_codec_index_update_bits(sc, RT286_IDX_DC_GAIN, 0x0200, 0x0200);
-	DELAY(10000);
-	sst_codec_index_update_bits(sc, RT286_IDX_DC_GAIN, 0x0200, 0x0000);
+	/*
+	 * Configure codec PLL for BCLK reference at 24MHz.
+	 *
+	 * Linux rt286_set_dai_sysclk(RT286_SCLK_S_PLL, 24MHz):
+	 *   I2S_CTRL2 (0x0a): default=0x0120, set bit8 (BCLK ref)
+	 *                      → 0x0120 (already set in default)
+	 *   PLL_CTRL  (0x63): default=0x2902, set bit2 (PLL enable)
+	 *                      → 0x2906
+	 *   PLL_CTRL1 (0x49): default=0x0004, clear bit5 (use PLL)
+	 *                      → 0x0004 (already clear)
+	 */
+	sst_codec_index_write(sc, RT286_IDX_I2S_CTRL2, 0x0120);
+	sst_codec_index_write(sc, RT286_IDX_PLL_CTRL, 0x2906);
+	sst_codec_index_write(sc, RT286_IDX_PLL_CTRL1, 0x0004);
 
-	/* Enable power supplies via index registers */
-	/* Power control: enable HV, VREF, LDO1, LDO2 */
-	sst_codec_index_update_bits(sc, RT286_IDX_POWER_CTRL,
-	    0xFC00, 0x0000);	/* Clear power-down bits */
-	sst_codec_index_update_bits(sc, RT286_IDX_POWER_CTRL2,
-	    0x8000, 0x0000);	/* Clear LDO2 power-down */
+	/*
+	 * Enable power supplies via index registers.
+	 * POWER_CTRL (0x01): default=0xaaaa, clear bits[15:10]
+	 *   0xaaaa & ~0xFC00 = 0x02aa
+	 * POWER_CTRL2 (0x02): default=0x8aaa, clear bit15
+	 *   0x8aaa & ~0x8000 = 0x0aaa
+	 */
+	sst_codec_index_write(sc, RT286_IDX_POWER_CTRL, 0x02aa);
+	sst_codec_index_write(sc, RT286_IDX_POWER_CTRL2, 0x0aaa);
 	DELAY(50000);	/* 50ms for power supplies */
 
 	/* Power up DAC (0x02), Mixer (0x0C), SPK (0x14) → D0 */
@@ -662,6 +709,7 @@ sst_codec_enable_speaker(struct sst_softc *sc)
 
 	codec->speaker_active = true;
 	device_printf(sc->dev, "codec: speaker output enabled\n");
+
 	return (0);
 }
 
@@ -684,9 +732,9 @@ sst_codec_enable_headphone(struct sst_softc *sc)
 
 	device_printf(sc->dev, "codec: enabling headphone output...\n");
 
-	/* Audio Function Group → D0 with PLL clock */
+	/* Audio Function Group → D0 (PLL mode, bit 6 clear) */
 	sst_codec_write(sc,
-	    RT286_SET_POWER(RT286_NID_AFG), RT286_PWR_D0 | 0x40);
+	    RT286_SET_POWER(RT286_NID_AFG), RT286_PWR_D0);
 	DELAY(50000);
 
 	/* Power up DAC1 and HP pin → D0 */
@@ -719,6 +767,41 @@ sst_codec_enable_headphone(struct sst_softc *sc)
 
 	codec->hp_active = true;
 	device_printf(sc->dev, "codec: headphone output enabled\n");
+	return (0);
+}
+
+/* ================================================================
+ * PLL Re-arm (for trigger-time codec refresh)
+ *
+ * Called during playback trigger after DSP resumes and SSP is
+ * clocking BCLK.  Re-pokes the PLL enable and DAC format so the
+ * codec PLL locks to the now-active BCLK.
+ * ================================================================ */
+
+int
+sst_codec_pll_rearm(struct sst_softc *sc)
+{
+	struct sst_codec *codec = &sc->codec;
+
+	if (!codec->initialized)
+		return (ENXIO);
+
+	/*
+	 * Toggle PLL: disable then re-enable to force a clean lock.
+	 * The PLL was enabled during init (before BCLK was present),
+	 * so it may be in a failed-lock state.  Toggling resets it.
+	 */
+	sst_codec_index_write(sc, RT286_IDX_PLL_CTRL, 0x2902); /* disable */
+	DELAY(1000);
+	sst_codec_index_write(sc, RT286_IDX_PLL_CTRL, 0x2906); /* enable */
+
+	/* Re-set DAC formats (I2S input, 48kHz/16bit/2ch) */
+	sst_codec_write(sc,
+	    RT286_SET_FORMAT(RT286_NID_DAC0), RT286_FMT_48K_16B_2CH);
+	sst_codec_write(sc,
+	    RT286_SET_FORMAT(RT286_NID_DAC1), RT286_FMT_48K_16B_2CH);
+
+	DELAY(50000);	/* 50ms for PLL to lock to BCLK */
 	return (0);
 }
 

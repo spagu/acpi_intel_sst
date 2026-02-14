@@ -588,12 +588,17 @@ sst_pcm_alloc_dsp_stream(struct sst_softc *sc, struct sst_pcm_channel *ch)
 
 	if (ch->channels == 2) {
 		req.format.channel_config = SST_CHAN_CONFIG_STEREO;
-		/* Nibble-packed: LEFT=0 in nib0, RIGHT=2 in nib1, rest=0xF */
-		req.format.channel_map = 0xFFFFFF20;
+		/*
+		 * Channel map: nibble N = source channel for output slot N.
+		 * Linux catpt uses sequential indices (0,1,2,...), NOT the
+		 * catpt_channel_index enum values (LEFT=0, RIGHT=2).
+		 * Stereo: slot 0 ← ch 0, slot 1 ← ch 1, rest = 0xF (unused)
+		 */
+		req.format.channel_map = 0xFFFFFF10;
 	} else {
 		req.format.channel_config = SST_CHAN_CONFIG_MONO;
-		/* CENTER=1 in nib0, rest=0xF */
-		req.format.channel_map = 0xFFFFFFF1;
+		/* Mono: slot 0 ← ch 0, rest = 0xF */
+		req.format.channel_map = 0xFFFFFFF0;
 	}
 
 	/*
@@ -726,11 +731,11 @@ sst_pcm_poll(void *arg)
 	if (ch->buf_size > 0)
 		pos = pos % ch->buf_size;
 
-	/* Debug: show first few polls after each start */
-	if (ch->dbg_polls < 20) {
+	/* Debug: show first 3 polls after each start */
+	if (ch->dbg_polls < 3) {
 		device_printf(sc->dev,
-		    "poll[%d]: pos=%u last=%u (reg=0x%x buf=%zu blk=%u)\n",
-		    ch->dbg_polls, pos, ch->last_pos, ch->read_pos_regaddr,
+		    "poll[%d]: pos=%u last=%u (buf=%zu blk=%u)\n",
+		    ch->dbg_polls, pos, ch->last_pos,
 		    ch->buf_size, ch->blk_size);
 		ch->dbg_polls++;
 	}
@@ -762,7 +767,6 @@ sst_chan_trigger(kobj_t obj, void *data, int go)
 {
 	struct sst_pcm_channel *ch = data;
 	struct sst_softc *sc;
-	struct sst_device_format devfmt;
 	int error;
 
 	sc = ch->sc;
@@ -789,7 +793,11 @@ sst_chan_trigger(kobj_t obj, void *data, int go)
 			return (ENXIO);
 		}
 
-		/* Step 1: Allocate DSP stream */
+		/*
+		 * Step 1: Allocate DSP stream.
+		 * SET_DEVICE_FORMATS was already sent once at init
+		 * time (like Linux catpt_dai_pcm_new).
+		 */
 		error = sst_pcm_alloc_dsp_stream(sc, ch);
 		if (error) {
 			device_printf(sc->dev,
@@ -797,33 +805,24 @@ sst_chan_trigger(kobj_t obj, void *data, int go)
 			return (error);
 		}
 
-		/* Step 2: Set device formats (SSP hardware config) */
-		memset(&devfmt, 0, sizeof(devfmt));
-		devfmt.iface = (ch->dir == PCMDIR_PLAY) ?
-		    SST_SSP_IFACE_0 : SST_SSP_IFACE_0;
-		devfmt.mclk = SST_MCLK_FREQ_24_MHZ;
-		devfmt.channels = ch->channels;
-		if (ch->channels == 4) {
-			devfmt.mode = SST_SSP_MODE_TDM_PROVIDER;
-			devfmt.clock_divider = 4;
-		} else {
-			devfmt.mode = SST_SSP_MODE_I2S_PROVIDER;
-			devfmt.clock_divider = 9;
-		}
-		error = sst_ipc_set_device_formats(sc, &devfmt);
-		if (error) {
-			device_printf(sc->dev,
-			    "SET_DEVICE_FORMATS failed: %d\n", error);
-			/* Non-fatal - try to continue */
-		}
-
 		/*
-		 * Step 3: Prepare stream (catpt prepare sequence).
-		 * Linux catpt does RESET+PAUSE before RESUME to put
-		 * the stream into a known state.
+		 * Step 2: Prepare stream (catpt prepare sequence).
+		 * Linux catpt does RESET+PAUSE in prepare() before
+		 * trigger START, putting stream into a known state.
 		 */
 		sst_ipc_stream_reset(sc, ch->stream_id);
 		sst_ipc_stream_pause(sc, ch->stream_id);
+
+		/*
+		 * Step 3: Enable HMDC (Host Memory DMA Control).
+		 *
+		 * The DSP's DMA engine accesses host memory through
+		 * the PCH IOSF fabric.  HMDC bits must be set to
+		 * allow DMA reads from the host page table and audio
+		 * buffer.  Without this, the DSP plays silence.
+		 */
+		sst_shim_update_bits(sc, SST_SHIM_HMDC,
+		    SST_HMDC_HDDA_ALL, SST_HMDC_HDDA_ALL);
 
 		/* Step 4: Resume (start) DSP stream */
 		error = sst_ipc_stream_resume(sc, ch->stream_id);
@@ -835,11 +834,22 @@ sst_chan_trigger(kobj_t obj, void *data, int go)
 		}
 
 		/*
-		 * No SET_WRITE_POS needed for SYSTEM type streams.
-		 * The DSP manages the ring buffer autonomously using
-		 * the page table provided at ALLOC_STREAM time.
-		 * SET_WRITE_POS is only for RENDER (offload) streams.
+		 * Step 5: Enable SSP (set SSE bit).
+		 *
+		 * The firmware programs SSP registers via SET_DEVICE_FORMATS
+		 * but does NOT set SSE (SSP Enable).  We must do it explicitly
+		 * as the catpt firmware leaves this to the host.
 		 */
+		sst_ssp_start(sc, ch->ssp_port);
+
+		/*
+		 * Step 6: Re-enable codec PLL now that BCLK is active.
+		 *
+		 * The SSP is now clocking I2S (BCLK + LRCLK).  The
+		 * codec PLL needs BCLK to lock.  Re-poke PLL enable
+		 * and DAC format so codec locks to active BCLK.
+		 */
+		sst_codec_pll_rearm(sc);
 
 		/* Initialize position tracking */
 		ch->ptr = 0;
@@ -851,9 +861,6 @@ sst_chan_trigger(kobj_t obj, void *data, int go)
 		    "PCM: %s started (stream=%u read_pos=0x%x)\n",
 		    (ch->dir == PCMDIR_PLAY) ? "playback" : "capture",
 		    ch->stream_id, ch->read_pos_regaddr);
-
-		/* Dump SSP0 registers for debugging */
-		sst_ssp_dump_regs(sc, 0);
 
 		/* Start position polling timer */
 		callout_reset(&ch->poll_timer, SST_PCM_POLL_TICKS,
@@ -867,6 +874,9 @@ sst_chan_trigger(kobj_t obj, void *data, int go)
 
 		/* Stop polling first */
 		callout_stop(&ch->poll_timer);
+
+		/* Disable SSP (clear SSE bit) */
+		sst_ssp_stop(sc, ch->ssp_port);
 
 		/* Pause DSP stream */
 		if (ch->stream_allocated) {

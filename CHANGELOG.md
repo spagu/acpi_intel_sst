@@ -5,6 +5,64 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.52.0] - 2026-02-14
+
+### MILESTONE: First Audio Output!
+
+Audio is now audible through the speakers for the first time. Sound is recognizable
+but has significant distortion ("machine gun" / stuttering effect). The underlying
+audio content is faintly audible beneath the noise.
+
+### Fixed
+
+- **CRITICAL: NID shift <<24 → <<20 in sst_codec.h** - v0.51.0 introduced wrong
+  NID shift. HDA verb encoding places NID in bits 27:20 (`<< 20`), not bits 31:24
+  (`<< 24`). NID=0 (vendor ID read) worked because `0 << 24 == 0 << 20 == 0`, but
+  all other NIDs (DAC, speaker pin, headphone, mixer) produced wrong register
+  addresses. Verified correct encoding against Linux `rl6347a_hw_write()` source.
+  All 18 macros in sst_codec.h updated.
+
+- **ISR debug printf flooding** - Removed `device_printf` from IPC notification
+  handler in `sst_ipc_intr()`. DSP sends position notifications hundreds of times
+  per second during playback; logging each one caused severe audio jitter.
+
+- **Channel map 0xFFFFFF20 → 0xFFFFFF10** - The channel_map field uses sequential
+  indices (0,1,2...) not catpt_channel_index enum values (LEFT=0, RIGHT=2). Fixed
+  stereo to `0xFFFFFF10` (slot 0 ← ch 0, slot 1 ← ch 1). Mono fixed to `0xFFFFFFF0`.
+
+- **I2C read transactions** - Implemented separate write+read I2C transactions via
+  `sst_i2c_recv()`, matching Linux rl6347a protocol. Previous code tried to read
+  in the same transaction as the register address write.
+
+- **RX FIFO drain** - Added FIFO drain before I2C write to clear stale data from
+  previous transactions that could corrupt register reads.
+
+### Added
+
+- **SET_DEVICE_FORMATS at init** - Send SSP device format IPC at driver attach
+  (SSP0, I2S provider, 24MHz MCLK, divider=9, 2ch), matching Linux
+  `catpt_dai_pcm_new()`. Required before any ALLOC_STREAM.
+
+- **Both speaker + headphone output** - Enable both output paths at init via
+  `sst_codec_enable_speaker()` + `sst_codec_enable_headphone()`.
+
+- **Codec PLL rearm** - `sst_codec_pll_rearm()` re-enables codec PLL after SSP
+  starts clocking I2S, ensuring codec locks to active BCLK/LRCLK.
+
+### Changed
+
+- Position poll debug output reduced from 20 to 3 prints per stream start
+- Removed SSP register dump from poll callback and trigger path
+- Removed codec readback verification block from `sst_codec_enable_speaker()`
+
+### Known Issues
+
+- Audio distortion ("machine gun" stuttering) - sound is audible but heavily
+  distorted. Under investigation: SSP data width, time slot config, page table
+  format, interleaving mode.
+
+---
+
 ## [0.29.0] - 2026-02-13
 
 ### CRITICAL FIX: WPT/Broadwell DSP Ready Uses DONE Bit, Not BUSY

@@ -734,7 +734,7 @@ sst_scan_bar0(struct sst_softc *sc)
 		{ 0x0FB038, "SHIM IPCX" },
 		{ 0x0FB040, "SHIM IPCD" },
 		{ 0x0FB044, "SHIM+0x44" },
-		{ 0x0FB058, "SHIM CLKCTL" },
+		{ 0x0FB078, "SHIM CLKCTL" },
 		{ 0x0FB05C, "SHIM CS1" },
 		{ 0x0FC000, "SSP0" },
 		{ 0x0FD000, "SSP1" },
@@ -2867,6 +2867,26 @@ dsp_init:
 		}
 	}
 
+	/*
+	 * Configure SSP device format (once, before any stream).
+	 * Linux catpt does this in catpt_dai_pcm_new() at card probe.
+	 * Must happen BEFORE alloc_stream per catpt protocol.
+	 */
+	if (sc->fw.state == SST_FW_STATE_RUNNING) {
+		struct sst_device_format devfmt;
+		memset(&devfmt, 0, sizeof(devfmt));
+		devfmt.iface = SST_SSP_IFACE_0;
+		devfmt.mclk = SST_MCLK_FREQ_24_MHZ;
+		devfmt.mode = SST_SSP_MODE_I2S_PROVIDER;
+		devfmt.clock_divider = 9;
+		devfmt.channels = 2;
+		error = sst_ipc_set_device_formats(sc, &devfmt);
+		if (error)
+			device_printf(dev,
+			    "SET_DEVICE_FORMATS failed: %d (non-fatal)\n",
+			    error);
+	}
+
 	/* Register PCM device */
 	if (sc->fw.state == SST_FW_STATE_RUNNING) {
 		sst_pcm_register(sc);
@@ -2880,9 +2900,11 @@ dsp_init:
 	}
 	error = 0;
 
-	/* RT286 codec initialization and speaker enable */
-	if (sst_codec_init(sc) == 0)
+	/* RT286 codec initialization and output enable */
+	if (sst_codec_init(sc) == 0) {
 		sst_codec_enable_speaker(sc);
+		sst_codec_enable_headphone(sc);
+	}
 
 	sc->attached = true;
 	sc->state = SST_STATE_ATTACHED;
@@ -3139,9 +3161,11 @@ sst_pci_attach(device_t dev)
 		}
 		error = 0;
 
-		/* RT286 codec initialization and speaker enable */
-		if (sst_codec_init(sc) == 0)
+		/* RT286 codec initialization and output enable */
+		if (sst_codec_init(sc) == 0) {
 			sst_codec_enable_speaker(sc);
+			sst_codec_enable_headphone(sc);
+		}
 
 		sc->attached = true;
 		sc->state = SST_STATE_ATTACHED;
