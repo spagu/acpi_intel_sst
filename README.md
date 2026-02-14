@@ -27,22 +27,21 @@
 
 On Intel Broadwell-U laptops like the Dell XPS 13 9343, analog audio (speakers and headphones) is routed through the Intel SST DSP, not standard HDA. FreeBSD's built-in `hdac` driver only handles HDMI/DP audio on these machines. This kernel module provides the missing piece - a complete DSP firmware loader, IPC framework, and codec driver that brings analog audio to life.
 
+```mermaid
+graph TD
+    A["Application (play, mpv, firefox...)"] --> B["/dev/dsp — sound(4)"]
+    B --> C["acpi_intel_sst.ko"]
+    C -->|"IPC (catpt)"| D["DSP Firmware (IntcSST2.bin)"]
+    D -->|"DMA"| E["SSP0 — I2S 48kHz stereo"]
+    E --> F["RT286 / ALC3263 codec (I2C0)"]
+    F --> G["Speakers / Headphones"]
+
+    style C fill:#AB2B28,color:#fff
+    style D fill:#0071C5,color:#fff
+    style F fill:#00A98F,color:#fff
 ```
- Application (play, mpv, firefox...)
-       |
-   sound(4) /dev/dsp
-       |
-   acpi_intel_sst.ko    <-- this driver
-       |
-   DSP Firmware (IntcSST2.bin)
-       |  IPC (catpt protocol)
-       |
-   SSP0 (I2S, 48kHz stereo)
-       |
-   RT286/ALC3263 codec (I2C0)
-       |
-   Speakers / Headphones
-```
+
+> See [`DIAGRAMS.md`](DIAGRAMS.md) for detailed architecture and process flow diagrams.
 
 ---
 
@@ -287,6 +286,7 @@ These devices use the same Intel SST DSP and may work (untested):
 | :scroll: | [CHANGELOG.md](CHANGELOG.md) | Detailed version history (v0.1.0 - v0.53.0) |
 | :handshake: | [CONTRIBUTING.md](CONTRIBUTING.md) | How to contribute |
 | :wrench: | [acpi/README.md](acpi/README.md) | DSDT patch instructions for Dell XPS 13 9343 |
+| :bar_chart: | [DIAGRAMS.md](DIAGRAMS.md) | Architecture & process flow diagrams (Mermaid) |
 | :microscope: | [docs/RESEARCH_FINDINGS.md](docs/RESEARCH_FINDINGS.md) | BAR0 investigation, SRAM power gating, IOBP sideband, catpt reference |
 
 ---
