@@ -128,6 +128,9 @@ struct sst_pcm {
 	/* HPF control */
 	uint32_t		hpf_cutoff;	/* HPF cutoff in Hz, 0=bypass */
 
+	/* Limiter control */
+	uint32_t		limiter_threshold; /* Preset index, 0=bypass */
+
 	/* State */
 	bool			registered;	/* PCM device registered */
 };

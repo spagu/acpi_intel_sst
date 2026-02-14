@@ -756,6 +756,44 @@ sst_ipc_set_biquad(struct sst_softc *sc, uint32_t stream_id,
 }
 
 /*
+ * Set peak limiter parameters via STAGE_MESSAGE/SET_LIMITER.
+ * Sends Q2.30 threshold and timing for both left and right channels.
+ */
+int
+sst_ipc_set_limiter(struct sst_softc *sc, uint32_t stream_id,
+		    int32_t threshold, uint32_t attack_us,
+		    uint32_t release_us)
+{
+	uint32_t header;
+	int error;
+	struct {
+		uint32_t channel;
+		int32_t  threshold;
+		uint32_t attack_us;
+		uint32_t release_us;
+	} __packed limiter;
+
+	header = SST_IPC_STREAM_HEADER(SST_IPC_STR_STAGE_MESSAGE, stream_id);
+	header |= (SST_IPC_STG_SET_LIMITER << SST_IPC_STR_STAGE_SHIFT);
+
+	/* Left channel */
+	memset(&limiter, 0, sizeof(limiter));
+	limiter.channel = 0;
+	limiter.threshold = threshold;
+	limiter.attack_us = attack_us;
+	limiter.release_us = release_us;
+
+	error = sst_ipc_send(sc, header, &limiter, sizeof(limiter));
+	if (error)
+		return (error);
+
+	/* Right channel */
+	limiter.channel = 1;
+
+	return sst_ipc_send(sc, header, &limiter, sizeof(limiter));
+}
+
+/*
  * Get current stream position (reads from DSP register)
  * In catpt, position is read directly from MMIO, not via IPC.
  */

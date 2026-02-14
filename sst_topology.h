@@ -82,6 +82,7 @@ enum sst_module_type {
 	SST_MOD_EQ,			/* Equalizer */
 	SST_MOD_DRC,			/* Dynamic range compressor */
 	SST_MOD_HPF,			/* High-pass filter */
+	SST_MOD_LIMITER,		/* Peak limiter */
 	SST_MOD_MAX
 };
 
@@ -111,6 +112,9 @@ struct sst_widget {
 
 	/* HPF control (for EFFECT/HPF) */
 	uint32_t		hpf_cutoff;	/* HPF cutoff in Hz, 0=bypass */
+
+	/* Limiter control (for EFFECT/LIMITER) */
+	uint32_t		limiter_threshold; /* Preset index, 0=bypass */
 
 	/* Linked list */
 	struct sst_widget	*next;
@@ -241,6 +245,9 @@ int	sst_topology_set_widget_volume(struct sst_softc *sc,
 				       struct sst_widget *w, int32_t volume);
 int	sst_topology_set_widget_hpf(struct sst_softc *sc,
 				    struct sst_widget *w, uint32_t cutoff);
+int	sst_topology_set_widget_limiter(struct sst_softc *sc,
+					struct sst_widget *w,
+					uint32_t threshold_idx);
 
 /* Route management */
 int	sst_topology_connect_route(struct sst_softc *sc, struct sst_route *r);

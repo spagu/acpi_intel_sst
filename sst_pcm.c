@@ -1050,7 +1050,8 @@ sst_mixer_init(struct snd_mixer *m)
 	struct sst_softc *sc = mix_getdevinfo(m);
 
 	/* Register mixer controls */
-	mix_setdevs(m, SOUND_MASK_PCM | SOUND_MASK_VOLUME | SOUND_MASK_BASS);
+	mix_setdevs(m, SOUND_MASK_PCM | SOUND_MASK_VOLUME | SOUND_MASK_BASS |
+		       SOUND_MASK_TREBLE);
 
 	/* Set initial volumes */
 	sc->pcm.vol_left = 100;
@@ -1059,6 +1060,9 @@ sst_mixer_init(struct snd_mixer *m)
 
 	/* Default HPF: 150 Hz (mixer bass = 50) */
 	sc->pcm.hpf_cutoff = 150;
+
+	/* Default limiter: -6 dBFS (mixer treble = 60, preset index 5) */
+	sc->pcm.limiter_threshold = 5;
 
 	return (0);
 }
@@ -1123,6 +1127,32 @@ sst_mixer_set(struct snd_mixer *m, unsigned dev, unsigned left, unsigned right)
 		hpf_w = sst_topology_find_widget(sc, "HPF1.0");
 		if (hpf_w != NULL)
 			sst_topology_set_widget_hpf(sc, hpf_w, cutoff);
+
+		break;
+	}
+
+	case SOUND_MIXER_TREBLE: {
+		struct sst_widget *lim_w;
+		int idx;
+
+		/*
+		 * Map mixer value (0-100) to limiter threshold preset.
+		 * 0 = limiter off (bypass), 1-100 = -24dB..0dB.
+		 * Only the left channel value is used (mono control).
+		 */
+		if (left == 0) {
+			idx = 0;
+		} else {
+			idx = 1 + (left - 1) * 7 / 99;
+			if (idx > 8)
+				idx = 8;
+		}
+		sc->pcm.limiter_threshold = idx;
+
+		/* Update limiter widget if topology is loaded */
+		lim_w = sst_topology_find_widget(sc, "LIMITER1.0");
+		if (lim_w != NULL)
+			sst_topology_set_widget_limiter(sc, lim_w, idx);
 
 		break;
 	}

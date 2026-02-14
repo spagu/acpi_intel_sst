@@ -1,6 +1,6 @@
 # Intel SST Audio Driver - Session Status
 ## Date: 2026-02-14
-## Version: v0.54.0
+## Version: v0.55.0
 
 ---
 
@@ -98,7 +98,7 @@ sound(4)  ←→  pcm child device (PCM_SOFTC_SIZE softc)
 | sst_dma.c | DMA controller | Working |
 | sst_pcm.c | sound(4) integration | 90% |
 | sst_ssp.c | I2S codec interface | Working |
-| sst_topology.c | Audio pipeline + HPF biquad | Working |
+| sst_topology.c | Audio pipeline + HPF biquad + limiter | Working |
 | sst_jack.c | Headphone detect | Working |
 | sst_regs.h | Register definitions | Done |
 
@@ -130,6 +130,7 @@ sound(4)  ←→  pcm child device (PCM_SOFTC_SIZE softc)
 
 ## COMMIT HISTORY
 ```
+v0.55.0 - Limiter before SSP0 output, limiter IPC, TREBLE mixer control (issue #3)
 v0.54.0 - HPF in playback pipeline, biquad IPC, BASS mixer control (issue #2)
 v0.52.0 - First audio output! Fix NID shift, channel map, I2C, ISR debug
 v0.51.0 - fix NID shift in codec verbs (<<20 -> <<24) + disable capture stream
