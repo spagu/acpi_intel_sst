@@ -1067,7 +1067,6 @@ static int
 sst_mixer_set(struct snd_mixer *m, unsigned dev, unsigned left, unsigned right)
 {
 	struct sst_softc *sc = mix_getdevinfo(m);
-	struct sst_mixer_params params;
 	struct sst_stream_params sp;
 	int i;
 
@@ -1076,15 +1075,6 @@ sst_mixer_set(struct snd_mixer *m, unsigned dev, unsigned left, unsigned right)
 	case SOUND_MIXER_PCM:
 		sc->pcm.vol_left = left;
 		sc->pcm.vol_right = right;
-
-		/* Update DSP master mixer if firmware running */
-		if (sc->fw.state == SST_FW_STATE_RUNNING) {
-			memset(&params, 0, sizeof(params));
-			params.output_id = 0;	/* Main output */
-			params.volume = (left + right) / 2;
-			params.mute = sc->pcm.mute;
-			sst_ipc_set_mixer(sc, &params);
-		}
 
 		/* Update volume on all active playback streams */
 		for (i = 0; i < SST_PCM_MAX_PLAY; i++) {
