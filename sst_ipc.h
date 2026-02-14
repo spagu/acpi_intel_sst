@@ -45,6 +45,7 @@
 #define SST_IPC_STG_SET_VOLUME		1
 #define SST_IPC_STG_SET_WRITE_POS	2
 #define SST_IPC_STG_MUTE_LOOPBACK	3
+#define SST_IPC_STG_SET_BIQUAD		4
 
 /*
  * Notification Types (from DSP)
@@ -444,6 +445,11 @@ int	sst_ipc_set_write_pos(struct sst_softc *sc, uint32_t stream_id,
 /* Mixer control */
 int	sst_ipc_set_mixer(struct sst_softc *sc, struct sst_mixer_params *params);
 int	sst_ipc_get_mixer(struct sst_softc *sc, struct sst_mixer_params *params);
+
+/* Biquad filter */
+int	sst_ipc_set_biquad(struct sst_softc *sc, uint32_t stream_id,
+			   int32_t b0, int32_t b1, int32_t b2,
+			   int32_t a1, int32_t a2);
 
 /* Power management */
 int	sst_ipc_set_dx(struct sst_softc *sc, uint32_t state);
