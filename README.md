@@ -1,13 +1,103 @@
+<div align="center">
+
+<img src="FreeBSD_SST_Audio.png" alt="FreeBSD SST Audio" width="480">
+
 # Intel SST Audio Driver for FreeBSD
 
-[![FreeBSD](https://img.shields.io/badge/FreeBSD-15--CURRENT-red?logo=freebsd&logoColor=white)](https://www.freebsd.org/)
-[![License](https://img.shields.io/badge/License-BSD--3--Clause-blue.svg)](LICENSE)
-[![Platform](https://img.shields.io/badge/Platform-Intel%20Broadwell--U-0071C5?logo=intel&logoColor=white)](https://ark.intel.com/)
+**The first Intel Smart Sound Technology driver for any BSD operating system**
 
-> **FreeBSD kernel module for Intel Smart Sound Technology (SST) DSP audio**
-> Audio playback working on Broadwell-U platforms with Realtek RT286/ALC3263 codec
+[![FreeBSD](https://img.shields.io/badge/FreeBSD-15--CURRENT-AB2B28?style=for-the-badge&logo=freebsd&logoColor=white)](https://www.freebsd.org/)
+[![License](https://img.shields.io/badge/License-BSD--3--Clause-0078D4?style=for-the-badge)](LICENSE)
+[![Platform](https://img.shields.io/badge/Intel-Broadwell--U-0071C5?style=for-the-badge&logo=intel&logoColor=white)](https://ark.intel.com/)
+[![Status](https://img.shields.io/badge/Audio-Working!-2ea44f?style=for-the-badge&logo=headphones&logoColor=white)](#current-status-v0530)
 
-This is the first Intel SST audio driver for any BSD operating system.
+[![Language](https://img.shields.io/badge/C-Kernel_Module-A8B9CC?style=for-the-badge&logo=c&logoColor=white)](https://github.com/spagu/acpi_intel_sst)
+[![Firmware](https://img.shields.io/badge/Firmware-IntcSST2.bin-FF6F00?style=for-the-badge&logo=intel&logoColor=white)](#2-install-firmware)
+[![Codec](https://img.shields.io/badge/Codec-RT286%2FALC3263-00A98F?style=for-the-badge)](https://www.realtek.com/)
+[![DSP](https://img.shields.io/badge/DSP-catpt_IPC-8E24AA?style=for-the-badge)](https://github.com/torvalds/linux/tree/master/sound/soc/intel/catpt)
+
+*Native analog audio on Dell XPS 13 9343 and other Broadwell-U platforms*
+*with Realtek RT286/ALC3263 codec over I2S/SSP*
+
+</div>
+
+---
+
+## Overview
+
+On Intel Broadwell-U laptops like the Dell XPS 13 9343, analog audio (speakers and headphones) is routed through the Intel SST DSP, not standard HDA. FreeBSD's built-in `hdac` driver only handles HDMI/DP audio on these machines. This kernel module provides the missing piece - a complete DSP firmware loader, IPC framework, and codec driver that brings analog audio to life.
+
+```
+ Application (play, mpv, firefox...)
+       |
+   sound(4) /dev/dsp
+       |
+   acpi_intel_sst.ko    <-- this driver
+       |
+   DSP Firmware (IntcSST2.bin)
+       |  IPC (catpt protocol)
+       |
+   SSP0 (I2S, 48kHz stereo)
+       |
+   RT286/ALC3263 codec (I2C0)
+       |
+   Speakers / Headphones
+```
+
+---
+
+## Quick Start
+
+```bash
+# Build
+git clone https://github.com/spagu/acpi_intel_sst.git && cd acpi_intel_sst && make
+
+# Install firmware
+sudo mkdir -p /boot/firmware/intel
+fetch -o /tmp/fw.deb 'http://ftp.debian.org/debian/pool/non-free-firmware/f/firmware-nonfree/firmware-intel-sound_20230210-5_all.deb'
+cd /tmp && ar x fw.deb && tar xf data.tar.xz
+sudo cp lib/firmware/intel/IntcSST2.bin /boot/firmware/intel/
+
+# Load and play
+sudo kldload ./acpi_intel_sst.ko
+mixer vol 80 && play -n synth 3 sine 440
+```
+
+> **Note:** Dell XPS 13 9343 requires a [DSDT patch](#3-dsdt-patch-dell-xps-13-9343) and
+> [loader.conf changes](#4-configure-bootloaderconf) before the driver will attach.
+> See full [Installation](#installation) below.
+
+---
+
+## Current Status (v0.53.0)
+
+<table>
+<tr><td>
+
+| Component | Status |
+|:----------|:------:|
+| ACPI/PCI probe & attach | :white_check_mark: |
+| Power management (WPT) | :white_check_mark: |
+| DSP firmware boot | :white_check_mark: |
+| IPC framework (catpt) | :white_check_mark: |
+| RT286 codec I2C | :white_check_mark: |
+| SSP/I2S audio output | :white_check_mark: |
+
+</td><td>
+
+| Component | Status |
+|:----------|:------:|
+| PCM sound(4) | :white_check_mark: |
+| Jack detection | :white_check_mark: |
+| **Audio playback** | **:white_check_mark:** |
+| Audio capture | :construction: |
+| Volume via IPC | :construction: |
+| Suspend/resume | :construction: |
+
+</td></tr>
+</table>
+
+> :white_check_mark: = Working&emsp; :construction: = Not yet implemented
 
 ---
 
@@ -15,10 +105,9 @@ This is the first Intel SST audio driver for any BSD operating system.
 
 ### Prerequisites
 
-- FreeBSD 15-CURRENT (or 14.x with source tree)
-- FreeBSD source tree at `/usr/src`
+- FreeBSD 15-CURRENT (or 14.x with source tree at `/usr/src`)
 - Intel Broadwell-U or Haswell platform
-- Intel SST firmware file (`IntcSST2.bin`)
+- Intel SST firmware (`IntcSST2.bin`)
 
 ### 1. Build
 
@@ -38,7 +127,26 @@ cd /tmp && ar x fw.deb && tar xf data.tar.xz
 sudo cp lib/firmware/intel/IntcSST2.bin /boot/firmware/intel/
 ```
 
-See [Firmware](#firmware) section for alternative methods.
+<details>
+<summary><b>Alternative firmware sources</b></summary>
+
+**From a Linux system:**
+```bash
+apt download firmware-intel-sound
+dpkg -x firmware-intel-sound*.deb /tmp/fw
+cp /tmp/fw/lib/firmware/intel/IntcSST2.bin /path/to/freebsd/boot/firmware/intel/
+```
+
+**From Windows driver:**
+Extract `IntcSST2.bin` from the Intel Smart Sound Technology driver package.
+
+| Firmware file | Platform | Compatible |
+|:---|:---|:---:|
+| `IntcSST2.bin` | Broadwell-U / Haswell | :white_check_mark: |
+| `fw_sst_0f28.bin` | Baytrail (Atom) | :x: |
+| `fw_sst_22a8.bin` | Cherrytrail | :x: |
+
+</details>
 
 ### 3. DSDT Patch (Dell XPS 13 9343)
 
@@ -55,7 +163,7 @@ sudo cp DSDT_patched.aml /boot/acpi_dsdt.aml
 
 Add the following to `/boot/loader.conf`:
 
-```
+```bash
 # Custom DSDT with ADSP enabled
 acpi_dsdt_load="YES"
 acpi_dsdt_name="/boot/acpi_dsdt.aml"
@@ -75,73 +183,42 @@ hint.ig4.0.disabled="1"
 hint.ig4.1.disabled="1"
 ```
 
-**Why each line is needed:**
+<details>
+<summary><b>Why each line is needed</b></summary>
 
 | Setting | Reason |
-|---------|--------|
+|:--------|:-------|
 | `acpi_dsdt_*` | Custom DSDT forces ADSP device enabled |
 | `hw.acpi.install_interface` | DSDT requires OSYS >= 0x07DC to route memory to BAR0 |
 | `hint.hdac.0.disabled` | Disables Intel GPU audio (hdac0 at pci0:0:3:0, 8086:160c) |
 | `acpi_intel_sst_load` | Auto-load SST driver at boot |
 | `ig4_load` / `hint.ig4.*` | Prevents ig4 driver from claiming I2C0, which SST uses directly for RT286 codec |
 
-Note: `hdac1` (PCH HDA at pci0:0:27:0, 8086:9ca0) does not need to be disabled.
-It has no codecs on the HDA link (RT286 is on I2S), so it's harmless.
+`hdac1` (PCH HDA at pci0:0:27:0, 8086:9ca0) does **not** need to be disabled -
+it has no codecs on the HDA link (RT286 is on I2S), so it's harmless.
+
+</details>
 
 ### 5. Cold Reboot and Test
 
-A **cold boot** (power off, not reboot) is required for DSDT changes to take effect.
+> **Important:** A **cold boot** (full power off) is required for DSDT changes to take effect.
 
 ```bash
 sudo shutdown -p now
 # Wait 10 seconds, power on
 
-# After boot, verify:
+# After boot:
 cat /dev/sndstat
 mixer vol 80
 play -n synth 3 sine 440  # requires audio/sox
 ```
-
-### Manual Loading (without loader.conf)
-
-```bash
-sudo kldload ./acpi_intel_sst.ko
-cat /dev/sndstat
-mixer vol 80
-play -n synth 3 sine 440
-```
-
----
-
-## Current Status (v0.53.0)
-
-**Audio playback works.** The driver boots the DSP firmware, configures the RT286
-codec over I2C, and streams audio through SSP0 to the speakers and headphone jack.
-
-| Component | Status |
-|-----------|--------|
-| ACPI/PCI probe & attach | Working |
-| Power management (WPT sequence) | Working |
-| DSP firmware boot (IntcSST2.bin) | Working |
-| IPC framework (catpt protocol) | Working |
-| RT286 codec I2C control | Working |
-| SSP/I2S audio output | Working |
-| PCM sound(4) integration | Working |
-| Jack detection (GPIO polling) | Working |
-| Audio playback (4 streams max) | **Working** |
-| Audio capture | Disabled (DSP limitation) |
-| Volume control via IPC | Not yet |
-| Suspend/resume | Not yet |
-
-See [STATUS.md](STATUS.md) for detailed status and next steps.
-See [CHANGELOG.md](CHANGELOG.md) for version history.
 
 ---
 
 ## Hardware
 
 | Component | Details |
-|-----------|---------|
+|:----------|:--------|
 | **Platform** | Intel Broadwell-U (5th Gen Core) |
 | **Tested Device** | Dell XPS 13 9343 (2015) |
 | **DSP** | Intel SST (PCI 8086:9CB6 / ACPI INT3438) |
@@ -149,145 +226,68 @@ See [CHANGELOG.md](CHANGELOG.md) for version history.
 | **Transport** | I2S via SSP0 (playback) / SSP1 (capture, future) |
 | **PCH** | Intel Wildcat Point-LP (WPT) |
 
-### Supported ACPI/PCI IDs
+### Supported IDs
 
 | ID | Platform | Status |
-|----|----------|--------|
-| `INT3438` (ACPI) | Intel Broadwell-U | Tested |
-| `INT33C8` (ACPI) | Intel Haswell | Untested |
-| `8086:9CB6` (PCI) | Intel Broadwell-U | Tested |
-| `8086:9C76` (PCI) | Intel Haswell | Untested |
+|:---|:---------|:------:|
+| `INT3438` (ACPI) | Intel Broadwell-U | :white_check_mark: Tested |
+| `INT33C8` (ACPI) | Intel Haswell | :grey_question: Untested |
+| `8086:9CB6` (PCI) | Intel Broadwell-U | :white_check_mark: Tested |
+| `8086:9C76` (PCI) | Intel Haswell | :grey_question: Untested |
+
+### Other Broadwell-U Devices
+
+These devices use the same Intel SST DSP and may work (untested):
+
+| Manufacturer | Models |
+|:-------------|:-------|
+| **Dell** | XPS 13 9343 (**confirmed**) |
+| **HP** | Spectre x360, EliteBook 720/750/850 G2, Folio 1040 G2 |
+| **Lenovo** | ThinkPad X250, X1 Carbon Gen 3, Yoga 3 14 |
+| **Asus** | Zenbook UX303LA/LB, UX305LA |
+| **Acer** | Aspire R13, Aspire S7-393 |
+
+> If you have one of these running FreeBSD, please test and [report results](https://github.com/spagu/acpi_intel_sst/issues)!
 
 ---
 
-## Architecture
-
-```
-sound(4)  <->  pcm child device (4 play + 2 capture channels)
-                   | ivars
-              acpi_intel_sst (sst_softc)
-                   | IPC (catpt protocol)
-              DSP Firmware (IntcSST2.bin)
-                   | SSP0 (I2S, 48kHz/16bit/2ch)
-              RT286/ALC3263 codec (I2C0, addr 0x1C)
-                   |
-              Speaker / Headphone
-```
-
-### Source Files
+## Source Files
 
 | File | Purpose |
-|------|---------|
-| acpi_intel_sst.c | Main driver: ACPI/PCI probe, attach, power, ISR |
-| sst_firmware.c | Firmware load, parse ($SST format), DSP boot |
-| sst_ipc.c | Host<->DSP IPC messaging (catpt protocol) |
-| sst_ipc.h | IPC protocol definitions and structs |
-| sst_codec.c | RT286 codec control over I2C (DesignWare I2C0 at 0xFE103000) |
-| sst_codec.h | Codec register definitions (HDA verb encoding) |
-| sst_pcm.c | sound(4) PCM integration, DMA page tables, DSP stream alloc |
-| sst_ssp.c | I2S/SSP port configuration (2 ports) |
-| sst_dma.c | DMA controller (DesignWare DW-DMAC, 8 channels) |
-| sst_jack.c | Headphone jack detection (GPIO polling, debounce) |
-| sst_topology.c | Audio pipeline configuration (default Broadwell-U topology) |
-| sst_regs.h | Hardware register definitions (SHIM, VDRTCTL, SSP, DMA) |
-
----
-
-## Firmware
-
-The driver loads firmware via FreeBSD's `firmware_get("intel/IntcSST2.bin")`,
-which looks in `/boot/firmware/intel/IntcSST2.bin`.
-
-### Obtaining Firmware
-
-**Option 1: Debian package (recommended)**
-
-```bash
-sudo mkdir -p /boot/firmware/intel
-fetch -o /tmp/fw.deb \
-  'http://ftp.debian.org/debian/pool/non-free-firmware/f/firmware-nonfree/firmware-intel-sound_20230210-5_all.deb'
-cd /tmp && ar x fw.deb && tar xf data.tar.xz
-sudo cp lib/firmware/intel/IntcSST2.bin /boot/firmware/intel/
-```
-
-**Option 2: From a Linux system**
-
-```bash
-# On Debian/Ubuntu:
-apt download firmware-intel-sound
-dpkg -x firmware-intel-sound*.deb /tmp/fw
-cp /tmp/fw/lib/firmware/intel/IntcSST2.bin /path/to/freebsd/boot/firmware/intel/
-```
-
-**Option 3: Extract from Windows driver**
-
-Look for `IntcSST2.bin` inside the Intel Smart Sound Technology driver package.
-
-### Firmware Compatibility
-
-| File | Platform | Compatible |
-|------|----------|------------|
-| `IntcSST2.bin` | Broadwell-U / Haswell | **Yes** |
-| `fw_sst_0f28.bin` | Baytrail (Atom Z3xxx) | No - wrong platform |
-| `fw_sst_22a8.bin` | Cherrytrail | No - wrong platform |
-
----
-
-## Usage
-
-```bash
-# Load driver
-sudo kldload ./acpi_intel_sst.ko
-
-# Check sound device
-cat /dev/sndstat
-
-# Set volume and play
-mixer vol 80
-play -n synth 3 sine 440          # test tone (needs audio/sox)
-cat /path/to/file.wav > /dev/dsp  # play WAV file
-
-# Unload
-sudo kldunload acpi_intel_sst
-```
+|:-----|:--------|
+| [`acpi_intel_sst.c`](acpi_intel_sst.c) | Main driver: ACPI/PCI probe, attach, power, ISR |
+| [`sst_firmware.c`](sst_firmware.c) | Firmware load, parse ($SST format), DSP boot |
+| [`sst_ipc.c`](sst_ipc.c) | Host-DSP IPC messaging (catpt protocol) |
+| [`sst_codec.c`](sst_codec.c) | RT286 codec control over I2C (DesignWare I2C0 at 0xFE103000) |
+| [`sst_pcm.c`](sst_pcm.c) | sound(4) PCM integration, DMA page tables, DSP stream alloc |
+| [`sst_ssp.c`](sst_ssp.c) | I2S/SSP port configuration (2 ports) |
+| [`sst_dma.c`](sst_dma.c) | DMA controller (DesignWare DW-DMAC, 8 channels) |
+| [`sst_jack.c`](sst_jack.c) | Headphone jack detection (GPIO polling, debounce) |
+| [`sst_topology.c`](sst_topology.c) | Audio pipeline configuration (default Broadwell-U topology) |
+| [`sst_regs.h`](sst_regs.h) | Hardware register definitions (SHIM, VDRTCTL, SSP, DMA) |
 
 ---
 
 ## Known Issues
 
-1. **Capture disabled** - capture channels are registered but skipped in trigger;
-   DSP firmware doesn't support simultaneous playback+capture on the same SSP port
-2. **No volume control via IPC** - mixer widget exists but changes don't reach DSP
-3. **No suspend/resume** - driver doesn't handle D3 transitions during sleep
-4. **Dell XPS 13 9343 only** - untested on other Broadwell-U/Haswell platforms
-
----
-
-## Other Broadwell-U Devices
-
-These devices use the same Intel SST DSP and may work with this driver (untested):
-
-| Manufacturer | Model |
-|--------------|-------|
-| Dell | XPS 13 9343 (**confirmed**) |
-| HP | Spectre x360, EliteBook 720/750/850 G2, Folio 1040 G2 |
-| Lenovo | ThinkPad X250, X1 Carbon Gen 3, Yoga 3 14 |
-| Asus | Zenbook UX303LA/LB, UX305LA |
-| Acer | Aspire R13, Aspire S7-393 |
-
-If you have one of these running FreeBSD, please test and report results.
+| Issue | Details |
+|:------|:--------|
+| **Capture disabled** | Channels registered but skipped; DSP can't do simultaneous play+capture on same SSP |
+| **No volume via IPC** | Mixer widget exists but changes don't reach DSP firmware |
+| **No suspend/resume** | Driver doesn't handle D3 transitions during sleep |
+| **Single platform tested** | Only Dell XPS 13 9343; other Broadwell-U/Haswell untested |
 
 ---
 
 ## Documentation
 
-| File | Description |
-|------|-------------|
-| [STATUS.md](STATUS.md) | Current driver status, known issues, next steps |
-| [CHANGELOG.md](CHANGELOG.md) | Detailed version history |
-| [CONTRIBUTING.md](CONTRIBUTING.md) | How to contribute |
-| [acpi/README.md](acpi/README.md) | DSDT patch instructions for Dell XPS 13 9343 |
-| [docs/RESEARCH_FINDINGS.md](docs/RESEARCH_FINDINGS.md) | Historical research: BAR0 investigation, SRAM power gating, IOBP sideband, catpt reference data |
+| | File | Description |
+|:--|:-----|:------------|
+| :book: | [STATUS.md](STATUS.md) | Current driver status, known issues, next steps |
+| :scroll: | [CHANGELOG.md](CHANGELOG.md) | Detailed version history (v0.1.0 - v0.53.0) |
+| :handshake: | [CONTRIBUTING.md](CONTRIBUTING.md) | How to contribute |
+| :wrench: | [acpi/README.md](acpi/README.md) | DSDT patch instructions for Dell XPS 13 9343 |
+| :microscope: | [docs/RESEARCH_FINDINGS.md](docs/RESEARCH_FINDINGS.md) | BAR0 investigation, SRAM power gating, IOBP sideband, catpt reference |
 
 ---
 
@@ -301,12 +301,12 @@ If you have one of these running FreeBSD, please test and report results.
 
 ---
 
-## License
+<div align="center">
 
-BSD-3-Clause. See [LICENSE](LICENSE) for details.
+**BSD-3-Clause** &bull; See [LICENSE](LICENSE) for details
 
----
+Contributions welcome! See [CONTRIBUTING.md](CONTRIBUTING.md)
 
-## Contributing
+[Report Bug](https://github.com/spagu/acpi_intel_sst/issues) &bull; [Request Feature](https://github.com/spagu/acpi_intel_sst/issues)
 
-Contributions welcome! See [CONTRIBUTING.md](CONTRIBUTING.md).
+</div>
