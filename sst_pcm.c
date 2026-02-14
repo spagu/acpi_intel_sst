@@ -985,6 +985,52 @@ sst_chan_getcaps(kobj_t obj, void *data)
 }
 
 /*
+ * Mixer percent (0-100) to Q1.31 lookup table.
+ * Logarithmic curve: 0% = silence, 100% = -1dBFS (headroom).
+ * Maps percent to dB range -60dB..(-1dB), then to Q1.31.
+ */
+static const uint32_t sst_pct_to_q131[101] = {
+	0x00000000, 0x00231237, 0x00258942, 0x00282CA9,
+	0x002AFF88, 0x002E0536, 0x00314145, 0x0034B787,
+	0x00386C15, 0x003C634D, 0x0040A1E2, 0x00452CD5,
+	0x004A0985, 0x004F3DB2, 0x0054CF81, 0x005AC587,
+	0x006126CF, 0x0067FAE3, 0x006F49D5, 0x00771C48,
+	0x007F7B79, 0x0088714D, 0x0092085B, 0x009C4BF8,
+	0x00A74843, 0x00B30A3A, 0x00BF9FBF, 0x00CD17B3,
+	0x00DB81FE, 0x00EAEFAB, 0x00FB72F2, 0x010D1F59,
+	0x012009C1, 0x01344883, 0x0149F38D, 0x01612478,
+	0x0179F6AC, 0x0194877D, 0x01B0F650, 0x01CF64BC,
+	0x01EFF6B8, 0x0212D2C0, 0x02382205, 0x0260109D,
+	0x028ACDB8, 0x02B88BD5, 0x02E98101, 0x031DE717,
+	0x0355FC01, 0x03920204, 0x03D2400C, 0x04170202,
+	0x04609926, 0x04AF5C6D, 0x0503A8E7, 0x055DE233,
+	0x05BE72EB, 0x0625CD2A, 0x06946B12, 0x070ACF56,
+	0x078985DC, 0x0811245F, 0x08A24B1F, 0x093DA5A0,
+	0x09E3EB74, 0x0A95E115, 0x0B5458CA, 0x0C2033A4,
+	0x0CFA6284, 0x0DE3E73B, 0x0EDDD5B7, 0x0FE9554B,
+	0x1107A20F, 0x123A0E4E, 0x1382041D, 0x14E10703,
+	0x1658B5C4, 0x17EACC4D, 0x199925BA, 0x1B65BE91,
+	0x1D52B712, 0x1F6255C1, 0x21970A11, 0x23F36F48,
+	0x267A4F92, 0x292EA74F, 0x2C13A895, 0x2F2CBEFE,
+	0x327D93AE, 0x360A11A4, 0x39D66A63, 0x3DE71AE0,
+	0x4240F0CF, 0x46E91057, 0x4BE4FA1E, 0x513A91CE,
+	0x56F02506, 0x5D0C72D3, 0x6396B3A2, 0x6A96A1CF,
+	0x721482BF,
+};
+
+/*
+ * Convert mixer percent (0-100) to Q1.31 linear gain.
+ */
+static uint32_t
+sst_percent_to_q131(unsigned int pct)
+{
+
+	if (pct > 100)
+		pct = 100;
+	return (sst_pct_to_q131[pct]);
+}
+
+/*
  * Mixer methods
  */
 static int
@@ -1031,8 +1077,8 @@ sst_mixer_set(struct snd_mixer *m, unsigned dev, unsigned left, unsigned right)
 			if (sc->pcm.play[i].stream_allocated) {
 				memset(&sp, 0, sizeof(sp));
 				sp.stream_id = sc->pcm.play[i].stream_id;
-				sp.volume_left = left;
-				sp.volume_right = right;
+				sp.volume_left = sst_percent_to_q131(left);
+				sp.volume_right = sst_percent_to_q131(right);
 				sp.mute = sc->pcm.mute;
 				sst_ipc_stream_set_params(sc, &sp);
 			}

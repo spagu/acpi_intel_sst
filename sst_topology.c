@@ -23,6 +23,75 @@
 #include "sst_ipc.h"
 
 /*
+ * dB-to-Q1.31 lookup table for widget volume control.
+ * 169 entries: index 0 = -64.0dB, index 128 = 0dB (unity), index 168 = +20dB.
+ * Each step = 0.5dB.  Volume parameter is in 0.5dB steps (-128..+40).
+ * Formula: Q1.31 = round(0x7FFFFFFF * 10^(dB/20))
+ * Values above 0dBFS are capped at 0x7FFFFFFF (unity).
+ */
+static const uint32_t sst_vol_db_to_q131[169] = {
+	0x0014ACDB, 0x0015E67A, 0x001732AE, 0x00189292,
+	0x001A074F, 0x001B9222, 0x001D345B, 0x001EEF5B,
+	0x0020C49C, 0x0022B5AA, 0x0024C42C, 0x0026F1E1,
+	0x002940A2, 0x002BB263, 0x002E4939, 0x00310756,
+	0x0033EF0C, 0x003702D4, 0x003A454A, 0x003DB932,
+	0x00416179, 0x0045413B, 0x00495BC1, 0x004DB486,
+	0x00524F3B, 0x00572FC8, 0x005C5A4F, 0x0061D334,
+	0x00679F1C, 0x006DC2F0, 0x007443E8, 0x007B2787,
+	0x008273A6, 0x008A2E77, 0x00925E89, 0x009B0ACE,
+	0x00A43AA2, 0x00ADF5D1, 0x00B8449C, 0x00C32FC3,
+	0x00CEC08A, 0x00DB00C0, 0x00E7FACC, 0x00F5B9B0,
+	0x01044915, 0x0113B557, 0x01240B8C, 0x01355991,
+	0x0147AE14, 0x015B18A5, 0x016FA9BB, 0x018572CB,
+	0x019C8651, 0x01B4F7E3, 0x01CEDC3D, 0x01EA4958,
+	0x0207567A, 0x02261C4A, 0x0246B4E4, 0x02693BF0,
+	0x028DCEBC, 0x02B48C50, 0x02DD958A, 0x03090D3F,
+	0x0337184E, 0x0367DDCC, 0x039B8719, 0x03D2400C,
+	0x040C3714, 0x04499D60, 0x048AA70B, 0x04CF8B44,
+	0x05188480, 0x0565D0AB, 0x05B7B15B, 0x060E6C0B,
+	0x066A4A53, 0x06CB9A26, 0x0732AE18, 0x079FDD9F,
+	0x08138562, 0x088E0783, 0x090FCBF7, 0x099940DB,
+	0x0A2ADAD1, 0x0AC51567, 0x0B68737A, 0x0C157FA9,
+	0x0CCCCCCD, 0x0D8EF66D, 0x0E5CA14C, 0x0F367BEE,
+	0x101D3F2D, 0x1111AEDB, 0x12149A60, 0x1326DD70,
+	0x144960C5, 0x157D1AE2, 0x16C310E3, 0x181C5762,
+	0x198A1357, 0x1B0D7B1B, 0x1CA7D768, 0x1E5A8471,
+	0x2026F30F, 0x220EA9F4, 0x241346F6, 0x26368073,
+	0x287A26C4, 0x2AE025C3, 0x2D6A866F, 0x301B70A8,
+	0x32F52CFF, 0x35FA26A9, 0x392CED8E, 0x3C90386F,
+	0x4026E73C, 0x43F4057E, 0x47FACCF0, 0x4C3EA838,
+	0x50C335D3, 0x558C4B22, 0x5A9DF7AB, 0x5FFC8890,
+	0x65AC8C2E, 0x6BB2D603, 0x721482BF, 0x78D6FC9E,
+	0x7FFFFFFF, 0x7FFFFFFF, 0x7FFFFFFF, 0x7FFFFFFF,
+	0x7FFFFFFF, 0x7FFFFFFF, 0x7FFFFFFF, 0x7FFFFFFF,
+	0x7FFFFFFF, 0x7FFFFFFF, 0x7FFFFFFF, 0x7FFFFFFF,
+	0x7FFFFFFF, 0x7FFFFFFF, 0x7FFFFFFF, 0x7FFFFFFF,
+	0x7FFFFFFF, 0x7FFFFFFF, 0x7FFFFFFF, 0x7FFFFFFF,
+	0x7FFFFFFF, 0x7FFFFFFF, 0x7FFFFFFF, 0x7FFFFFFF,
+	0x7FFFFFFF, 0x7FFFFFFF, 0x7FFFFFFF, 0x7FFFFFFF,
+	0x7FFFFFFF, 0x7FFFFFFF, 0x7FFFFFFF, 0x7FFFFFFF,
+	0x7FFFFFFF, 0x7FFFFFFF, 0x7FFFFFFF, 0x7FFFFFFF,
+	0x7FFFFFFF, 0x7FFFFFFF, 0x7FFFFFFF, 0x7FFFFFFF,
+	0x7FFFFFFF,
+};
+
+/*
+ * Convert widget dB (0.5dB steps: -128..+40) to Q1.31 linear gain.
+ */
+static uint32_t
+sst_db_to_linear(int32_t volume_half_db)
+{
+	int idx;
+
+	idx = volume_half_db + 128;	/* shift to 0-based: 0==-64dB, 128==0dB */
+	if (idx < 0)
+		idx = 0;
+	if (idx > 168)
+		idx = 168;
+	return (sst_vol_db_to_q131[idx]);
+}
+
+/*
  * Default topology for Dell XPS 13 9343 / Broadwell-U
  *
  * Pipeline layout:
@@ -487,11 +556,13 @@ sst_topology_set_widget_volume(struct sst_softc *sc, struct sst_widget *w,
 
 	/* Update DSP if stream is active */
 	if (w->stream_id != 0 && sc->fw.state == SST_FW_STATE_RUNNING) {
+		uint32_t gain;
+
 		memset(&params, 0, sizeof(params));
 		params.stream_id = w->stream_id;
-		/* Convert dB to linear (simplified) */
-		params.volume_left = 100 + (volume * 100 / 64);
-		params.volume_right = params.volume_left;
+		gain = sst_db_to_linear(volume);
+		params.volume_left = gain;
+		params.volume_right = gain;
 		params.mute = w->mute;
 
 		return sst_ipc_stream_set_params(sc, &params);

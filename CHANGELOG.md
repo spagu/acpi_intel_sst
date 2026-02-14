@@ -871,9 +871,19 @@ IRQ allocation, IPC init, firmware load (IntcSST2.bin), DMA/SSP/PCM/topology ini
 - `Fixed` for any bug fixes
 - `Security` for vulnerability fixes
 
-[Unreleased]: https://github.com/spagu/acpi_intel_sst/compare/v0.5.0...HEAD
-[0.5.0]: https://github.com/spagu/acpi_intel_sst/compare/v0.4.0...v0.5.0
-[0.4.0]: https://github.com/spagu/acpi_intel_sst/compare/v0.3.0...v0.4.0
-[0.3.0]: https://github.com/spagu/acpi_intel_sst/compare/v0.2.0...v0.3.0
-[0.2.0]: https://github.com/spagu/acpi_intel_sst/compare/v0.1.0...v0.2.0
-[0.1.0]: https://github.com/spagu/acpi_intel_sst/releases/tag/v0.1.0
+[Unreleased]: https://github.com/spagu/acpi_intel_sst/compare/v0.53.0...HEAD
+[0.53.0]: https://github.com/spagu/acpi_intel_sst/compare/v0.52.0...v0.53.0
+[0.52.0]: https://github.com/spagu/acpi_intel_sst/compare/v0.51.0...v0.52.0
+[0.51.0]: https://github.com/spagu/acpi_intel_sst/compare/v0.50.0...v0.51.0
+[0.50.0]: https://github.com/spagu/acpi_intel_sst/compare/v0.49.0...v0.50.0
+[0.49.0]: https://github.com/spagu/acpi_intel_sst/compare/v0.48.0...v0.49.0
+[0.48.0]: https://github.com/spagu/acpi_intel_sst/compare/v0.47.0...v0.48.0
+[0.47.0]: https://github.com/spagu/acpi_intel_sst/compare/v0.46.0...v0.47.0
+[0.46.0]: https://github.com/spagu/acpi_intel_sst/compare/v0.45.0...v0.46.0
+[0.45.0]: https://github.com/spagu/acpi_intel_sst/compare/v0.44.0...v0.45.0
+[0.44.0]: https://github.com/spagu/acpi_intel_sst/compare/v0.43.0...v0.44.0
+[0.43.0]: https://github.com/spagu/acpi_intel_sst/compare/v0.42.0...v0.43.0
+[0.42.0]: https://github.com/spagu/acpi_intel_sst/compare/v0.41.0...v0.42.0
+[0.41.0]: https://github.com/spagu/acpi_intel_sst/compare/v0.37.0...v0.41.0
+[0.37.0]: https://github.com/spagu/acpi_intel_sst/compare/v0.35.0...v0.37.0
+[0.35.0]: https://github.com/spagu/acpi_intel_sst/releases/tag/v0.35.0
