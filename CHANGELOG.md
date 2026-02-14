@@ -5,6 +5,38 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.54.0] - 2026-02-14
+
+### Added: High-Pass Filter (HPF) in Playback Pipeline (Issue #2)
+
+Speaker protection HPF stage inserted in the playback signal chain between PCM
+and Gain widgets. Reduces low-frequency excursion and distortion on small laptop
+speakers.
+
+### Added
+
+- **HPF widget in playback topology** - New `HPF1.0` widget (type EFFECT,
+  module SST_MOD_HPF) inserted between `pcm0p` and `PGA1.0` in the default
+  Broadwell-U playback pipeline: `PCM -> HPF -> Gain -> SSP0 DAI OUT`
+- **Precomputed 2nd-order Butterworth biquad coefficients** at 48kHz -
+  9 presets (bypass + 80/100/120/150/180/200/250/300 Hz) in Q2.30 fixed-point.
+  Mathematically verified against the standard Butterworth formula.
+- **IPC biquad command** - `sst_ipc_set_biquad()` sends Q2.30 coefficients
+  for left and right channels via `SST_IPC_STG_SET_BIQUAD` stage message.
+- **Mixer BASS control** - HPF cutoff exposed as `SOUND_MIXER_BASS` in
+  the OSS mixer. Value 0 = bypass, 1-100 maps across 80-300 Hz presets.
+  Default: 150 Hz (mixer bass = 50).
+- **Runtime HPF update** - `sst_topology_set_widget_hpf()` finds closest
+  preset and sends biquad coefficients to DSP if stream is active.
+
+### Changed
+
+- Playback pipeline route: `pcm0p -> HPF1.0 -> PGA1.0 -> ssp0` (was `pcm0p -> PGA1.0 -> ssp0`)
+- Playback pipeline now has 4 widgets (was 3)
+- Route count increased by 1 (HPF1.0 -> PGA1.0 added)
+
+---
+
 ## [0.52.0] - 2026-02-14
 
 ### MILESTONE: First Audio Output!
@@ -871,7 +903,8 @@ IRQ allocation, IPC init, firmware load (IntcSST2.bin), DMA/SSP/PCM/topology ini
 - `Fixed` for any bug fixes
 - `Security` for vulnerability fixes
 
-[Unreleased]: https://github.com/spagu/acpi_intel_sst/compare/v0.53.0...HEAD
+[Unreleased]: https://github.com/spagu/acpi_intel_sst/compare/v0.54.0...HEAD
+[0.54.0]: https://github.com/spagu/acpi_intel_sst/compare/v0.53.0...v0.54.0
 [0.53.0]: https://github.com/spagu/acpi_intel_sst/compare/v0.52.0...v0.53.0
 [0.52.0]: https://github.com/spagu/acpi_intel_sst/compare/v0.51.0...v0.52.0
 [0.51.0]: https://github.com/spagu/acpi_intel_sst/compare/v0.50.0...v0.51.0

@@ -32,7 +32,8 @@ graph TD
     A["Application (play, mpv, firefox...)"] --> B["/dev/dsp — sound(4)"]
     B --> C["acpi_intel_sst.ko"]
     C -->|"IPC (catpt)"| D["DSP Firmware (IntcSST2.bin)"]
-    D -->|"DMA"| E["SSP0 — I2S 48kHz stereo"]
+    D -->|"HPF + Gain"| D2["DSP Pipeline"]
+    D2 -->|"DMA"| E["SSP0 — I2S 48kHz stereo"]
     E --> F["RT286 / ALC3263 codec (I2C0)"]
     F --> G["Speakers / Headphones"]
 
@@ -262,7 +263,7 @@ These devices use the same Intel SST DSP and may work (untested):
 | [`sst_ssp.c`](sst_ssp.c) | I2S/SSP port configuration (2 ports) |
 | [`sst_dma.c`](sst_dma.c) | DMA controller (DesignWare DW-DMAC, 8 channels) |
 | [`sst_jack.c`](sst_jack.c) | Headphone jack detection (GPIO polling, debounce) |
-| [`sst_topology.c`](sst_topology.c) | Audio pipeline configuration (default Broadwell-U topology) |
+| [`sst_topology.c`](sst_topology.c) | Audio pipeline configuration (default Broadwell-U topology, HPF biquad) |
 | [`sst_regs.h`](sst_regs.h) | Hardware register definitions (SHIM, VDRTCTL, SSP, DMA) |
 
 ---
@@ -272,7 +273,7 @@ These devices use the same Intel SST DSP and may work (untested):
 | Issue | Details |
 |:------|:--------|
 | **Capture disabled** | Channels registered but skipped; DSP can't do simultaneous play+capture on same SSP |
-| **No volume via IPC** | Mixer widget exists but changes don't reach DSP firmware |
+| **Volume via IPC partial** | Gain widget exists; HPF (bass) control sends biquad coefficients to DSP |
 | **No suspend/resume** | Driver doesn't handle D3 transitions during sleep |
 | **Single platform tested** | Only Dell XPS 13 9343; other Broadwell-U/Haswell untested |
 

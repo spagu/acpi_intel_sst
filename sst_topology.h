@@ -81,6 +81,7 @@ enum sst_module_type {
 	SST_MOD_SRC,			/* Sample rate converter */
 	SST_MOD_EQ,			/* Equalizer */
 	SST_MOD_DRC,			/* Dynamic range compressor */
+	SST_MOD_HPF,			/* High-pass filter */
 	SST_MOD_MAX
 };
 
@@ -107,6 +108,9 @@ struct sst_widget {
 	/* Volume control (for PGA/MIXER) */
 	int32_t			volume;		/* -64dB to +20dB in 0.5dB steps */
 	bool			mute;
+
+	/* HPF control (for EFFECT/HPF) */
+	uint32_t		hpf_cutoff;	/* HPF cutoff in Hz, 0=bypass */
 
 	/* Linked list */
 	struct sst_widget	*next;
@@ -235,6 +239,8 @@ struct sst_widget *sst_topology_find_widget(struct sst_softc *sc,
 					    const char *name);
 int	sst_topology_set_widget_volume(struct sst_softc *sc,
 				       struct sst_widget *w, int32_t volume);
+int	sst_topology_set_widget_hpf(struct sst_softc *sc,
+				    struct sst_widget *w, uint32_t cutoff);
 
 /* Route management */
 int	sst_topology_connect_route(struct sst_softc *sc, struct sst_route *r);

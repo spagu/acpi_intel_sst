@@ -11,7 +11,8 @@ graph TD
     A["Application (play, mpv, firefox...)"] --> B["/dev/dsp — sound(4)"]
     B --> C["acpi_intel_sst.ko"]
     C -->|"IPC (catpt)"| D["DSP Firmware (IntcSST2.bin)"]
-    D -->|"DMA"| E["SSP0 — I2S 48kHz stereo"]
+    D -->|"HPF + Gain"| D2["DSP Pipeline"]
+    D2 -->|"DMA"| E["SSP0 — I2S 48kHz stereo"]
     E --> F["RT286 / ALC3263 codec (I2C0)"]
     F --> G["Speakers / Headphones"]
 

@@ -714,6 +714,48 @@ sst_ipc_stream_set_params(struct sst_softc *sc, struct sst_stream_params *params
 }
 
 /*
+ * Set biquad filter coefficients via STAGE_MESSAGE/SET_BIQUAD.
+ * Sends Q2.30 coefficients for both left and right channels.
+ */
+int
+sst_ipc_set_biquad(struct sst_softc *sc, uint32_t stream_id,
+		   int32_t b0, int32_t b1, int32_t b2,
+		   int32_t a1, int32_t a2)
+{
+	uint32_t header;
+	int error;
+	struct {
+		uint32_t channel;
+		int32_t  coeff_b0;
+		int32_t  coeff_b1;
+		int32_t  coeff_b2;
+		int32_t  coeff_a1;
+		int32_t  coeff_a2;
+	} __packed biquad;
+
+	header = SST_IPC_STREAM_HEADER(SST_IPC_STR_STAGE_MESSAGE, stream_id);
+	header |= (SST_IPC_STG_SET_BIQUAD << SST_IPC_STR_STAGE_SHIFT);
+
+	/* Left channel */
+	memset(&biquad, 0, sizeof(biquad));
+	biquad.channel = 0;
+	biquad.coeff_b0 = b0;
+	biquad.coeff_b1 = b1;
+	biquad.coeff_b2 = b2;
+	biquad.coeff_a1 = a1;
+	biquad.coeff_a2 = a2;
+
+	error = sst_ipc_send(sc, header, &biquad, sizeof(biquad));
+	if (error)
+		return (error);
+
+	/* Right channel */
+	biquad.channel = 1;
+
+	return sst_ipc_send(sc, header, &biquad, sizeof(biquad));
+}
+
+/*
  * Get current stream position (reads from DSP register)
  * In catpt, position is read directly from MMIO, not via IPC.
  */

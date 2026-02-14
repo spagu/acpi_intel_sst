@@ -92,10 +92,39 @@ sst_db_to_linear(int32_t volume_half_db)
 }
 
 /*
+ * Precomputed 2nd-order Butterworth HPF biquad coefficients at 48kHz.
+ * Q2.30 fixed-point (range [-2.0, +2.0), matching catpt DSP).
+ *
+ * Formula:
+ *   omega = 2*pi*fc/fs, alpha = sin(omega)/sqrt(2), a0 = 1+alpha
+ *   b0 = (1+cos(omega))/2/a0,  b1 = -(1+cos(omega))/a0,  b2 = b0
+ *   a1 = -2*cos(omega)/a0,     a2 = (1-alpha)/a0
+ */
+struct sst_hpf_biquad_entry {
+	uint32_t	freq;		/* Cutoff frequency in Hz (0=bypass) */
+	int32_t		b0, b1, b2;	/* Numerator coefficients, Q2.30 */
+	int32_t		a1, a2;		/* Denominator coefficients, Q2.30 */
+};
+
+#define SST_HPF_NUM_PRESETS	9
+
+static const struct sst_hpf_biquad_entry sst_hpf_biquad[SST_HPF_NUM_PRESETS] = {
+	{   0,  1073741824,            0,           0,            0,           0 },
+	{  80,  1065820340, -2131640679,  1065820340, -2131582238,  1057957296 },
+	{ 100,  1063849116, -2127698232,  1063849116, -2127607086,  1054047555 },
+	{ 120,  1061881538, -2123763076,  1061881538, -2123632067,  1050152262 },
+	{ 150,  1058936991, -2117873982,  1058936991, -2117669842,  1044336297 },
+	{ 180,  1056000606, -2112001212,  1056000606, -2111708058,  1038552543 },
+	{ 200,  1054047540, -2108095079,  1054047540, -2107733822,  1034714513 },
+	{ 250,  1049180653, -2098361307,  1049180653, -2097799412,  1025181377 },
+	{ 300,  1044336221, -2088672443,  1044336221, -2087866987,  1015736075 },
+};
+
+/*
  * Default topology for Dell XPS 13 9343 / Broadwell-U
  *
  * Pipeline layout:
- *   Playback: Host -> PCM -> Gain -> SSP0 DAI OUT -> Codec
+ *   Playback: Host -> PCM -> HPF -> Gain -> SSP0 DAI OUT -> Codec
  *   Capture:  Codec -> SSP1 DAI IN -> Gain -> PCM -> Host
  */
 
@@ -145,7 +174,23 @@ sst_topology_create_playback_pipe(struct sst_softc *sc)
 		pipe->widget_count++;
 	}
 
-	/* Widget 2: Gain/Volume control */
+	/* Widget 2: High-pass filter (speaker protection) */
+	if (tplg->widget_count < SST_TPLG_MAX_WIDGETS) {
+		w = &tplg->widgets[tplg->widget_count++];
+		memset(w, 0, sizeof(*w));
+		strlcpy(w->name, "HPF1.0", SST_TPLG_NAME_LEN);
+		w->type = SST_WIDGET_EFFECT;
+		w->id = tplg->widget_count - 1;
+		w->pipeline_id = pipe->id;
+		w->module_type = SST_MOD_HPF;
+		w->channels = 2;
+		w->sample_rate = 48000;
+		w->bit_depth = 16;
+		w->hpf_cutoff = 150;	/* Default 150 Hz */
+		pipe->widget_count++;
+	}
+
+	/* Widget 3: Gain/Volume control */
 	if (tplg->widget_count < SST_TPLG_MAX_WIDGETS) {
 		w = &tplg->widgets[tplg->widget_count++];
 		memset(w, 0, sizeof(*w));
@@ -162,7 +207,7 @@ sst_topology_create_playback_pipe(struct sst_softc *sc)
 		pipe->widget_count++;
 	}
 
-	/* Widget 3: SSP0 DAI output (to codec) */
+	/* Widget 4: SSP0 DAI output (to codec) */
 	if (tplg->widget_count < SST_TPLG_MAX_WIDGETS) {
 		w = &tplg->widgets[tplg->widget_count++];
 		memset(w, 0, sizeof(*w));
@@ -178,12 +223,18 @@ sst_topology_create_playback_pipe(struct sst_softc *sc)
 	}
 
 	/* Create routes for playback pipeline */
-	if (tplg->route_count + 2 <= SST_TPLG_MAX_ROUTES) {
+	if (tplg->route_count + 3 <= SST_TPLG_MAX_ROUTES) {
 		struct sst_route *r;
 
-		/* Route: pcm0p -> PGA1.0 */
+		/* Route: pcm0p -> HPF1.0 */
 		r = &tplg->routes[tplg->route_count++];
 		strlcpy(r->source, "pcm0p", SST_TPLG_NAME_LEN);
+		strlcpy(r->sink, "HPF1.0", SST_TPLG_NAME_LEN);
+		r->connected = true;
+
+		/* Route: HPF1.0 -> PGA1.0 */
+		r = &tplg->routes[tplg->route_count++];
+		strlcpy(r->source, "HPF1.0", SST_TPLG_NAME_LEN);
 		strlcpy(r->sink, "PGA1.0", SST_TPLG_NAME_LEN);
 		r->connected = true;
 
@@ -566,6 +617,43 @@ sst_topology_set_widget_volume(struct sst_softc *sc, struct sst_widget *w,
 		params.mute = w->mute;
 
 		return sst_ipc_stream_set_params(sc, &params);
+	}
+
+	return (0);
+}
+
+/*
+ * Set widget HPF cutoff frequency.
+ * Looks up cutoff in the biquad table and sends coefficients to DSP.
+ */
+int
+sst_topology_set_widget_hpf(struct sst_softc *sc, struct sst_widget *w,
+			    uint32_t cutoff)
+{
+	const struct sst_hpf_biquad_entry *entry;
+	int i, best;
+
+	if (w == NULL)
+		return (EINVAL);
+
+	if (w->module_type != SST_MOD_HPF)
+		return (EINVAL);
+
+	/* Find closest matching preset */
+	best = 0;
+	for (i = 0; i < SST_HPF_NUM_PRESETS; i++) {
+		if (sst_hpf_biquad[i].freq <= cutoff)
+			best = i;
+	}
+	entry = &sst_hpf_biquad[best];
+
+	w->hpf_cutoff = entry->freq;
+
+	/* Send biquad coefficients to DSP if stream is active */
+	if (w->stream_id != 0 && sc->fw.state == SST_FW_STATE_RUNNING) {
+		return sst_ipc_set_biquad(sc, w->stream_id,
+		    entry->b0, entry->b1, entry->b2,
+		    entry->a1, entry->a2);
 	}
 
 	return (0);

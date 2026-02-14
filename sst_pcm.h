@@ -125,6 +125,9 @@ struct sst_pcm {
 	int			vol_right;	/* Right volume (0-100) */
 	int			mute;		/* Mute state */
 
+	/* HPF control */
+	uint32_t		hpf_cutoff;	/* HPF cutoff in Hz, 0=bypass */
+
 	/* State */
 	bool			registered;	/* PCM device registered */
 };
