@@ -17,9 +17,16 @@ SRCS=   acpi_intel_sst.c sst_firmware.c sst_ipc.c sst_ssp.c sst_dma.c sst_pcm.c 
 SRCS+=  device_if.h bus_if.h acpi_if.h channel_if.h mixer_if.h
 SRCS+=  opt_acpi.h opt_snd.h
 
+# Version from VERSION file (single source of truth)
+SST_VERSION!=	cat ${.CURDIR}/VERSION
+SST_VER_MAJOR!=	echo ${SST_VERSION} | cut -d. -f1
+SST_VER_MINOR!=	echo ${SST_VERSION} | cut -d. -f2
+
 # Compiler flags
 CFLAGS+= -Werror
 CFLAGS+= -Wno-cast-qual
+CFLAGS+= -DSST_DRV_VERSION=\"${SST_VERSION}\"
+CFLAGS+= -DSST_DRV_VERSION_NUM=${SST_VER_MINOR}
 
 # Debug build (uncomment for verbose debugging)
 # CFLAGS+= -DDEBUG -g

@@ -50,7 +50,7 @@
 #define PCI_DEVICE_SST_BDW	0x9CB6
 #define PCI_DEVICE_SST_HSW	0x9C76 /* Haswell pending testing */
 
-#define SST_DRV_VERSION "0.53.0"
+/* SST_DRV_VERSION and SST_DRV_VERSION_NUM provided by Makefile from VERSION file */
 
 /* Forward declarations */
 static int sst_acpi_probe(device_t dev);
@@ -3374,5 +3374,5 @@ DRIVER_MODULE(sst_pci, pci, sst_pci_driver, 0, 0);
 MODULE_DEPEND(acpi_intel_sst, acpi, 1, 1, 1);
 MODULE_DEPEND(acpi_intel_sst, pci, 1, 1, 1);
 MODULE_DEPEND(acpi_intel_sst, firmware, 1, 1, 1);
-MODULE_VERSION(acpi_intel_sst, 53);
+MODULE_VERSION(acpi_intel_sst, SST_DRV_VERSION_NUM);
 
