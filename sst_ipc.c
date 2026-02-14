@@ -683,6 +683,7 @@ int
 sst_ipc_stream_set_params(struct sst_softc *sc, struct sst_stream_params *params)
 {
 	uint32_t header;
+	int error;
 	struct {
 		uint32_t channel;
 		uint32_t target_volume;
@@ -690,16 +691,24 @@ sst_ipc_stream_set_params(struct sst_softc *sc, struct sst_stream_params *params
 		uint32_t curve_type;
 	} __packed vol;
 
-	/* Set volume for left channel */
+	/* Set volume for left channel (Q1.31 passed directly) */
 	header = SST_IPC_STREAM_HEADER(SST_IPC_STR_STAGE_MESSAGE,
 	    params->stream_id);
 	header |= (SST_IPC_STG_SET_VOLUME << SST_IPC_STR_STAGE_SHIFT);
 
 	memset(&vol, 0, sizeof(vol));
 	vol.channel = 0; /* left */
-	vol.target_volume = params->volume_left * 0x7FFFFFFFU / 100;
+	vol.target_volume = params->volume_left;
 	vol.curve_duration = 0;
 	vol.curve_type = 0;
+
+	error = sst_ipc_send(sc, header, &vol, sizeof(vol));
+	if (error)
+		return (error);
+
+	/* Set volume for right channel */
+	vol.channel = 1; /* right */
+	vol.target_volume = params->volume_right;
 
 	return sst_ipc_send(sc, header, &vol, sizeof(vol));
 }

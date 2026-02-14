@@ -300,8 +300,8 @@ struct sst_device_format {
  */
 struct sst_stream_params {
 	uint32_t	stream_id;	/* Stream ID */
-	uint32_t	volume_left;	/* Left channel volume (0-100) */
-	uint32_t	volume_right;	/* Right channel volume (0-100) */
+	uint32_t	volume_left;	/* Q1.31 linear gain (0=silence, 0x7FFFFFFF=0dBFS) */
+	uint32_t	volume_right;	/* Q1.31 linear gain (0=silence, 0x7FFFFFFF=0dBFS) */
 	uint32_t	mute;		/* Mute flag */
 	uint32_t	reserved[4];
 } __packed;
