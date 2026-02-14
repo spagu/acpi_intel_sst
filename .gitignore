@@ -46,6 +46,7 @@ dmesg.txt
 # Core dumps
 *.core
 core
+node.core
 
 # Firmware files (may be added locally for testing)
 *.fw
@@ -63,3 +64,8 @@ tests/*.out
 # ACPI compiled tables (keep source .dsl files)
 acpi/*.aml
 acpi/*.hex
+
+# Debug dumps and scratch files
+check.txt
+dump.txt
+*.mp3

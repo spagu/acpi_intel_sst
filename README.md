@@ -1,7 +1,7 @@
 # Intel SST Audio Driver for FreeBSD
 
 [![FreeBSD](https://img.shields.io/badge/FreeBSD-15--CURRENT-red?logo=freebsd&logoColor=white)](https://www.freebsd.org/)
-[![License](https://img.shields.io/badge/License-BSD--2--Clause-blue.svg)](LICENSE)
+[![License](https://img.shields.io/badge/License-BSD--3--Clause-blue.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/Platform-Intel%20Broadwell--U-0071C5?logo=intel&logoColor=white)](https://ark.intel.com/)
 
 > **FreeBSD kernel module for Intel Smart Sound Technology (SST) DSP audio**
@@ -303,7 +303,7 @@ If you have one of these running FreeBSD, please test and report results.
 
 ## License
 
-BSD-2-Clause. See [LICENSE](LICENSE) for details.
+BSD-3-Clause. See [LICENSE](LICENSE) for details.
 
 ---
 

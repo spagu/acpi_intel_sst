@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause
+ * SPDX-License-Identifier: BSD-3-Clause
  *
  * Intel Smart Sound Technology (SST) ACPI Driver for FreeBSD
  * Target: Intel Broadwell-U (INT3438)

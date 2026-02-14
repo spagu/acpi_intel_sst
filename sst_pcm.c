@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause
+ * SPDX-License-Identifier: BSD-3-Clause
  *
  * Intel SST PCM Driver - sound(4) Integration
  * Target: Intel Haswell/Broadwell-U

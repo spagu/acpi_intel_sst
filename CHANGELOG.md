@@ -829,7 +829,7 @@ IRQ allocation, IPC init, firmware load (IntcSST2.bin), DMA/SSP/PCM/topology ini
 - Comprehensive test script (`tests/test_module.sh`)
 - Professional documentation with badges and UTF-8 icons
 - CONTRIBUTING.md guidelines
-- LICENSE file (BSD-2-Clause)
+- LICENSE file (BSD-3-Clause)
 
 ### Changed
 - Improved error handling with goto-based cleanup pattern

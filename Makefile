@@ -1,6 +1,6 @@
 # Makefile for acpi_intel_sst kernel module
 #
-# SPDX-License-Identifier: BSD-2-Clause
+# SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2026 FreeBSD Foundation
 #
 # Usage:

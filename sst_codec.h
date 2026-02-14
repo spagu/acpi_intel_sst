@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause
+ * SPDX-License-Identifier: BSD-3-Clause
  *
  * RT286 (ALC3263) Codec Driver over I2C
  * Target: Intel Broadwell-U with Realtek RT286 on I2C0

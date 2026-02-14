@@ -111,7 +111,7 @@ All source files should include:
 
 ```c
 /*-
- * SPDX-License-Identifier: BSD-2-Clause
+ * SPDX-License-Identifier: BSD-3-Clause
  *
  * Copyright (c) YEAR Your Name
  * All rights reserved.
