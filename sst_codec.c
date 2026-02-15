@@ -771,6 +771,86 @@ sst_codec_enable_headphone(struct sst_softc *sc)
 }
 
 /* ================================================================
+ * Microphone Input Enable
+ *
+ * Routes: MIC Pin (0x18) → ADC0 (0x08) → DSP capture pipeline
+ * ================================================================ */
+
+int
+sst_codec_enable_microphone(struct sst_softc *sc)
+{
+	struct sst_codec *codec = &sc->codec;
+
+	if (!codec->initialized) {
+		device_printf(sc->dev, "codec: not initialized\n");
+		return (ENXIO);
+	}
+
+	if (codec->mic_active)
+		return (0);
+
+	sst_dbg(sc, SST_DBG_OPS, "codec: enabling microphone input...\n");
+
+	/* Power up ADC0 and MIC pin → D0 */
+	sst_codec_write(sc,
+	    RT286_SET_POWER(RT286_NID_ADC0), RT286_PWR_D0);
+	sst_codec_write(sc,
+	    RT286_SET_POWER(RT286_NID_MIC), RT286_PWR_D0);
+	DELAY(20000);	/* 20ms for widget power */
+
+	/* Set ADC0 stream format: 48kHz / 16-bit / 2ch */
+	sst_codec_write(sc,
+	    RT286_SET_FORMAT(RT286_NID_ADC0), RT286_FMT_48K_16B_2CH);
+
+	/* MIC pin: input enable + VRef 80% bias */
+	sst_codec_write(sc,
+	    RT286_SET_PIN_CTRL(RT286_NID_MIC),
+	    RT286_PIN_IN | RT286_PIN_VREF_80);
+
+	/* Select MIC input on ADC0 mux (connection index 0) */
+	sst_codec_write(sc, RT286_SET_CONNECT(RT286_NID_ADC0), 0x00);
+
+	/* Unmute ADC0 output amplifier: left and right, gain 0dB */
+	sst_codec_write(sc, RT286_SET_AMP_OUT_L(RT286_NID_ADC0), 0x00);
+	sst_codec_write(sc, RT286_SET_AMP_OUT_R(RT286_NID_ADC0), 0x00);
+
+	codec->mic_active = true;
+	sst_dbg(sc, SST_DBG_OPS, "codec: microphone input enabled\n");
+
+	return (0);
+}
+
+int
+sst_codec_disable_microphone(struct sst_softc *sc)
+{
+	struct sst_codec *codec = &sc->codec;
+
+	if (!codec->initialized || !codec->mic_active)
+		return (0);
+
+	sst_dbg(sc, SST_DBG_OPS, "codec: disabling microphone input...\n");
+
+	/* Mute ADC0 output amplifier */
+	sst_codec_write(sc,
+	    RT286_SET_AMP_OUT_LR(RT286_NID_ADC0), 0x80);
+
+	/* Disable MIC pin */
+	sst_codec_write(sc,
+	    RT286_SET_PIN_CTRL(RT286_NID_MIC), 0x00);
+
+	/* Power down ADC0 and MIC pin → D3 */
+	sst_codec_write(sc,
+	    RT286_SET_POWER(RT286_NID_ADC0), RT286_PWR_D3);
+	sst_codec_write(sc,
+	    RT286_SET_POWER(RT286_NID_MIC), RT286_PWR_D3);
+
+	codec->mic_active = false;
+	sst_dbg(sc, SST_DBG_OPS, "codec: microphone input disabled\n");
+
+	return (0);
+}
+
+/* ================================================================
  * PLL Re-arm (for trigger-time codec refresh)
  *
  * Called during playback trigger after DSP resumes and SSP is
@@ -800,6 +880,11 @@ sst_codec_pll_rearm(struct sst_softc *sc)
 	    RT286_SET_FORMAT(RT286_NID_DAC0), RT286_FMT_48K_16B_2CH);
 	sst_codec_write(sc,
 	    RT286_SET_FORMAT(RT286_NID_DAC1), RT286_FMT_48K_16B_2CH);
+
+	/* Re-set ADC0 format if microphone is active */
+	if (codec->mic_active)
+		sst_codec_write(sc,
+		    RT286_SET_FORMAT(RT286_NID_ADC0), RT286_FMT_48K_16B_2CH);
 
 	DELAY(50000);	/* 50ms for PLL to lock to BCLK */
 	return (0);
@@ -853,6 +938,15 @@ sst_codec_fini(struct sst_softc *sc)
 		sst_codec_write(sc,
 		    RT286_SET_POWER(RT286_NID_HP), RT286_PWR_D3);
 		codec->hp_active = false;
+	}
+
+	/* Tear down microphone path if active */
+	if (codec->mic_active) {
+		sst_codec_write(sc,
+		    RT286_SET_AMP_OUT_LR(RT286_NID_ADC0), 0x80);
+		sst_codec_write(sc,
+		    RT286_SET_PIN_CTRL(RT286_NID_MIC), 0x00);
+		codec->mic_active = false;
 	}
 
 	/* Power down remaining widgets */

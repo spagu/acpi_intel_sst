@@ -16,8 +16,8 @@
 [![Codec](https://img.shields.io/badge/Codec-RT286%2FALC3263-00A98F?style=for-the-badge)](https://www.realtek.com/)
 [![DSP](https://img.shields.io/badge/DSP-catpt_IPC-8E24AA?style=for-the-badge)](https://github.com/torvalds/linux/tree/master/sound/soc/intel/catpt)
 
-*Native analog audio on Dell XPS 13 9343 and other Broadwell-U platforms*
-*with Realtek RT286/ALC3263 codec over I2S/SSP*
+*Native analog audio (playback + capture) on Dell XPS 13 9343 and other*
+*Broadwell-U platforms with Realtek RT286/ALC3263 codec over I2S/SSP*
 
 </div>
 
@@ -25,7 +25,7 @@
 
 ## Overview
 
-On Intel Broadwell-U laptops like the Dell XPS 13 9343, analog audio (speakers and headphones) is routed through the Intel SST DSP, not standard HDA. FreeBSD's built-in `hdac` driver only handles HDMI/DP audio on these machines. This kernel module provides the missing piece - a complete DSP firmware loader, IPC framework, and codec driver that brings analog audio to life.
+On Intel Broadwell-U laptops like the Dell XPS 13 9343, analog audio (speakers, headphones, and microphone) is routed through the Intel SST DSP, not standard HDA. FreeBSD's built-in `hdac` driver only handles HDMI/DP audio on these machines. This kernel module provides the missing piece - a complete DSP firmware loader, IPC framework, and codec driver that brings analog audio playback and capture to life.
 
 ```mermaid
 graph TD
@@ -36,6 +36,11 @@ graph TD
     D2 -->|"DMA"| E["SSP0 — I2S 48kHz stereo"]
     E --> F["RT286 / ALC3263 codec (I2C0)"]
     F --> G["Speakers / Headphones"]
+    H["Microphone"] --> F
+    F -->|"ADC"| E
+    E -->|"DMA"| D3["DSP Capture Pipeline"]
+    D3 -->|"IPC (catpt)"| C
+    C --> I["/dev/dsp0.1 — sound(4)"]
 
     style C fill:#AB2B28,color:#fff
     style D fill:#0071C5,color:#fff
@@ -61,6 +66,10 @@ sudo cp lib/firmware/intel/IntcSST2.bin /boot/firmware/intel/
 # Load and play
 sudo kldload ./acpi_intel_sst.ko
 mixer vol 80 && play -n synth 3 sine 440
+
+# Record 5 seconds from microphone
+cat /dev/dsp0.1 > /tmp/test.raw &
+sleep 5 && kill %1
 ```
 
 > **Note:** Dell XPS 13 9343 requires a [DSDT patch](#3-dsdt-patch-dell-xps-13-9343) and
@@ -85,6 +94,7 @@ mixer vol 80 && play -n synth 3 sine 440
 | PCM sound(4) | :white_check_mark: |
 | Jack detection | :white_check_mark: |
 | **Audio playback** | **:white_check_mark:** |
+| **Audio capture** | **:white_check_mark:** |
 
 </td><td>
 
@@ -103,12 +113,12 @@ mixer vol 80 && play -n synth 3 sine 440
 | Debug verbosity sysctl (0-3) | :white_check_mark: |
 | DSP peak meter telemetry | :white_check_mark: |
 | Clipping detection | :white_check_mark: |
-| Audio capture | :construction: |
+| Capture mixer (mic volume) | :white_check_mark: |
 
 </td></tr>
 </table>
 
-> :white_check_mark: = Working&emsp; :construction: = Not yet implemented
+> :white_check_mark: = Working
 
 ---
 
@@ -222,6 +232,11 @@ sudo shutdown -p now
 cat /dev/sndstat
 mixer vol 80
 play -n synth 3 sine 440  # requires audio/sox
+
+# Test capture (microphone):
+mixer mic 80
+cat /dev/dsp0.1 > /tmp/test.raw &
+sleep 5 && kill %1
 ```
 
 ---
@@ -350,7 +365,7 @@ sysctl dev.acpi_intel_sst.0.jack.enabled=0    # disable jack polling
 | **Tested Device** | Dell XPS 13 9343 (2015) |
 | **DSP** | Intel SST (PCI 8086:9CB6 / ACPI INT3438) |
 | **Codec** | Realtek RT286 / ALC3263 on I2C0, address 0x1C |
-| **Transport** | I2S via SSP0 (playback) / SSP1 (capture, future) |
+| **Transport** | I2S via SSP0 (full-duplex: playback + capture, ref-counted) |
 | **PCH** | Intel Wildcat Point-LP (WPT) |
 
 ### Supported IDs
@@ -383,14 +398,17 @@ These devices use the same Intel SST DSP and may work (untested):
 | File | Purpose |
 |:-----|:--------|
 | [`acpi_intel_sst.c`](acpi_intel_sst.c) | Main driver: ACPI/PCI probe, attach, power, ISR |
+| [`sst_power.c`](sst_power.c) | DSP power management (D0/D3, VDRTCTL, clock gating) |
+| [`sst_pch.c`](sst_pch.c) | PCH/Wildcat Point configuration (IOBP sideband, ADSP enable) |
+| [`sst_sram.c`](sst_sram.c) | SRAM power gating (IRAM/DRAM bank control) |
 | [`sst_firmware.c`](sst_firmware.c) | Firmware load, parse ($SST format), DSP boot |
 | [`sst_ipc.c`](sst_ipc.c) | Host-DSP IPC messaging (catpt protocol) |
-| [`sst_codec.c`](sst_codec.c) | RT286 codec control over I2C (DesignWare I2C0 at 0xFE103000) |
-| [`sst_pcm.c`](sst_pcm.c) | sound(4) PCM integration, DMA page tables, DSP stream alloc |
-| [`sst_ssp.c`](sst_ssp.c) | I2S/SSP port configuration (2 ports) |
+| [`sst_codec.c`](sst_codec.c) | RT286 codec control over I2C (speaker, headphone, microphone) |
+| [`sst_pcm.c`](sst_pcm.c) | sound(4) PCM integration, playback + capture, mixer |
+| [`sst_ssp.c`](sst_ssp.c) | I2S/SSP port configuration (ref-counted for full-duplex) |
 | [`sst_dma.c`](sst_dma.c) | DMA controller (DesignWare DW-DMAC, 8 channels) |
-| [`sst_jack.c`](sst_jack.c) | Headphone jack detection (GPIO polling, debounce) |
-| [`sst_topology.c`](sst_topology.c) | Audio pipeline configuration (dynamic topology with EQ presets, limiter) |
+| [`sst_jack.c`](sst_jack.c) | Headphone/microphone jack detection (GPIO polling, debounce) |
+| [`sst_topology.c`](sst_topology.c) | Audio pipeline configuration (playback + capture pipelines) |
 | [`sst_regs.h`](sst_regs.h) | Hardware register definitions (SHIM, VDRTCTL, SSP, DMA) |
 
 ---
@@ -399,7 +417,6 @@ These devices use the same Intel SST DSP and may work (untested):
 
 | Issue | Details |
 |:------|:--------|
-| **Capture disabled** | Channels registered but skipped; DSP can't do simultaneous play+capture on same SSP |
 | **Single platform tested** | Only Dell XPS 13 9343; other Broadwell-U/Haswell untested |
 
 ---

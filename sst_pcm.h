@@ -130,6 +130,11 @@ struct sst_pcm {
 	int			vol_right;	/* Right volume (0-100) */
 	int			mute;		/* Mute state */
 
+	/* Capture mixer */
+	int			cap_vol_left;	/* Capture volume left (0-100) */
+	int			cap_vol_right;	/* Capture volume right (0-100) */
+	int			mic_mute;	/* Capture mute state */
+
 	/* EQ preset control */
 	enum sst_eq_preset_id	eq_preset;	/* Active EQ preset */
 

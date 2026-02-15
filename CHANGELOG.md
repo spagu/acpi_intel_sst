@@ -5,6 +5,56 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.61.0] - 2026-02-15
+
+### Added: Audio Capture (Recording/Microphone) Support
+
+Full audio capture via the RT286 codec microphone path. Both playback and
+capture now share SSP0 in full-duplex mode with reference counting to prevent
+one direction from disabling the port while the other is active.
+
+### Added
+
+- **Microphone capture** (`sst_pcm.c`) - Removed capture stub; capture now
+  allocates DSP streams, enables the codec mic path, and sets initial volume
+  via IPC `SET_VOLUME`. Capture stop disables the microphone path.
+- **Codec microphone API** (`sst_codec.c`) - `sst_codec_enable_microphone()`
+  powers up ADC0 (NID 0x08) + MIC pin (NID 0x18) to D0, sets 48kHz/16-bit/2ch
+  format, configures `RT286_PIN_IN | RT286_PIN_VREF_80`, selects MIC input on
+  ADC0 mux, and unmutes ADC0 L+R amplifiers. `sst_codec_disable_microphone()`
+  reverses the path (mute, disable pin, power down to D3).
+- **SSP reference counting** (`sst_ssp.c`) - `ref_count` field in
+  `struct sst_ssp_port` prevents premature SSP disable when both playback and
+  capture are active on SSP0.
+- **Capture mixer control** (`sst_pcm.c`) - `SOUND_MIXER_MIC` exposed via OSS
+  mixer with `mix_setrecdevs()`. Adjusting mic volume applies IPC `SET_VOLUME`
+  to all active capture streams.
+- **Capture volume fields** (`sst_pcm.h`) - `cap_vol_left`, `cap_vol_right`,
+  and `mic_mute` in `struct sst_pcm`, initialized to 100/100/0.
+- **Capture suspend/resume** (`sst_pcm.c`) - Proper teardown on suspend
+  (stop polling, free DSP stream, disable microphone) matching playback path.
+- **Capture stall recovery** (`sst_pcm.c`) - Direction-aware volume restore
+  after DSP stream re-allocation: playback restores biquad/limiter/volume,
+  capture restores capture volume.
+- **Capture telemetry** (`sst_pcm.c`) - Peak meter reading extended to cover
+  capture channels for level monitoring.
+
+### Changed
+
+- **SSP port assignment** (`sst_pcm.c`, `sst_topology.c`) - Both playback and
+  capture use `ssp_port = 0` (was `1` for capture). On Broadwell-U the RT286
+  connects to SSP0 only via full-duplex I2S.
+- **Topology capture widget** (`sst_topology.c`) - Renamed `ssp1-in` to
+  `ssp0-in` with updated route source to match SSP0.
+- **Codec PLL rearm** (`sst_codec.c`) - Re-sets ADC0 format when mic is active,
+  alongside existing DAC format writes.
+- **Codec fini** (`sst_codec.c`) - Tears down mic path (mute ADC0, disable MIC
+  pin) before existing ADC power-down.
+- **README.md** - Updated overview, architecture diagram, status table, quick
+  start examples, hardware table, and source file listing for capture support.
+
+---
+
 ## [0.60.0] - 2026-02-15
 
 ### Added: Debug Verbosity & DSP Telemetry (Issue #9)
@@ -1116,7 +1166,8 @@ IRQ allocation, IPC init, firmware load (IntcSST2.bin), DMA/SSP/PCM/topology ini
 - `Fixed` for any bug fixes
 - `Security` for vulnerability fixes
 
-[Unreleased]: https://github.com/spagu/acpi_intel_sst/compare/v0.60.0...HEAD
+[Unreleased]: https://github.com/spagu/acpi_intel_sst/compare/v0.61.0...HEAD
+[0.61.0]: https://github.com/spagu/acpi_intel_sst/compare/v0.60.0...v0.61.0
 [0.60.0]: https://github.com/spagu/acpi_intel_sst/compare/v0.59.0...v0.60.0
 [0.59.0]: https://github.com/spagu/acpi_intel_sst/compare/v0.58.0...v0.59.0
 [0.58.0]: https://github.com/spagu/acpi_intel_sst/compare/v0.57.0...v0.58.0

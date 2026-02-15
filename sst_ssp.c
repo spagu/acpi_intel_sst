@@ -178,6 +178,7 @@ sst_ssp_init(struct sst_softc *sc)
 		sc->ssp.port[i].base = (i == 0) ? SST_SSP0_OFFSET :
 						  SST_SSP1_OFFSET;
 		sc->ssp.port[i].state = SST_SSP_STATE_IDLE;
+		sc->ssp.port[i].ref_count = 0;
 		sc->ssp.port[i].tx_count = 0;
 		sc->ssp.port[i].rx_count = 0;
 		sc->ssp.port[i].errors = 0;
@@ -266,6 +267,9 @@ sst_ssp_start(struct sst_softc *sc, int port)
 	if (port < 0 || port >= SST_SSP_PORTS)
 		return (EINVAL);
 
+	/* Increment reference count for shared port usage */
+	sc->ssp.port[port].ref_count++;
+
 	if (sc->ssp.port[port].state == SST_SSP_STATE_RUNNING)
 		return (0);
 
@@ -294,7 +298,8 @@ sst_ssp_start(struct sst_softc *sc, int port)
 
 	sc->ssp.port[port].state = SST_SSP_STATE_RUNNING;
 
-	sst_dbg(sc, SST_DBG_OPS, "SSP%d: Started\n", port);
+	sst_dbg(sc, SST_DBG_OPS, "SSP%d: Started (ref_count=%d)\n",
+	    port, sc->ssp.port[port].ref_count);
 
 	return (0);
 }
@@ -313,6 +318,17 @@ sst_ssp_stop(struct sst_softc *sc, int port)
 	if (sc->ssp.port[port].state != SST_SSP_STATE_RUNNING &&
 	    sc->ssp.port[port].state != SST_SSP_STATE_PAUSED)
 		return (0);
+
+	/* Decrement reference count; only stop when no users remain */
+	if (sc->ssp.port[port].ref_count > 0)
+		sc->ssp.port[port].ref_count--;
+
+	if (sc->ssp.port[port].ref_count > 0) {
+		sst_dbg(sc, SST_DBG_OPS,
+		    "SSP%d: Stop deferred (ref_count=%d)\n",
+		    port, sc->ssp.port[port].ref_count);
+		return (0);
+	}
 
 	/* Disable SSP */
 	ssp_update_bits(sc, port, SSP_SSCR0, SSCR0_SSE, 0);

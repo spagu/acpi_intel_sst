@@ -210,6 +210,7 @@ struct sst_ssp_port {
 	uint32_t		id;		/* Port ID (0 or 1) */
 	bus_addr_t		base;		/* Base address offset */
 	enum sst_ssp_state	state;		/* Port state */
+	int			ref_count;	/* Active stream count */
 	struct sst_ssp_config	config;		/* Current configuration */
 
 	/* Statistics */

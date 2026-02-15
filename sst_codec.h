@@ -181,6 +181,7 @@ struct sst_codec {
 	bool			initialized;	/* Codec init complete */
 	bool			speaker_active;	/* Speaker output enabled */
 	bool			hp_active;	/* Headphone output enabled */
+	bool			mic_active;	/* Microphone input enabled */
 	uint32_t		vendor_id;	/* Detected vendor ID */
 };
 
@@ -194,6 +195,8 @@ int	sst_codec_init(struct sst_softc *sc);
 void	sst_codec_fini(struct sst_softc *sc);
 int	sst_codec_enable_speaker(struct sst_softc *sc);
 int	sst_codec_enable_headphone(struct sst_softc *sc);
+int	sst_codec_enable_microphone(struct sst_softc *sc);
+int	sst_codec_disable_microphone(struct sst_softc *sc);
 int	sst_codec_pll_rearm(struct sst_softc *sc);
 
 #endif /* _SST_CODEC_H_ */

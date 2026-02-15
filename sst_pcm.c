@@ -421,8 +421,8 @@ sst_chan_init(kobj_t obj, void *devinfo, struct snd_dbuf *b,
 
 	sst_dbg(sc, SST_DBG_LIFE, "PCM: chan slot %d allocated\n", ch->index);
 
-	/* SSP port: 0 for playback, 1 for capture */
-	ch->ssp_port = (dir == PCMDIR_PLAY) ? 0 : 1;
+	/* SSP port: SSP0 for both playback and capture (Broadwell-U) */
+	ch->ssp_port = 0;
 	ch->dir = dir;
 	ch->state = SST_PCM_STATE_INIT;
 	ch->ptr = 0;
@@ -838,8 +838,8 @@ sst_pcm_poll(void *arg)
 			sst_ssp_start(sc, ch->ssp_port);
 			sst_codec_pll_rearm(sc);
 
-			/* Restore current volume */
-			{
+			/* Restore volume and effects */
+			if (ch->dir == PCMDIR_PLAY) {
 				struct sst_stream_params vsp;
 				memset(&vsp, 0, sizeof(vsp));
 				vsp.stream_id = ch->stream_id;
@@ -848,28 +848,43 @@ sst_pcm_poll(void *arg)
 				vsp.volume_right =
 				    sst_percent_to_q131(sc->pcm.vol_right);
 				sst_ipc_stream_set_params(sc, &vsp);
-			}
 
-			/* Restore biquad (HPF or PEQ) */
-			{
-				struct sst_widget *hpf_w;
-				hpf_w = sst_topology_find_widget(sc, "HPF1.0");
-				if (hpf_w != NULL) {
-					hpf_w->stream_id = ch->stream_id;
-					sst_topology_apply_biquad(sc);
+				/* Restore biquad (HPF or PEQ) */
+				{
+					struct sst_widget *hpf_w;
+					hpf_w = sst_topology_find_widget(sc,
+					    "HPF1.0");
+					if (hpf_w != NULL) {
+						hpf_w->stream_id =
+						    ch->stream_id;
+						sst_topology_apply_biquad(sc);
+					}
 				}
-			}
 
-			/* Restore limiter with release override */
-			{
-				struct sst_widget *lim_w;
-				lim_w = sst_topology_find_widget(sc,
-				    "LIMITER1.0");
-				if (lim_w != NULL &&
-				    sc->pcm.limiter_threshold > 0) {
-					lim_w->stream_id = ch->stream_id;
-					sst_topology_apply_limiter(sc);
+				/* Restore limiter */
+				{
+					struct sst_widget *lim_w;
+					lim_w = sst_topology_find_widget(sc,
+					    "LIMITER1.0");
+					if (lim_w != NULL &&
+					    sc->pcm.limiter_threshold > 0) {
+						lim_w->stream_id =
+						    ch->stream_id;
+						sst_topology_apply_limiter(sc);
+					}
 				}
+			} else {
+				struct sst_stream_params vsp;
+				memset(&vsp, 0, sizeof(vsp));
+				vsp.stream_id = ch->stream_id;
+				vsp.volume_left =
+				    sst_percent_to_q131(
+				    sc->pcm.cap_vol_left);
+				vsp.volume_right =
+				    sst_percent_to_q131(
+				    sc->pcm.cap_vol_right);
+				vsp.mute = sc->pcm.mic_mute;
+				sst_ipc_stream_set_params(sc, &vsp);
 			}
 
 			sst_dbg(sc, SST_DBG_LIFE,
@@ -887,9 +902,8 @@ sst_pcm_poll(void *arg)
 	/*
 	 * Telemetry: read peak meters from DSP DRAM.
 	 * The DSP writes Q1.31 peak levels to these registers.
-	 * Only for playback — capture peak meters are less useful.
 	 */
-	if (ch->dir == PCMDIR_PLAY && ch->peak_meter_regaddr[0] != 0) {
+	if (ch->peak_meter_regaddr[0] != 0) {
 		uint32_t pl, pr;
 
 		pl = bus_read_4(sc->mem_res, ch->peak_meter_regaddr[0]);
@@ -1000,8 +1014,17 @@ sst_pcm_suspend(struct sst_softc *sc)
 			sst_pcm_free_dsp_stream(sc, ch);
 		ch->state = SST_PCM_STATE_INIT;
 	}
-	for (i = 0; i < SST_PCM_MAX_REC; i++)
-		sc->pcm.rec[i].state = SST_PCM_STATE_INIT;
+	for (i = 0; i < SST_PCM_MAX_REC; i++) {
+		struct sst_pcm_channel *ch = &sc->pcm.rec[i];
+		if (ch->state == SST_PCM_STATE_RUNNING)
+			callout_stop(&ch->poll_timer);
+		if (ch->stream_allocated)
+			sst_pcm_free_dsp_stream(sc, ch);
+		ch->state = SST_PCM_STATE_INIT;
+	}
+
+	/* Disable codec microphone if active */
+	sst_codec_disable_microphone(sc);
 
 	/* Stop ramp if in progress */
 	callout_stop(&sc->pcm.ramp_callout);
@@ -1060,16 +1083,6 @@ sst_chan_trigger(kobj_t obj, void *data, int go)
 	case PCMTRIG_START:
 		if (ch->state == SST_PCM_STATE_RUNNING)
 			return (0);
-
-		/*
-		 * Skip capture stream allocation for now.
-		 * The DSP firmware doesn't support simultaneous
-		 * playback and capture on the same SSP port.
-		 */
-		if (ch->dir == PCMDIR_REC) {
-			ch->state = SST_PCM_STATE_RUNNING;
-			return (0);
-		}
 
 		/* DSP firmware must be running */
 		if (sc->fw.state != SST_FW_STATE_RUNNING) {
@@ -1137,18 +1150,20 @@ sst_chan_trigger(kobj_t obj, void *data, int go)
 		sst_codec_pll_rearm(sc);
 
 		/*
-		 * Step 7: Apply current mixer state to stream.
-		 *
-		 * After resume, start at silence and ramp up to
-		 * avoid pop noise.  Also restores HPF and limiter
-		 * widget parameters to the newly allocated stream.
+		 * Step 7: Direction-specific setup.
 		 */
-		{
+		if (ch->dir == PCMDIR_PLAY) {
+			/*
+			 * Playback: apply mixer state to stream.
+			 *
+			 * After resume, start at silence and ramp up to
+			 * avoid pop noise.  Also restores HPF and limiter
+			 * widget parameters to the newly allocated stream.
+			 */
 			struct sst_stream_params sp;
 			uint32_t vol_l, vol_r;
 
 			if (sc->pcm.resume_ramp) {
-				/* Start with silence, ramp up over ~50ms */
 				vol_l = 0;
 				vol_r = 0;
 				sc->pcm.ramp_step = 0;
@@ -1165,28 +1180,48 @@ sst_chan_trigger(kobj_t obj, void *data, int go)
 			sp.volume_right = vol_r;
 			sp.mute = sc->pcm.mute;
 			sst_ipc_stream_set_params(sc, &sp);
-		}
 
-		/* Apply biquad (HPF or PEQ) to stream if widget exists */
-		{
-			struct sst_widget *hpf_w;
+			/* Apply biquad (HPF or PEQ) to stream */
+			{
+				struct sst_widget *hpf_w;
 
-			hpf_w = sst_topology_find_widget(sc, "HPF1.0");
-			if (hpf_w != NULL) {
-				hpf_w->stream_id = ch->stream_id;
-				sst_topology_apply_biquad(sc);
+				hpf_w = sst_topology_find_widget(sc,
+				    "HPF1.0");
+				if (hpf_w != NULL) {
+					hpf_w->stream_id = ch->stream_id;
+					sst_topology_apply_biquad(sc);
+				}
 			}
-		}
 
-		/* Apply limiter (with release override) to stream */
-		{
-			struct sst_widget *lim_w;
+			/* Apply limiter (with release override) */
+			{
+				struct sst_widget *lim_w;
 
-			lim_w = sst_topology_find_widget(sc, "LIMITER1.0");
-			if (lim_w != NULL && sc->pcm.limiter_threshold > 0) {
-				lim_w->stream_id = ch->stream_id;
-				sst_topology_apply_limiter(sc);
+				lim_w = sst_topology_find_widget(sc,
+				    "LIMITER1.0");
+				if (lim_w != NULL &&
+				    sc->pcm.limiter_threshold > 0) {
+					lim_w->stream_id = ch->stream_id;
+					sst_topology_apply_limiter(sc);
+				}
 			}
+		} else {
+			/*
+			 * Capture: enable codec microphone path
+			 * and set initial capture gain.
+			 */
+			struct sst_stream_params sp;
+
+			sst_codec_enable_microphone(sc);
+
+			memset(&sp, 0, sizeof(sp));
+			sp.stream_id = ch->stream_id;
+			sp.volume_left =
+			    sst_percent_to_q131(sc->pcm.cap_vol_left);
+			sp.volume_right =
+			    sst_percent_to_q131(sc->pcm.cap_vol_right);
+			sp.mute = sc->pcm.mic_mute;
+			sst_ipc_stream_set_params(sc, &sp);
 		}
 
 		/* Initialize position tracking */
@@ -1227,6 +1262,10 @@ sst_chan_trigger(kobj_t obj, void *data, int go)
 		/* Free DSP stream */
 		if (ch->stream_allocated)
 			sst_pcm_free_dsp_stream(sc, ch);
+
+		/* Disable codec microphone path for capture */
+		if (ch->dir == PCMDIR_REC)
+			sst_codec_disable_microphone(sc);
 
 		ch->state = SST_PCM_STATE_PREPARED;
 
@@ -1356,17 +1395,23 @@ sst_mixer_init(struct snd_mixer *m)
 	uint32_t devs;
 
 	/* Register mixer controls based on DSP capabilities */
-	devs = SOUND_MASK_PCM | SOUND_MASK_VOLUME;
+	devs = SOUND_MASK_PCM | SOUND_MASK_VOLUME | SOUND_MASK_MIC;
 	if (sc->fw.has_biquad)
 		devs |= SOUND_MASK_BASS;
 	if (sc->fw.has_limiter)
 		devs |= SOUND_MASK_TREBLE;
 	mix_setdevs(m, devs);
+	mix_setrecdevs(m, SOUND_MASK_MIC);
 
 	/* Set initial volumes */
 	sc->pcm.vol_left = 100;
 	sc->pcm.vol_right = 100;
 	sc->pcm.mute = 0;
+
+	/* Set initial capture volumes */
+	sc->pcm.cap_vol_left = 100;
+	sc->pcm.cap_vol_right = 100;
+	sc->pcm.mic_mute = 0;
 
 	/* Default EQ: stock speaker (HPF 150Hz) */
 	sc->pcm.eq_preset = SST_EQ_PRESET_STOCK_SPEAKER;
@@ -1431,6 +1476,23 @@ sst_mixer_set(struct snd_mixer *m, unsigned dev, unsigned left, unsigned right)
 				sp.volume_left = sst_percent_to_q131(left);
 				sp.volume_right = sst_percent_to_q131(right);
 				sp.mute = sc->pcm.mute;
+				sst_ipc_stream_set_params(sc, &sp);
+			}
+		}
+		break;
+
+	case SOUND_MIXER_MIC:
+		sc->pcm.cap_vol_left = left;
+		sc->pcm.cap_vol_right = right;
+
+		/* Update volume on all active capture streams */
+		for (i = 0; i < SST_PCM_MAX_REC; i++) {
+			if (sc->pcm.rec[i].stream_allocated) {
+				memset(&sp, 0, sizeof(sp));
+				sp.stream_id = sc->pcm.rec[i].stream_id;
+				sp.volume_left = sst_percent_to_q131(left);
+				sp.volume_right = sst_percent_to_q131(right);
+				sp.mute = sc->pcm.mic_mute;
 				sst_ipc_stream_set_params(sc, &sp);
 			}
 		}
@@ -1566,6 +1628,11 @@ sst_pcm_init(struct sst_softc *sc)
 	sc->pcm.vol_left = 100;
 	sc->pcm.vol_right = 100;
 	sc->pcm.mute = 0;
+
+	/* Default capture mixer values */
+	sc->pcm.cap_vol_left = 100;
+	sc->pcm.cap_vol_right = 100;
+	sc->pcm.mic_mute = 0;
 
 	/* Resume ramp callout */
 	callout_init(&sc->pcm.ramp_callout, 1);	/* 1 = MP-safe */

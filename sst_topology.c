@@ -506,7 +506,7 @@ static const struct sst_limiter_preset sst_limiter_presets[SST_LIMITER_NUM_PRESE
  *
  * Pipeline layout:
  *   Playback: Host -> PCM -> HPF -> Gain -> Limiter -> SSP0 DAI OUT -> Codec
- *   Capture:  Codec -> SSP1 DAI IN -> Gain -> PCM -> Host
+ *   Capture:  Codec -> SSP0 DAI IN -> Gain -> PCM -> Host
  */
 
 /*
@@ -710,17 +710,17 @@ sst_topology_create_capture_pipe(struct sst_softc *sc)
 	pipe->priority = 0;
 	pipe->period_size = 1024;
 	pipe->period_count = 4;
-	pipe->ssp_port = 1;		/* SSP1 for capture */
+	pipe->ssp_port = 0;		/* SSP0 for capture (shared with playback) */
 	pipe->dma_channel = -1;
 	pipe->core_id = 0;
 
 	/* Create widgets for capture pipeline */
 
-	/* Widget 1: SSP1 DAI input (from codec) */
+	/* Widget 1: SSP0 DAI input (from codec, shared port with playback) */
 	if (tplg->widget_count < SST_TPLG_MAX_WIDGETS) {
 		w = &tplg->widgets[tplg->widget_count++];
 		memset(w, 0, sizeof(*w));
-		strlcpy(w->name, "ssp1-in", SST_TPLG_NAME_LEN);
+		strlcpy(w->name, "ssp0-in", SST_TPLG_NAME_LEN);
 		w->type = SST_WIDGET_DAI_IN;
 		w->id = tplg->widget_count - 1;
 		w->pipeline_id = pipe->id;
@@ -767,9 +767,9 @@ sst_topology_create_capture_pipe(struct sst_softc *sc)
 	if (tplg->route_count + 2 <= SST_TPLG_MAX_ROUTES) {
 		struct sst_route *r;
 
-		/* Route: ssp1-in -> PGA2.0 */
+		/* Route: ssp0-in -> PGA2.0 */
 		r = &tplg->routes[tplg->route_count++];
-		strlcpy(r->source, "ssp1-in", SST_TPLG_NAME_LEN);
+		strlcpy(r->source, "ssp0-in", SST_TPLG_NAME_LEN);
 		strlcpy(r->sink, "PGA2.0", SST_TPLG_NAME_LEN);
 		r->connected = true;
 
