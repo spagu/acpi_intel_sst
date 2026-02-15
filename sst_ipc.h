@@ -371,7 +371,8 @@ struct sst_ipc_msg {
  * IPC Context
  */
 struct sst_ipc {
-	struct mtx		lock;		/* IPC lock */
+	struct mtx		send_mtx;	/* Serialize IPC senders */
+	struct mtx		lock;		/* IPC state/ISR lock */
 	struct cv		wait_cv;	/* Wait condition */
 	enum sst_ipc_state	state;		/* Current state */
 	bool			ready;		/* DSP ready flag */

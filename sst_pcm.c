@@ -931,22 +931,38 @@ sst_pcm_poll(void *arg)
 	 * If the mixer rate-limiter deferred a SET_VOLUME, send
 	 * the final value now (from callout context, outside the
 	 * rapid ioctl storm).  Only flush once per deferral.
+	 *
+	 * Only the first playback channel (index 0) flushes to
+	 * prevent multiple poll timers from sending duplicates.
 	 */
-	if (ch->dir == PCMDIR_PLAY && sc->pcm.vol_pending) {
-		struct sst_stream_params vsp;
+	if (ch->dir == PCMDIR_PLAY && ch->index == 0 &&
+	    sc->pcm.vol_pending) {
 		int elapsed = ticks - sc->pcm.vol_ticks;
 
-		if (elapsed >= hz / 2 && ch->stream_allocated) {
-			memset(&vsp, 0, sizeof(vsp));
-			vsp.stream_id = ch->stream_id;
-			vsp.volume_left =
-			    sst_percent_to_q131(sc->pcm.vol_left);
-			vsp.volume_right =
-			    sst_percent_to_q131(sc->pcm.vol_right);
-			vsp.mute = sc->pcm.mute;
-			sst_ipc_stream_set_params(sc, &vsp);
-			sc->pcm.vol_ticks = ticks;
+		if (elapsed >= hz / 2) {
+			int j;
+
 			sc->pcm.vol_pending = false;
+			sc->pcm.vol_ticks = ticks;
+
+			for (j = 0; j < SST_PCM_MAX_PLAY; j++) {
+				if (sc->pcm.play[j].stream_allocated) {
+					struct sst_stream_params vsp;
+
+					memset(&vsp, 0, sizeof(vsp));
+					vsp.stream_id =
+					    sc->pcm.play[j].stream_id;
+					vsp.volume_left =
+					    sst_percent_to_q131(
+					    sc->pcm.vol_left);
+					vsp.volume_right =
+					    sst_percent_to_q131(
+					    sc->pcm.vol_right);
+					vsp.mute = sc->pcm.mute;
+					sst_ipc_stream_set_params(sc,
+					    &vsp);
+				}
+			}
 		}
 	}
 

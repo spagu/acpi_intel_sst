@@ -28,6 +28,7 @@
 int
 sst_ipc_init(struct sst_softc *sc)
 {
+	mtx_init(&sc->ipc.send_mtx, "sst_ipc_send", NULL, MTX_DEF);
 	mtx_init(&sc->ipc.lock, "sst_ipc", NULL, MTX_DEF);
 	cv_init(&sc->ipc.wait_cv, "sst_ipc_cv");
 
@@ -61,6 +62,7 @@ sst_ipc_fini(struct sst_softc *sc)
 {
 	cv_destroy(&sc->ipc.wait_cv);
 	mtx_destroy(&sc->ipc.lock);
+	mtx_destroy(&sc->ipc.send_mtx);
 }
 
 /*
@@ -78,6 +80,16 @@ sst_ipc_send(struct sst_softc *sc, uint32_t header, void *data, size_t size)
 		return (EINVAL);
 	}
 
+	/*
+	 * Serialize IPC senders.
+	 *
+	 * cv_timedwait() releases ipc.lock while sleeping, which
+	 * allows a second sender (e.g. poll-timer stall recovery)
+	 * to enter and overwrite the shared state/mailbox.  The
+	 * send_mtx is held across the entire send-wait-complete
+	 * cycle so only one IPC transaction is in flight at a time.
+	 */
+	mtx_lock(&sc->ipc.send_mtx);
 	mtx_lock(&sc->ipc.lock);
 
 	/* Check if DSP is busy */
@@ -163,6 +175,7 @@ sst_ipc_send(struct sst_softc *sc, uint32_t header, void *data, size_t size)
 done:
 	sc->ipc.state = SST_IPC_STATE_IDLE;
 	mtx_unlock(&sc->ipc.lock);
+	mtx_unlock(&sc->ipc.send_mtx);
 
 	return (error);
 }
