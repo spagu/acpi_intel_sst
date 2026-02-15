@@ -69,7 +69,7 @@ mixer vol 80 && play -n synth 3 sine 440
 
 ---
 
-## Current Status (v0.56.0)
+## Current Status (v0.57.0)
 
 <table>
 <tr><td>
@@ -97,8 +97,9 @@ mixer vol 80 && play -n synth 3 sine 440
 | DSP stage capability detection | :white_check_mark: |
 | Dynamic pipeline topology | :white_check_mark: |
 | DSP stream stall recovery | :white_check_mark: |
+| Suspend/resume (S3) | :white_check_mark: |
+| Resume volume ramp (anti-pop) | :white_check_mark: |
 | Audio capture | :construction: |
-| Suspend/resume | :construction: |
 
 </td></tr>
 </table>
@@ -279,7 +280,6 @@ These devices use the same Intel SST DSP and may work (untested):
 | Issue | Details |
 |:------|:--------|
 | **Capture disabled** | Channels registered but skipped; DSP can't do simultaneous play+capture on same SSP |
-| **No suspend/resume** | Driver doesn't handle D3 transitions during sleep |
 | **Single platform tested** | Only Dell XPS 13 9343; other Broadwell-U/Haswell untested |
 
 ---
@@ -289,7 +289,7 @@ These devices use the same Intel SST DSP and may work (untested):
 | | File | Description |
 |:--|:-----|:------------|
 | :book: | [STATUS.md](STATUS.md) | Current driver status, known issues, next steps |
-| :scroll: | [CHANGELOG.md](CHANGELOG.md) | Detailed version history (v0.1.0 - v0.56.0) |
+| :scroll: | [CHANGELOG.md](CHANGELOG.md) | Detailed version history (v0.1.0 - v0.57.0) |
 | :handshake: | [CONTRIBUTING.md](CONTRIBUTING.md) | How to contribute |
 | :wrench: | [acpi/README.md](acpi/README.md) | DSDT patch instructions for Dell XPS 13 9343 |
 | :bar_chart: | [DIAGRAMS.md](DIAGRAMS.md) | Architecture & process flow diagrams (Mermaid) |
