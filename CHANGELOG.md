@@ -5,6 +5,38 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.55.0] - 2026-02-14
+
+### Added: Peak Limiter Before SSP0 Output (Issue #3)
+
+Speaker protection peak limiter inserted at the end of the playback pipeline
+between Gain and SSP0 output to prevent clipping at maximum volume.
+
+### Added
+
+- **Limiter widget in playback topology** - New `LIMITER1.0` widget (type EFFECT,
+  module SST_MOD_LIMITER) inserted between `PGA1.0` and `ssp0-out` in the default
+  Broadwell-U playback pipeline: `PCM -> HPF -> Gain -> Limiter -> SSP0 DAI OUT`
+- **Precomputed Q2.30 limiter threshold presets** at 48kHz -
+  9 presets (bypass + -24/-18/-12/-9/-6/-3/-1/0 dBFS) with per-preset
+  attack (1ms fixed) and release (50-200ms scaled) timing.
+- **IPC limiter command** - `sst_ipc_set_limiter()` sends Q2.30 threshold
+  and timing for left and right channels via `SST_IPC_STG_SET_LIMITER`
+  stage message.
+- **Mixer TREBLE control** - Limiter threshold exposed as `SOUND_MIXER_TREBLE`
+  in the OSS mixer. Value 0 = bypass, 1-100 maps across -24dB to 0dB presets.
+  Default: -6 dBFS (mixer treble = 60).
+- **Runtime limiter update** - `sst_topology_set_widget_limiter()` clamps to
+  valid preset and sends parameters to DSP if stream is active.
+
+### Changed
+
+- Playback pipeline route: `PGA1.0 -> LIMITER1.0 -> ssp0-out` (was `PGA1.0 -> ssp0-out`)
+- Playback pipeline now has 5 widgets (was 4)
+- Route count increased by 1 (PGA1.0 -> LIMITER1.0 added)
+
+---
+
 ## [0.54.0] - 2026-02-14
 
 ### Added: High-Pass Filter (HPF) in Playback Pipeline (Issue #2)
@@ -903,7 +935,8 @@ IRQ allocation, IPC init, firmware load (IntcSST2.bin), DMA/SSP/PCM/topology ini
 - `Fixed` for any bug fixes
 - `Security` for vulnerability fixes
 
-[Unreleased]: https://github.com/spagu/acpi_intel_sst/compare/v0.54.0...HEAD
+[Unreleased]: https://github.com/spagu/acpi_intel_sst/compare/v0.55.0...HEAD
+[0.55.0]: https://github.com/spagu/acpi_intel_sst/compare/v0.54.0...v0.55.0
 [0.54.0]: https://github.com/spagu/acpi_intel_sst/compare/v0.53.0...v0.54.0
 [0.53.0]: https://github.com/spagu/acpi_intel_sst/compare/v0.52.0...v0.53.0
 [0.52.0]: https://github.com/spagu/acpi_intel_sst/compare/v0.51.0...v0.52.0

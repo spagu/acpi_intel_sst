@@ -121,10 +121,50 @@ static const struct sst_hpf_biquad_entry sst_hpf_biquad[SST_HPF_NUM_PRESETS] = {
 };
 
 /*
+ * Precomputed peak limiter threshold presets at 48kHz.
+ * Q2.30 linear amplitude (range [-2.0, +2.0), 1.0 = 0x40000000).
+ *
+ * Formula: Q2.30 = round(2^30 * 10^(dB/20))
+ *
+ * Derived from Q1.31 volume table (Q2.30 = Q1.31 >> 1):
+ *   -24dB: Q1.31[80]  = 0x08138562 → Q2.30 = 0x0409C2B1
+ *   -18dB: Q1.31[92]  = 0x101D3F2D → Q2.30 = 0x080E9F97
+ *   -12dB: Q1.31[104] = 0x2026F30F → Q2.30 = 0x10137988
+ *    -9dB: Q1.31[110] = 0x2D6A866F → Q2.30 = 0x16B54338
+ *    -6dB: Q1.31[116] = 0x4026E73C → Q2.30 = 0x2013739E
+ *    -3dB: Q1.31[122] = 0x5A9DF7AB → Q2.30 = 0x2D4EFBD6
+ *    -1dB: Q1.31[126] = 0x721482BF → Q2.30 = 0x390A4160
+ *     0dB: 2^30 = 0x40000000
+ *
+ * Attack: fixed 1ms (1000us) for all presets (fast transient catch).
+ * Release: scaled per preset (50ms at -24dB to 200ms at 0dB).
+ */
+struct sst_limiter_preset {
+	uint32_t	threshold_db;		/* Threshold in dBFS (0=bypass) */
+	int32_t		threshold_linear;	/* Q2.30 linear amplitude */
+	uint32_t	attack_us;		/* Attack time in microseconds */
+	uint32_t	release_us;		/* Release time in microseconds */
+};
+
+#define SST_LIMITER_NUM_PRESETS	9
+
+static const struct sst_limiter_preset sst_limiter_presets[SST_LIMITER_NUM_PRESETS] = {
+	{  0, 0x7FFFFFFF,    0,      0 },	/* 0: bypass (no limiting) */
+	{ 24, 0x0409C2B1, 1000,  50000 },	/* 1: -24 dBFS */
+	{ 18, 0x080E9F97, 1000,  75000 },	/* 2: -18 dBFS */
+	{ 12, 0x10137988, 1000, 100000 },	/* 3: -12 dBFS */
+	{  9, 0x16B54338, 1000, 115000 },	/* 4:  -9 dBFS */
+	{  6, 0x2013739E, 1000, 135000 },	/* 5:  -6 dBFS (default) */
+	{  3, 0x2D4EFBD6, 1000, 160000 },	/* 6:  -3 dBFS */
+	{  1, 0x390A4160, 1000, 180000 },	/* 7:  -1 dBFS */
+	{  0, 0x40000000, 1000, 200000 },	/* 8:   0 dBFS (full scale) */
+};
+
+/*
  * Default topology for Dell XPS 13 9343 / Broadwell-U
  *
  * Pipeline layout:
- *   Playback: Host -> PCM -> HPF -> Gain -> SSP0 DAI OUT -> Codec
+ *   Playback: Host -> PCM -> HPF -> Gain -> Limiter -> SSP0 DAI OUT -> Codec
  *   Capture:  Codec -> SSP1 DAI IN -> Gain -> PCM -> Host
  */
 
@@ -207,7 +247,23 @@ sst_topology_create_playback_pipe(struct sst_softc *sc)
 		pipe->widget_count++;
 	}
 
-	/* Widget 4: SSP0 DAI output (to codec) */
+	/* Widget 4: Limiter (speaker protection) */
+	if (tplg->widget_count < SST_TPLG_MAX_WIDGETS) {
+		w = &tplg->widgets[tplg->widget_count++];
+		memset(w, 0, sizeof(*w));
+		strlcpy(w->name, "LIMITER1.0", SST_TPLG_NAME_LEN);
+		w->type = SST_WIDGET_EFFECT;
+		w->id = tplg->widget_count - 1;
+		w->pipeline_id = pipe->id;
+		w->module_type = SST_MOD_LIMITER;
+		w->channels = 2;
+		w->sample_rate = 48000;
+		w->bit_depth = 16;
+		w->limiter_threshold = 5;	/* Default -6 dBFS */
+		pipe->widget_count++;
+	}
+
+	/* Widget 5: SSP0 DAI output (to codec) */
 	if (tplg->widget_count < SST_TPLG_MAX_WIDGETS) {
 		w = &tplg->widgets[tplg->widget_count++];
 		memset(w, 0, sizeof(*w));
@@ -223,7 +279,7 @@ sst_topology_create_playback_pipe(struct sst_softc *sc)
 	}
 
 	/* Create routes for playback pipeline */
-	if (tplg->route_count + 3 <= SST_TPLG_MAX_ROUTES) {
+	if (tplg->route_count + 4 <= SST_TPLG_MAX_ROUTES) {
 		struct sst_route *r;
 
 		/* Route: pcm0p -> HPF1.0 */
@@ -238,9 +294,15 @@ sst_topology_create_playback_pipe(struct sst_softc *sc)
 		strlcpy(r->sink, "PGA1.0", SST_TPLG_NAME_LEN);
 		r->connected = true;
 
-		/* Route: PGA1.0 -> ssp0-out */
+		/* Route: PGA1.0 -> LIMITER1.0 */
 		r = &tplg->routes[tplg->route_count++];
 		strlcpy(r->source, "PGA1.0", SST_TPLG_NAME_LEN);
+		strlcpy(r->sink, "LIMITER1.0", SST_TPLG_NAME_LEN);
+		r->connected = true;
+
+		/* Route: LIMITER1.0 -> ssp0-out */
+		r = &tplg->routes[tplg->route_count++];
+		strlcpy(r->source, "LIMITER1.0", SST_TPLG_NAME_LEN);
 		strlcpy(r->sink, "ssp0-out", SST_TPLG_NAME_LEN);
 		r->connected = true;
 	}
@@ -654,6 +716,39 @@ sst_topology_set_widget_hpf(struct sst_softc *sc, struct sst_widget *w,
 		return sst_ipc_set_biquad(sc, w->stream_id,
 		    entry->b0, entry->b1, entry->b2,
 		    entry->a1, entry->a2);
+	}
+
+	return (0);
+}
+
+/*
+ * Set widget limiter threshold.
+ * Looks up threshold_idx in the preset table and sends parameters to DSP.
+ */
+int
+sst_topology_set_widget_limiter(struct sst_softc *sc, struct sst_widget *w,
+				uint32_t threshold_idx)
+{
+	const struct sst_limiter_preset *entry;
+
+	if (w == NULL)
+		return (EINVAL);
+
+	if (w->module_type != SST_MOD_LIMITER)
+		return (EINVAL);
+
+	/* Clamp to valid preset range */
+	if (threshold_idx >= SST_LIMITER_NUM_PRESETS)
+		threshold_idx = SST_LIMITER_NUM_PRESETS - 1;
+	entry = &sst_limiter_presets[threshold_idx];
+
+	w->limiter_threshold = threshold_idx;
+
+	/* Send limiter parameters to DSP if stream is active */
+	if (w->stream_id != 0 && sc->fw.state == SST_FW_STATE_RUNNING) {
+		return sst_ipc_set_limiter(sc, w->stream_id,
+		    entry->threshold_linear, entry->attack_us,
+		    entry->release_us);
 	}
 
 	return (0);
