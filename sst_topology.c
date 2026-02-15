@@ -169,7 +169,18 @@ static const struct sst_limiter_preset sst_limiter_presets[SST_LIMITER_NUM_PRESE
  */
 
 /*
- * Create default playback pipeline
+ * Create default playback pipeline.
+ *
+ * The pipeline is built dynamically based on probed DSP capabilities:
+ *   Always:      pcm0p (AIF_IN), PGA1.0 (Gain), ssp0-out (DAI_OUT)
+ *   If biquad:   HPF1.0 inserted between pcm0p and PGA1.0
+ *   If limiter:  LIMITER1.0 inserted between PGA1.0 and ssp0-out
+ *
+ * Resulting topologies:
+ *   Full:    pcm0p -> HPF1.0 -> PGA1.0 -> LIMITER1.0 -> ssp0-out
+ *   No HPF:  pcm0p -> PGA1.0 -> LIMITER1.0 -> ssp0-out
+ *   No Lim:  pcm0p -> HPF1.0 -> PGA1.0 -> ssp0-out
+ *   Minimal: pcm0p -> PGA1.0 -> ssp0-out
  */
 static int
 sst_topology_create_playback_pipe(struct sst_softc *sc)
@@ -177,10 +188,17 @@ sst_topology_create_playback_pipe(struct sst_softc *sc)
 	struct sst_topology *tplg = &sc->topology;
 	struct sst_pipeline *pipe;
 	struct sst_widget *w;
+	struct sst_route *r;
 	uint32_t idx;
+	const char *prev;
+	uint32_t route_count;
+	bool has_hpf, has_lim;
 
 	if (tplg->pipeline_count >= SST_TPLG_MAX_PIPELINES)
 		return (ENOMEM);
+
+	has_hpf = sc->fw.has_biquad;
+	has_lim = sc->fw.has_limiter;
 
 	idx = tplg->pipeline_count++;
 	pipe = &tplg->pipelines[idx];
@@ -199,7 +217,7 @@ sst_topology_create_playback_pipe(struct sst_softc *sc)
 
 	/* Create widgets for playback pipeline */
 
-	/* Widget 1: Host PCM (input from host DMA) */
+	/* Widget: Host PCM (input from host DMA) - always present */
 	if (tplg->widget_count < SST_TPLG_MAX_WIDGETS) {
 		w = &tplg->widgets[tplg->widget_count++];
 		memset(w, 0, sizeof(*w));
@@ -214,8 +232,8 @@ sst_topology_create_playback_pipe(struct sst_softc *sc)
 		pipe->widget_count++;
 	}
 
-	/* Widget 2: High-pass filter (speaker protection) */
-	if (tplg->widget_count < SST_TPLG_MAX_WIDGETS) {
+	/* Widget: High-pass filter (speaker protection) - if supported */
+	if (has_hpf && tplg->widget_count < SST_TPLG_MAX_WIDGETS) {
 		w = &tplg->widgets[tplg->widget_count++];
 		memset(w, 0, sizeof(*w));
 		strlcpy(w->name, "HPF1.0", SST_TPLG_NAME_LEN);
@@ -230,7 +248,7 @@ sst_topology_create_playback_pipe(struct sst_softc *sc)
 		pipe->widget_count++;
 	}
 
-	/* Widget 3: Gain/Volume control */
+	/* Widget: Gain/Volume control - always present */
 	if (tplg->widget_count < SST_TPLG_MAX_WIDGETS) {
 		w = &tplg->widgets[tplg->widget_count++];
 		memset(w, 0, sizeof(*w));
@@ -247,8 +265,8 @@ sst_topology_create_playback_pipe(struct sst_softc *sc)
 		pipe->widget_count++;
 	}
 
-	/* Widget 4: Limiter (speaker protection) */
-	if (tplg->widget_count < SST_TPLG_MAX_WIDGETS) {
+	/* Widget: Limiter (speaker protection) - if supported */
+	if (has_lim && tplg->widget_count < SST_TPLG_MAX_WIDGETS) {
 		w = &tplg->widgets[tplg->widget_count++];
 		memset(w, 0, sizeof(*w));
 		strlcpy(w->name, "LIMITER1.0", SST_TPLG_NAME_LEN);
@@ -263,7 +281,7 @@ sst_topology_create_playback_pipe(struct sst_softc *sc)
 		pipe->widget_count++;
 	}
 
-	/* Widget 5: SSP0 DAI output (to codec) */
+	/* Widget: SSP0 DAI output (to codec) - always present */
 	if (tplg->widget_count < SST_TPLG_MAX_WIDGETS) {
 		w = &tplg->widgets[tplg->widget_count++];
 		memset(w, 0, sizeof(*w));
@@ -278,37 +296,50 @@ sst_topology_create_playback_pipe(struct sst_softc *sc)
 		pipe->widget_count++;
 	}
 
-	/* Create routes for playback pipeline */
-	if (tplg->route_count + 4 <= SST_TPLG_MAX_ROUTES) {
-		struct sst_route *r;
+	/*
+	 * Build routes dynamically using a prev_widget chain.
+	 * Count needed routes: 2 (pcm0p->PGA, PGA->ssp0) + hpf + limiter
+	 */
+	route_count = 2 + (has_hpf ? 1 : 0) + (has_lim ? 1 : 0);
+	if (tplg->route_count + route_count <= SST_TPLG_MAX_ROUTES) {
+		prev = "pcm0p";
 
-		/* Route: pcm0p -> HPF1.0 */
-		r = &tplg->routes[tplg->route_count++];
-		strlcpy(r->source, "pcm0p", SST_TPLG_NAME_LEN);
-		strlcpy(r->sink, "HPF1.0", SST_TPLG_NAME_LEN);
-		r->connected = true;
+		if (has_hpf) {
+			r = &tplg->routes[tplg->route_count++];
+			strlcpy(r->source, prev, SST_TPLG_NAME_LEN);
+			strlcpy(r->sink, "HPF1.0", SST_TPLG_NAME_LEN);
+			r->connected = true;
+			prev = "HPF1.0";
+		}
 
-		/* Route: HPF1.0 -> PGA1.0 */
+		/* prev -> PGA1.0 */
 		r = &tplg->routes[tplg->route_count++];
-		strlcpy(r->source, "HPF1.0", SST_TPLG_NAME_LEN);
+		strlcpy(r->source, prev, SST_TPLG_NAME_LEN);
 		strlcpy(r->sink, "PGA1.0", SST_TPLG_NAME_LEN);
 		r->connected = true;
+		prev = "PGA1.0";
 
-		/* Route: PGA1.0 -> LIMITER1.0 */
-		r = &tplg->routes[tplg->route_count++];
-		strlcpy(r->source, "PGA1.0", SST_TPLG_NAME_LEN);
-		strlcpy(r->sink, "LIMITER1.0", SST_TPLG_NAME_LEN);
-		r->connected = true;
+		if (has_lim) {
+			r = &tplg->routes[tplg->route_count++];
+			strlcpy(r->source, prev, SST_TPLG_NAME_LEN);
+			strlcpy(r->sink, "LIMITER1.0", SST_TPLG_NAME_LEN);
+			r->connected = true;
+			prev = "LIMITER1.0";
+		}
 
-		/* Route: LIMITER1.0 -> ssp0-out */
+		/* prev -> ssp0-out */
 		r = &tplg->routes[tplg->route_count++];
-		strlcpy(r->source, "LIMITER1.0", SST_TPLG_NAME_LEN);
+		strlcpy(r->source, prev, SST_TPLG_NAME_LEN);
 		strlcpy(r->sink, "ssp0-out", SST_TPLG_NAME_LEN);
 		r->connected = true;
 	}
 
-	device_printf(sc->dev, "Topology: Created playback pipeline (id=%u)\n",
-		      pipe->id);
+	device_printf(sc->dev,
+	    "Topology: Created playback pipeline (id=%u) "
+	    "widgets=%u [HPF=%s, Limiter=%s]\n",
+	    pipe->id, pipe->widget_count,
+	    has_hpf ? "yes" : "skipped",
+	    has_lim ? "yes" : "skipped");
 
 	return (0);
 }

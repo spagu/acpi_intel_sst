@@ -439,6 +439,12 @@ sst_fw_init(struct sst_softc *sc)
 	sc->fw.state = SST_FW_STATE_NONE;
 	sc->fw.dram_alloc_next = 0;
 
+	/* Assume all stages supported until probed otherwise */
+	sc->fw.has_volume  = true;
+	sc->fw.has_biquad  = true;
+	sc->fw.has_limiter = true;
+	sc->fw.caps_probed = false;
+
 	return (0);
 }
 
@@ -520,6 +526,12 @@ sst_fw_unload(struct sst_softc *sc)
 	sc->fw.entry_point = 0;
 	sc->fw.modules = 0;
 	sc->fw.state = SST_FW_STATE_NONE;
+
+	/* Reset caps to optimistic defaults for next load */
+	sc->fw.has_volume  = true;
+	sc->fw.has_biquad  = true;
+	sc->fw.has_limiter = true;
+	sc->fw.caps_probed = false;
 }
 
 /*

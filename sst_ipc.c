@@ -723,6 +723,10 @@ sst_ipc_set_biquad(struct sst_softc *sc, uint32_t stream_id,
 		   int32_t a1, int32_t a2)
 {
 	uint32_t header;
+
+	/* Skip if firmware lacks biquad support */
+	if (!sc->fw.has_biquad)
+		return (0);
 	int error;
 	struct {
 		uint32_t channel;
@@ -765,6 +769,10 @@ sst_ipc_set_limiter(struct sst_softc *sc, uint32_t stream_id,
 		    uint32_t release_us)
 {
 	uint32_t header;
+
+	/* Skip if firmware lacks limiter support */
+	if (!sc->fw.has_limiter)
+		return (0);
 	int error;
 	struct {
 		uint32_t channel;
@@ -917,4 +925,267 @@ sst_ipc_set_dx(struct sst_softc *sc, uint32_t state)
 	device_printf(sc->dev, "IPC: Setting DX state to %u\n", state);
 
 	return sst_ipc_send(sc, header, &dx, sizeof(dx));
+}
+
+/*
+ * DMA load callback for probe buffer allocations.
+ */
+static void
+sst_probe_dma_cb(void *arg, bus_dma_segment_t *segs, int nseg, int error)
+{
+	bus_addr_t *addr = arg;
+
+	if (error || nseg != 1)
+		return;
+	*addr = segs[0].ds_addr;
+}
+
+/*
+ * Probe DSP stage capabilities.
+ *
+ * Allocate a temporary system stream and send test stage messages
+ * (SET_VOLUME, SET_BIQUAD, SET_LIMITER) with safe/bypass parameters.
+ * IPC success → capability present; IPC error → capability absent.
+ *
+ * Must be called after sst_fw_boot() and sst_fw_alloc_module_regions().
+ */
+int
+sst_ipc_probe_stage_caps(struct sst_softc *sc)
+{
+	struct sst_alloc_stream_req req;
+	struct sst_alloc_stream_rsp rsp;
+	struct sst_module_entry mod;
+	uint32_t mod_id, stream_id;
+	void *ring_buf, *pgtbl_buf;
+	bus_addr_t ring_phys, pgtbl_phys;
+	bus_dma_tag_t ring_tag, pgtbl_tag;
+	bus_dmamap_t ring_map, pgtbl_map;
+	int error;
+
+	device_printf(sc->dev, "Probing DSP stage capabilities...\n");
+
+	/*
+	 * Allocate a 1-page ring buffer and 1-page page table
+	 * using bus_dma for proper DMA-safe memory.
+	 */
+	ring_tag = NULL;
+	pgtbl_tag = NULL;
+	ring_buf = NULL;
+	pgtbl_buf = NULL;
+	ring_phys = 0;
+	pgtbl_phys = 0;
+
+	/* Ring buffer DMA allocation */
+	error = bus_dma_tag_create(bus_get_dma_tag(sc->dev),
+	    PAGE_SIZE, 0, BUS_SPACE_MAXADDR_32BIT, BUS_SPACE_MAXADDR,
+	    NULL, NULL, PAGE_SIZE, 1, PAGE_SIZE, 0, NULL, NULL, &ring_tag);
+	if (error)
+		goto fallback;
+
+	error = bus_dmamem_alloc(ring_tag, &ring_buf,
+	    BUS_DMA_NOWAIT | BUS_DMA_ZERO, &ring_map);
+	if (error) {
+		bus_dma_tag_destroy(ring_tag);
+		goto fallback;
+	}
+
+	error = bus_dmamap_load(ring_tag, ring_map, ring_buf,
+	    PAGE_SIZE, sst_probe_dma_cb, &ring_phys, BUS_DMA_NOWAIT);
+	if (error) {
+		bus_dmamem_free(ring_tag, ring_buf, ring_map);
+		bus_dma_tag_destroy(ring_tag);
+		goto fallback;
+	}
+
+	/* Page table DMA allocation */
+	error = bus_dma_tag_create(bus_get_dma_tag(sc->dev),
+	    PAGE_SIZE, 0, BUS_SPACE_MAXADDR_32BIT, BUS_SPACE_MAXADDR,
+	    NULL, NULL, PAGE_SIZE, 1, PAGE_SIZE, 0, NULL, NULL, &pgtbl_tag);
+	if (error) {
+		bus_dmamap_unload(ring_tag, ring_map);
+		bus_dmamem_free(ring_tag, ring_buf, ring_map);
+		bus_dma_tag_destroy(ring_tag);
+		goto fallback;
+	}
+
+	error = bus_dmamem_alloc(pgtbl_tag, &pgtbl_buf,
+	    BUS_DMA_NOWAIT | BUS_DMA_ZERO, &pgtbl_map);
+	if (error) {
+		bus_dma_tag_destroy(pgtbl_tag);
+		bus_dmamap_unload(ring_tag, ring_map);
+		bus_dmamem_free(ring_tag, ring_buf, ring_map);
+		bus_dma_tag_destroy(ring_tag);
+		goto fallback;
+	}
+
+	error = bus_dmamap_load(pgtbl_tag, pgtbl_map, pgtbl_buf,
+	    PAGE_SIZE, sst_probe_dma_cb, &pgtbl_phys, BUS_DMA_NOWAIT);
+	if (error) {
+		bus_dmamem_free(pgtbl_tag, pgtbl_buf, pgtbl_map);
+		bus_dma_tag_destroy(pgtbl_tag);
+		bus_dmamap_unload(ring_tag, ring_map);
+		bus_dmamem_free(ring_tag, ring_buf, ring_map);
+		bus_dma_tag_destroy(ring_tag);
+		goto fallback;
+	}
+
+	/* Fill page table: single 20-bit PFN entry (even index = bits[19:0]) */
+	{
+		uint32_t pfn = (uint32_t)(ring_phys >> PAGE_SHIFT);
+		uint32_t *pt = (uint32_t *)pgtbl_buf;
+		pt[0] = pfn;	/* Even entry: PFN in low 20 bits */
+	}
+	bus_dmamap_sync(pgtbl_tag, pgtbl_map, BUS_DMASYNC_PREWRITE);
+
+	/* Allocate temporary system stream */
+	mod_id = SST_MODID_PCM_SYSTEM;
+
+	memset(&req, 0, sizeof(req));
+	req.path_id = SST_PATH_SSP0_OUT;
+	req.stream_type = SST_STREAM_TYPE_SYSTEM;
+	req.format_id = SST_FMT_PCM;
+	req.format.sample_rate = 48000;
+	req.format.bit_depth = 16;
+	req.format.valid_bit_depth = 16;
+	req.format.num_channels = 2;
+	req.format.channel_config = SST_CHAN_CONFIG_STEREO;
+	req.format.channel_map = 0xFFFFFF20;
+	req.format.interleaving = SST_INTERLEAVING_PER_CHANNEL;
+
+	req.ring.page_table_addr = (uint32_t)pgtbl_phys;
+	req.ring.num_pages = 1;
+	req.ring.size = PAGE_SIZE;
+	req.ring.offset = 0;
+	req.ring.first_pfn = (uint32_t)(ring_phys >> PAGE_SHIFT);
+
+	req.num_entries = 1;
+	memset(&mod, 0, sizeof(mod));
+	mod.module_id = mod_id;
+	if (mod_id < SST_MAX_MODULES && sc->fw.mod[mod_id].present)
+		mod.entry_point = sc->fw.mod[mod_id].entry_point;
+
+	if (mod_id < SST_MAX_MODULES && sc->fw.mod[mod_id].present) {
+		req.persistent_mem.offset = SST_DSP_DRAM_OFFSET +
+		    sc->fw.mod[mod_id].persistent_offset;
+		req.persistent_mem.size = sc->fw.mod[mod_id].persistent_size;
+		if (sc->fw.mod[mod_id].scratch_size > 0) {
+			req.scratch_mem.offset = SST_DSP_DRAM_OFFSET +
+			    sc->fw.mod[mod_id].scratch_offset;
+			req.scratch_mem.size =
+			    sc->fw.mod[mod_id].scratch_size;
+		}
+	}
+	req.num_notifications = 0;
+
+	memset(&rsp, 0, sizeof(rsp));
+	error = sst_ipc_alloc_stream(sc, &req, &mod, 1, &rsp);
+	if (error) {
+		device_printf(sc->dev,
+		    "Stage probe: stream alloc failed (%d), "
+		    "assuming all caps present\n", error);
+		goto cleanup;
+	}
+
+	stream_id = rsp.stream_hw_id;
+
+	/* Probe SET_VOLUME (unity gain, always expected to work) */
+	{
+		uint32_t hdr;
+		struct {
+			uint32_t channel;
+			uint32_t target_volume;
+			uint64_t curve_duration;
+			uint32_t curve_type;
+		} __packed vol;
+
+		hdr = SST_IPC_STREAM_HEADER(SST_IPC_STR_STAGE_MESSAGE,
+		    stream_id);
+		hdr |= (SST_IPC_STG_SET_VOLUME << SST_IPC_STR_STAGE_SHIFT);
+
+		memset(&vol, 0, sizeof(vol));
+		vol.channel = 0;
+		vol.target_volume = 0x7FFFFFFF;	/* Unity gain */
+
+		error = sst_ipc_send(sc, hdr, &vol, sizeof(vol));
+		sc->fw.has_volume = (error == 0);
+	}
+
+	/* Probe SET_BIQUAD (bypass: b0=1.0 Q2.30, rest=0) */
+	{
+		uint32_t hdr;
+		struct {
+			uint32_t channel;
+			int32_t  coeff_b0;
+			int32_t  coeff_b1;
+			int32_t  coeff_b2;
+			int32_t  coeff_a1;
+			int32_t  coeff_a2;
+		} __packed bq;
+
+		hdr = SST_IPC_STREAM_HEADER(SST_IPC_STR_STAGE_MESSAGE,
+		    stream_id);
+		hdr |= (SST_IPC_STG_SET_BIQUAD << SST_IPC_STR_STAGE_SHIFT);
+
+		memset(&bq, 0, sizeof(bq));
+		bq.channel = 0;
+		bq.coeff_b0 = 0x40000000;	/* 1.0 in Q2.30 */
+
+		error = sst_ipc_send(sc, hdr, &bq, sizeof(bq));
+		sc->fw.has_biquad = (error == 0);
+	}
+
+	/* Probe SET_LIMITER (bypass: max threshold) */
+	{
+		uint32_t hdr;
+		struct {
+			uint32_t channel;
+			int32_t  threshold;
+			uint32_t attack_us;
+			uint32_t release_us;
+		} __packed lim;
+
+		hdr = SST_IPC_STREAM_HEADER(SST_IPC_STR_STAGE_MESSAGE,
+		    stream_id);
+		hdr |= (SST_IPC_STG_SET_LIMITER << SST_IPC_STR_STAGE_SHIFT);
+
+		memset(&lim, 0, sizeof(lim));
+		lim.channel = 0;
+		lim.threshold = 0x7FFFFFFF;	/* Max (bypass) */
+		lim.attack_us = 0;
+		lim.release_us = 0;
+
+		error = sst_ipc_send(sc, hdr, &lim, sizeof(lim));
+		sc->fw.has_limiter = (error == 0);
+	}
+
+	sc->fw.caps_probed = true;
+
+	device_printf(sc->dev,
+	    "DSP stage caps: volume=%d biquad=%d limiter=%d\n",
+	    sc->fw.has_volume, sc->fw.has_biquad, sc->fw.has_limiter);
+
+	/* Free temporary stream */
+	sst_ipc_stream_reset(sc, stream_id);
+	sst_ipc_free_stream(sc, stream_id);
+
+cleanup:
+	/* Free DMA allocations */
+	bus_dmamap_unload(pgtbl_tag, pgtbl_map);
+	bus_dmamem_free(pgtbl_tag, pgtbl_buf, pgtbl_map);
+	bus_dma_tag_destroy(pgtbl_tag);
+	bus_dmamap_unload(ring_tag, ring_map);
+	bus_dmamem_free(ring_tag, ring_buf, ring_map);
+	bus_dma_tag_destroy(ring_tag);
+
+	return (0);
+
+fallback:
+	/* Cannot allocate DMA memory; assume all stages present */
+	device_printf(sc->dev,
+	    "Stage probe: DMA alloc failed, assuming all caps present\n");
+	sc->fw.has_volume  = true;
+	sc->fw.has_biquad  = true;
+	sc->fw.has_limiter = true;
+	sc->fw.caps_probed = false;
+	return (0);
 }
