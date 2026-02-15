@@ -1067,7 +1067,7 @@ sst_chan_trigger(kobj_t obj, void *data, int go)
 {
 	struct sst_pcm_channel *ch = data;
 	struct sst_softc *sc;
-	int error, j;
+	int error;
 
 	sc = ch->sc;
 
@@ -1083,38 +1083,7 @@ sst_chan_trigger(kobj_t obj, void *data, int go)
 			return (ENXIO);
 		}
 
-		/*
-		 * Exclusive-mode capture guard:
-		 * Do not allow capture while playback is active.
-		 * If the real stall was only telemetry, relax later.
-		 */
-		if (ch->dir == PCMDIR_REC) {
-			for (j = 0; j < SST_PCM_MAX_PLAY; j++) {
-				if (sc->pcm.play[j].stream_allocated) {
-					device_printf(sc->dev,
-					    "PCM: capture blocked -- "
-					    "playback active\n");
-					return (EBUSY);
-				}
-			}
-		}
-
-		/*
-		 * Preempt capture if playback starts.
-		 * Playback takes priority -- free any active capture
-		 * streams before allocating the playback stream.
-		 */
-		if (ch->dir == PCMDIR_PLAY) {
-			for (j = 0; j < SST_PCM_MAX_REC; j++) {
-				if (sc->pcm.rec[j].stream_allocated) {
-					sst_pcm_free_dsp_stream(sc,
-					    &sc->pcm.rec[j]);
-					sst_codec_disable_microphone(sc);
-					sc->pcm.rec[j].state =
-					    SST_PCM_STATE_PREPARED;
-				}
-			}
-		}
+		/* Full-duplex: play + capture coexist (v0.63.1). */
 
 		/*
 		 * Step 1: Allocate DSP stream.
