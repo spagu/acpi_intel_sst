@@ -5,6 +5,45 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.63.0] - 2026-02-15
+
+### Added: On-Demand DSP Telemetry (Issue #25)
+
+Re-enables DSP telemetry reads that were disabled in v0.62.0 due to bus
+contention with DMA during the 5ms poll timer. Telemetry is now read
+on-demand when a user queries a sysctl node, with rate-limiting to prevent
+bus flooding.
+
+### Added
+
+- **On-demand telemetry refresh** (`sst_topology.c`) — `sst_telemetry_refresh()`
+  reads L/R peak meters and volume registers via `bus_read_4()` only when a
+  sysctl handler is invoked. Rate-limited to at most once per 10ms (`hz/100`)
+  to prevent rapid successive queries from stalling the bus.
+- **`sst_peak_sysctl()` handler** (`sst_topology.c`) — New `SYSCTL_ADD_PROC`
+  handler for `peak_left`/`peak_right` nodes; triggers a fresh DSP read and
+  returns the cached Q1.31 value.
+- **`sst_limiter_active_sysctl()` handler** (`sst_topology.c`) — New
+  `SYSCTL_ADD_PROC` handler for `limiter_active` node; triggers refresh and
+  returns 0/1.
+- **`telem_ticks` field** (`sst_pcm.h`) — Tick counter in `struct sst_pcm`
+  for rate-limiting telemetry reads.
+
+### Changed
+
+- **`peak_left` / `peak_right` sysctl** (`sst_topology.c`) — Converted from
+  `SYSCTL_ADD_UINT` (static cached value) to `SYSCTL_ADD_PROC` with
+  `sst_peak_sysctl` handler for on-demand reads.
+- **`limiter_active` sysctl** (`sst_topology.c`) — Converted from
+  `SYSCTL_ADD_INT` to `SYSCTL_ADD_PROC` with `sst_limiter_active_sysctl`.
+- **`sst_peak_db_sysctl()`** (`sst_topology.c`) — Now calls
+  `sst_telemetry_refresh()` before reading cached peak values, so dB nodes
+  also trigger fresh DSP reads.
+- **Poll timer comment** (`sst_pcm.c`) — Updated to reflect on-demand
+  telemetry strategy instead of "reads DISABLED".
+
+---
+
 ## [0.61.0] - 2026-02-15
 
 ### Added: Audio Capture (Recording/Microphone) Support

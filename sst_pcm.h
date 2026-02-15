@@ -162,11 +162,12 @@ struct sst_pcm {
 	int			ramp_step;	/* Current ramp step (0-5) */
 	struct callout		ramp_callout;	/* Ramp timer */
 
-	/* Telemetry (updated every poll cycle) */
+	/* Telemetry (read on-demand via sysctl handlers) */
 	uint32_t		peak_left;	/* Raw Q1.31 peak level, left */
 	uint32_t		peak_right;	/* Raw Q1.31 peak level, right */
 	uint32_t		clip_count;	/* Cumulative clipping events */
 	bool			limiter_active;	/* Limiter currently engaging */
+	int			telem_ticks;	/* Tick count of last telemetry read */
 
 	/* State */
 	bool			registered;	/* PCM device registered */

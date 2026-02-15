@@ -900,10 +900,9 @@ sst_pcm_poll(void *arg)
 	ch->last_pos = pos;
 
 	/*
-	 * Telemetry reads DISABLED -- bus_read_4() every 5ms creates
-	 * bus contention with DMA, causing DSP stream stalls.
-	 * Sysctl nodes remain registered and read 0.
-	 * See issue #25 for re-enabling with a lower poll rate.
+	 * Telemetry reads are performed on-demand via sysctl handlers
+	 * (sst_telemetry_refresh) rather than polling here, to avoid
+	 * bus contention with DMA.  See issue #25.
 	 */
 
 	/*

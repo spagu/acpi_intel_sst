@@ -1597,6 +1597,104 @@ sst_q131_to_db_x10(uint32_t val)
 }
 
 /*
+ * On-demand telemetry refresh: read peak meters and volume from DSP.
+ *
+ * Called from sysctl handlers when user queries telemetry nodes.
+ * Rate-limited to at most once per hz/100 (~10ms) to prevent rapid
+ * successive sysctl queries from flooding the bus.
+ */
+static void
+sst_telemetry_refresh(struct sst_softc *sc)
+{
+	struct sst_pcm_channel *ch;
+	uint32_t peak_l, peak_r, vol;
+	int i, elapsed;
+
+	/* Rate-limit: skip if last read was < hz/100 ticks ago */
+	elapsed = ticks - sc->pcm.telem_ticks;
+	if (elapsed >= 0 && elapsed < hz / 100)
+		return;
+
+	/* Find first active stream with valid peak meter registers */
+	ch = NULL;
+	for (i = 0; i < SST_PCM_MAX_PLAY; i++) {
+		if (sc->pcm.play[i].stream_allocated &&
+		    sc->pcm.play[i].state == SST_PCM_STATE_RUNNING &&
+		    sc->pcm.play[i].peak_meter_regaddr[0] != 0) {
+			ch = &sc->pcm.play[i];
+			break;
+		}
+	}
+	if (ch == NULL) {
+		for (i = 0; i < SST_PCM_MAX_REC; i++) {
+			if (sc->pcm.rec[i].stream_allocated &&
+			    sc->pcm.rec[i].state == SST_PCM_STATE_RUNNING &&
+			    sc->pcm.rec[i].peak_meter_regaddr[0] != 0) {
+				ch = &sc->pcm.rec[i];
+				break;
+			}
+		}
+	}
+
+	sc->pcm.telem_ticks = ticks;
+
+	if (ch == NULL) {
+		/* No active stream -- return silence */
+		sc->pcm.peak_left = 0;
+		sc->pcm.peak_right = 0;
+		sc->pcm.limiter_active = false;
+		return;
+	}
+
+	/* Read peak meters from DSP MMIO */
+	peak_l = bus_read_4(sc->mem_res, ch->peak_meter_regaddr[0]);
+	peak_r = bus_read_4(sc->mem_res, ch->peak_meter_regaddr[1]);
+
+	sc->pcm.peak_left = peak_l;
+	sc->pcm.peak_right = peak_r;
+
+	/* Detect clipping (Q1.31 >= 0x7F000000) */
+	if (peak_l >= 0x7F000000 || peak_r >= 0x7F000000)
+		sc->pcm.clip_count++;
+
+	/* Read volume register for limiter activity detection */
+	vol = bus_read_4(sc->mem_res, ch->volume_regaddr[0]);
+	sc->pcm.limiter_active = (vol < 0x7FFFFFFF);
+}
+
+/*
+ * Telemetry sysctl: raw peak level (Q1.31).
+ * arg2 = 0 for left, 1 for right.
+ */
+static int
+sst_peak_sysctl(SYSCTL_HANDLER_ARGS)
+{
+	struct sst_softc *sc = oidp->oid_arg1;
+	int channel = oidp->oid_arg2;
+	int val;
+
+	sst_telemetry_refresh(sc);
+	val = (int)((channel == 0) ? sc->pcm.peak_left : sc->pcm.peak_right);
+
+	return (sysctl_handle_int(oidp, &val, 0, req));
+}
+
+/*
+ * Telemetry sysctl: limiter active flag (0/1).
+ */
+static int
+sst_limiter_active_sysctl(SYSCTL_HANDLER_ARGS)
+{
+	struct sst_softc *sc = oidp->oid_arg1;
+	int val;
+
+	sst_telemetry_refresh(sc);
+	val = sc->pcm.limiter_active ? 1 : 0;
+
+	return (sysctl_handle_int(oidp, &val, 0, req));
+}
+
+/*
  * Telemetry sysctl: peak level in dB (human-readable string).
  * arg2 = 0 for left, 1 for right.
  */
@@ -1609,6 +1707,7 @@ sst_peak_db_sysctl(SYSCTL_HANDLER_ARGS)
 	int db_x10;
 	char buf[16];
 
+	sst_telemetry_refresh(sc);
 	peak = (channel == 0) ? sc->pcm.peak_left : sc->pcm.peak_right;
 	db_x10 = sst_q131_to_db_x10(peak);
 
@@ -1700,14 +1799,16 @@ sst_topology_sysctl_init(struct sst_softc *sc)
 		    CTLFLAG_RD | CTLFLAG_MPSAFE, 0,
 		    "DSP telemetry");
 
-		SYSCTL_ADD_UINT(ctx, SYSCTL_CHILDREN(telem_tree), OID_AUTO,
-		    "peak_left", CTLFLAG_RD,
-		    &sc->pcm.peak_left, 0,
+		SYSCTL_ADD_PROC(ctx, SYSCTL_CHILDREN(telem_tree), OID_AUTO,
+		    "peak_left",
+		    CTLTYPE_INT | CTLFLAG_RD | CTLFLAG_MPSAFE,
+		    sc, 0, sst_peak_sysctl, "I",
 		    "Left channel peak level (Q1.31 raw)");
 
-		SYSCTL_ADD_UINT(ctx, SYSCTL_CHILDREN(telem_tree), OID_AUTO,
-		    "peak_right", CTLFLAG_RD,
-		    &sc->pcm.peak_right, 0,
+		SYSCTL_ADD_PROC(ctx, SYSCTL_CHILDREN(telem_tree), OID_AUTO,
+		    "peak_right",
+		    CTLTYPE_INT | CTLFLAG_RD | CTLFLAG_MPSAFE,
+		    sc, 1, sst_peak_sysctl, "I",
 		    "Right channel peak level (Q1.31 raw)");
 
 		SYSCTL_ADD_PROC(ctx, SYSCTL_CHILDREN(telem_tree), OID_AUTO,
@@ -1733,9 +1834,10 @@ sst_topology_sysctl_init(struct sst_softc *sc)
 		    sc, 0, sst_clip_reset_sysctl, "I",
 		    "Write 1 to reset clip counter");
 
-		SYSCTL_ADD_INT(ctx, SYSCTL_CHILDREN(telem_tree), OID_AUTO,
-		    "limiter_active", CTLFLAG_RD,
-		    (int *)&sc->pcm.limiter_active, 0,
+		SYSCTL_ADD_PROC(ctx, SYSCTL_CHILDREN(telem_tree), OID_AUTO,
+		    "limiter_active",
+		    CTLTYPE_INT | CTLFLAG_RD | CTLFLAG_MPSAFE,
+		    sc, 0, sst_limiter_active_sysctl, "I",
 		    "Limiter currently engaging (0/1)");
 	}
 
