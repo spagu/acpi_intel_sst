@@ -843,6 +843,17 @@ sst_pcm_poll(void *arg)
 				sst_ipc_stream_set_params(sc, &vsp);
 			}
 
+			/* Restore EQ preset */
+			{
+				struct sst_widget *hpf_w;
+				hpf_w = sst_topology_find_widget(sc, "HPF1.0");
+				if (hpf_w != NULL) {
+					hpf_w->stream_id = ch->stream_id;
+					sst_topology_set_widget_eq_preset(sc,
+					    hpf_w, sc->pcm.eq_preset);
+				}
+			}
+
 			device_printf(sc->dev,
 			    "PCM: stream recovered as %u\n",
 			    ch->stream_id);
@@ -963,10 +974,10 @@ sst_pcm_resume(struct sst_softc *sc)
 {
 	struct sst_widget *w;
 
-	/* Restore HPF cutoff to widget */
+	/* Restore EQ preset to widget */
 	w = sst_topology_find_widget(sc, "HPF1.0");
 	if (w != NULL)
-		w->hpf_cutoff = sc->pcm.hpf_cutoff;
+		w->eq_preset = sc->pcm.eq_preset;
 
 	/* Restore limiter threshold to widget */
 	w = sst_topology_find_widget(sc, "LIMITER1.0");
@@ -1105,15 +1116,15 @@ sst_chan_trigger(kobj_t obj, void *data, int go)
 			sst_ipc_stream_set_params(sc, &sp);
 		}
 
-		/* Apply HPF to stream if widget exists */
+		/* Apply EQ preset to stream if widget exists */
 		{
 			struct sst_widget *hpf_w;
 
 			hpf_w = sst_topology_find_widget(sc, "HPF1.0");
-			if (hpf_w != NULL && sc->pcm.hpf_cutoff > 0) {
+			if (hpf_w != NULL) {
 				hpf_w->stream_id = ch->stream_id;
-				sst_topology_set_widget_hpf(sc, hpf_w,
-				    sc->pcm.hpf_cutoff);
+				sst_topology_set_widget_eq_preset(sc, hpf_w,
+				    sc->pcm.eq_preset);
 			}
 		}
 
@@ -1271,16 +1282,6 @@ sst_percent_to_q131(unsigned int pct)
 }
 
 /*
- * HPF cutoff frequencies for BASS mixer control.
- * Index 0 = bypass, indices 1-8 = 80..300 Hz presets.
- * Mixer value 0 = off, 1-100 mapped across presets via:
- *   idx = 1 + (val - 1) * 8 / 100
- */
-static const uint32_t sst_hpf_cutoffs[] = {
-	0, 80, 100, 120, 150, 180, 200, 250, 300
-};
-
-/*
  * Mixer methods
  */
 static int
@@ -1302,8 +1303,8 @@ sst_mixer_init(struct snd_mixer *m)
 	sc->pcm.vol_right = 100;
 	sc->pcm.mute = 0;
 
-	/* Default HPF: 150 Hz (mixer bass = 50) */
-	sc->pcm.hpf_cutoff = 150;
+	/* Default EQ: stock speaker (HPF 150Hz) */
+	sc->pcm.eq_preset = SST_EQ_PRESET_STOCK_SPEAKER;
 
 	/* Default limiter: -6 dBFS (mixer treble = 60, preset index 5) */
 	sc->pcm.limiter_threshold = 5;
@@ -1364,28 +1365,26 @@ sst_mixer_set(struct snd_mixer *m, unsigned dev, unsigned left, unsigned right)
 
 	case SOUND_MIXER_BASS: {
 		struct sst_widget *hpf_w;
-		uint32_t cutoff;
-		int idx;
+		enum sst_eq_preset_id preset;
 
 		/*
-		 * Map mixer value (0-100) to HPF cutoff preset.
-		 * 0 = HPF off (bypass), 1-100 = 80..300 Hz.
-		 * Only the left channel value is used (mono control).
+		 * Map mixer value (0-100) to EQ preset:
+		 *   0     = flat (bypass)
+		 *   1-50  = stock_speaker (HPF 150Hz)
+		 *   51-100 = mod_speaker (HPF 100Hz, warmer)
 		 */
-		if (left == 0) {
-			idx = 0;
-		} else {
-			idx = 1 + (left - 1) * 8 / 100;
-			if (idx > 8)
-				idx = 8;
-		}
-		cutoff = sst_hpf_cutoffs[idx];
-		sc->pcm.hpf_cutoff = cutoff;
+		if (left == 0)
+			preset = SST_EQ_PRESET_FLAT;
+		else if (left <= 50)
+			preset = SST_EQ_PRESET_STOCK_SPEAKER;
+		else
+			preset = SST_EQ_PRESET_MOD_SPEAKER;
 
-		/* Update HPF widget if topology is loaded */
+		sc->pcm.eq_preset = preset;
+
 		hpf_w = sst_topology_find_widget(sc, "HPF1.0");
 		if (hpf_w != NULL)
-			sst_topology_set_widget_hpf(sc, hpf_w, cutoff);
+			sst_topology_set_widget_eq_preset(sc, hpf_w, preset);
 
 		break;
 	}

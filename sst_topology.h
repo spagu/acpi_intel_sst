@@ -87,6 +87,21 @@ enum sst_module_type {
 };
 
 /*
+ * EQ Preset IDs
+ *
+ * Each preset is a single 2nd-order biquad defining one EQ profile.
+ * The catpt DSP supports only one biquad stage per stream (SET_BIQUAD
+ * IPC has no stage index), so presets combine HPF + tone shaping into
+ * a single filter section.
+ */
+enum sst_eq_preset_id {
+	SST_EQ_PRESET_FLAT = 0,	/* Bypass (passthrough) */
+	SST_EQ_PRESET_STOCK_SPEAKER,	/* HPF 150Hz (stock speaker protection) */
+	SST_EQ_PRESET_MOD_SPEAKER,	/* HPF 100Hz (warmer, less bass cut) */
+	SST_EQ_PRESET_MAX
+};
+
+/*
  * Widget Definition
  */
 struct sst_widget {
@@ -110,8 +125,8 @@ struct sst_widget {
 	int32_t			volume;		/* -64dB to +20dB in 0.5dB steps */
 	bool			mute;
 
-	/* HPF control (for EFFECT/HPF) */
-	uint32_t		hpf_cutoff;	/* HPF cutoff in Hz, 0=bypass */
+	/* EQ preset (for EFFECT/HPF) */
+	enum sst_eq_preset_id	eq_preset;	/* Active EQ preset */
 
 	/* Limiter control (for EFFECT/LIMITER) */
 	uint32_t		limiter_threshold; /* Preset index, 0=bypass */
@@ -243,8 +258,9 @@ struct sst_widget *sst_topology_find_widget(struct sst_softc *sc,
 					    const char *name);
 int	sst_topology_set_widget_volume(struct sst_softc *sc,
 				       struct sst_widget *w, int32_t volume);
-int	sst_topology_set_widget_hpf(struct sst_softc *sc,
-				    struct sst_widget *w, uint32_t cutoff);
+int	sst_topology_set_widget_eq_preset(struct sst_softc *sc,
+					  struct sst_widget *w,
+					  enum sst_eq_preset_id preset);
 int	sst_topology_set_widget_limiter(struct sst_softc *sc,
 					struct sst_widget *w,
 					uint32_t threshold_idx);
