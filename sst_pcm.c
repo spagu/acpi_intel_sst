@@ -900,69 +900,46 @@ sst_pcm_poll(void *arg)
 	ch->last_pos = pos;
 
 	/*
-	 * Telemetry: read peak meters from DSP DRAM.
-	 * The DSP writes Q1.31 peak levels to these registers.
+	 * Telemetry reads DISABLED -- bus_read_4() every 5ms creates
+	 * bus contention with DMA, causing DSP stream stalls.
+	 * Sysctl nodes remain registered and read 0.
+	 * See issue #25 for re-enabling with a lower poll rate.
 	 */
-	if (ch->peak_meter_regaddr[0] != 0) {
-		uint32_t pl, pr;
-
-		pl = bus_read_4(sc->mem_res, ch->peak_meter_regaddr[0]);
-		pr = bus_read_4(sc->mem_res, ch->peak_meter_regaddr[1]);
-		sc->pcm.peak_left = pl;
-		sc->pcm.peak_right = pr;
-
-		/* Clipping detection: Q1.31 near full-scale */
-		if (pl >= 0x7F000000 || pr >= 0x7F000000)
-			sc->pcm.clip_count++;
-
-		/* Limiter activity: DSP volume register drops below peak */
-		if (ch->volume_regaddr[0] != 0) {
-			uint32_t dsp_vol;
-
-			dsp_vol = bus_read_4(sc->mem_res,
-			    ch->volume_regaddr[0]);
-			sc->pcm.limiter_active = (dsp_vol < pl);
-		}
-	}
 
 	/*
 	 * Flush deferred volume update.
 	 *
 	 * If the mixer rate-limiter deferred a SET_VOLUME, send
 	 * the final value now (from callout context, outside the
-	 * rapid ioctl storm).  Only flush once per deferral.
-	 *
-	 * Only the first playback channel (index 0) flushes to
-	 * prevent multiple poll timers from sending duplicates.
+	 * rapid ioctl storm).  Single-channel flush -- no loop.
 	 */
-	if (ch->dir == PCMDIR_PLAY && ch->index == 0 &&
-	    sc->pcm.vol_pending) {
+	if (sc->pcm.vol_pending && ch->stream_allocated) {
 		int elapsed = ticks - sc->pcm.vol_ticks;
 
 		if (elapsed >= hz / 2) {
-			int j;
+			struct sst_stream_params vsp;
 
 			sc->pcm.vol_pending = false;
 			sc->pcm.vol_ticks = ticks;
 
-			for (j = 0; j < SST_PCM_MAX_PLAY; j++) {
-				if (sc->pcm.play[j].stream_allocated) {
-					struct sst_stream_params vsp;
-
-					memset(&vsp, 0, sizeof(vsp));
-					vsp.stream_id =
-					    sc->pcm.play[j].stream_id;
-					vsp.volume_left =
-					    sst_percent_to_q131(
-					    sc->pcm.vol_left);
-					vsp.volume_right =
-					    sst_percent_to_q131(
-					    sc->pcm.vol_right);
-					vsp.mute = sc->pcm.mute;
-					sst_ipc_stream_set_params(sc,
-					    &vsp);
-				}
+			memset(&vsp, 0, sizeof(vsp));
+			vsp.stream_id = ch->stream_id;
+			if (ch->dir == PCMDIR_PLAY) {
+				vsp.volume_left =
+				    sst_percent_to_q131(sc->pcm.vol_left);
+				vsp.volume_right =
+				    sst_percent_to_q131(sc->pcm.vol_right);
+				vsp.mute = sc->pcm.mute;
+			} else {
+				vsp.volume_left =
+				    sst_percent_to_q131(
+				    sc->pcm.cap_vol_left);
+				vsp.volume_right =
+				    sst_percent_to_q131(
+				    sc->pcm.cap_vol_right);
+				vsp.mute = sc->pcm.mic_mute;
 			}
+			sst_ipc_stream_set_params(sc, &vsp);
 		}
 	}
 
@@ -1091,7 +1068,7 @@ sst_chan_trigger(kobj_t obj, void *data, int go)
 {
 	struct sst_pcm_channel *ch = data;
 	struct sst_softc *sc;
-	int error;
+	int error, j;
 
 	sc = ch->sc;
 
@@ -1105,6 +1082,39 @@ sst_chan_trigger(kobj_t obj, void *data, int go)
 			device_printf(sc->dev,
 			    "PCM trigger: DSP firmware not running\n");
 			return (ENXIO);
+		}
+
+		/*
+		 * Exclusive-mode capture guard:
+		 * Do not allow capture while playback is active.
+		 * If the real stall was only telemetry, relax later.
+		 */
+		if (ch->dir == PCMDIR_REC) {
+			for (j = 0; j < SST_PCM_MAX_PLAY; j++) {
+				if (sc->pcm.play[j].stream_allocated) {
+					device_printf(sc->dev,
+					    "PCM: capture blocked -- "
+					    "playback active\n");
+					return (EBUSY);
+				}
+			}
+		}
+
+		/*
+		 * Preempt capture if playback starts.
+		 * Playback takes priority -- free any active capture
+		 * streams before allocating the playback stream.
+		 */
+		if (ch->dir == PCMDIR_PLAY) {
+			for (j = 0; j < SST_PCM_MAX_REC; j++) {
+				if (sc->pcm.rec[j].stream_allocated) {
+					sst_pcm_free_dsp_stream(sc,
+					    &sc->pcm.rec[j]);
+					sst_codec_disable_microphone(sc);
+					sc->pcm.rec[j].state =
+					    SST_PCM_STATE_PREPARED;
+				}
+			}
 		}
 
 		/*
