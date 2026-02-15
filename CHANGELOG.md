@@ -5,6 +5,52 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.58.0] - 2026-02-15
+
+### Changed: Parametric EQ Presets (Issue #4)
+
+Replace frequency-based HPF cutoff selection with named EQ presets. The catpt
+DSP supports only one 2nd-order biquad stage per stream (SET_BIQUAD IPC has no
+stage index), so each preset defines a complete filter profile via pre-computed
+Q2.30 coefficients.
+
+### Added
+
+- **EQ preset enum** (`sst_topology.h`) - `enum sst_eq_preset_id` with three
+  presets: `FLAT` (bypass/passthrough), `STOCK_SPEAKER` (HPF 150Hz, stock
+  speaker protection), `MOD_SPEAKER` (HPF 100Hz, warmer with less bass cut).
+- **EQ preset table** (`sst_topology.c`) - `sst_eq_presets[]` with named entries
+  containing pre-computed Q2.30 biquad coefficients for each preset.
+- **Preset API** (`sst_topology.c`) - `sst_topology_set_widget_eq_preset()`
+  replaces `sst_topology_set_widget_hpf()`, sending biquad coefficients to DSP
+  based on preset ID.
+- **EQ preset restore on stall recovery** (`sst_pcm.c`) - After DSP stream
+  re-allocation, the active EQ preset is now restored alongside volume.
+
+### Changed
+
+- **BASS mixer control** (`sst_pcm.c`) - Now switches between named presets
+  instead of HPF cutoff frequencies: 0 = flat (bypass), 1-50 = stock_speaker
+  (HPF 150Hz), 51-100 = mod_speaker (HPF 100Hz, warmer).
+- **Widget field** (`sst_topology.h`) - `hpf_cutoff` replaced by `eq_preset`
+  in `struct sst_widget`.
+- **PCM state field** (`sst_pcm.h`) - `hpf_cutoff` replaced by `eq_preset`
+  in `struct sst_pcm`.
+- **PCMTRIG_START** (`sst_pcm.c`) - HPF application block now uses
+  `sst_topology_set_widget_eq_preset()` unconditionally (FLAT preset handles
+  bypass case).
+- **Suspend/resume** (`sst_pcm.c`) - Restores `eq_preset` instead of
+  `hpf_cutoff` on resume.
+
+### Removed
+
+- `sst_hpf_biquad[]` table (9 frequency-indexed entries) - replaced by
+  `sst_eq_presets[]` (3 named presets).
+- `sst_hpf_cutoffs[]` array from `sst_pcm.c`.
+- `sst_topology_set_widget_hpf()` - replaced by `sst_topology_set_widget_eq_preset()`.
+
+---
+
 ## [0.57.0] - 2026-02-15
 
 ### Improved: Suspend/Resume Stability (Issue #10)
@@ -974,7 +1020,8 @@ IRQ allocation, IPC init, firmware load (IntcSST2.bin), DMA/SSP/PCM/topology ini
 - `Fixed` for any bug fixes
 - `Security` for vulnerability fixes
 
-[Unreleased]: https://github.com/spagu/acpi_intel_sst/compare/v0.57.0...HEAD
+[Unreleased]: https://github.com/spagu/acpi_intel_sst/compare/v0.58.0...HEAD
+[0.58.0]: https://github.com/spagu/acpi_intel_sst/compare/v0.57.0...v0.58.0
 [0.57.0]: https://github.com/spagu/acpi_intel_sst/compare/v0.55.0...v0.57.0
 [0.55.0]: https://github.com/spagu/acpi_intel_sst/compare/v0.54.0...v0.55.0
 [0.54.0]: https://github.com/spagu/acpi_intel_sst/compare/v0.53.0...v0.54.0

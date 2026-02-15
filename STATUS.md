@@ -1,44 +1,35 @@
 # Intel SST Audio Driver - Session Status
 ## Date: 2026-02-15
-## Version: v0.57.0
+## Version: v0.58.0
 
 ---
 
 ## LAST SESSION SUMMARY
 
-### Suspend/Resume Stability (Issue #10)
+### Parametric EQ Presets (Issue #4)
 
-The driver's suspend/resume was previously minimal — suspend only reset the DSP
-and powered to D3, resume attempted a bare DSP boot with empty SRAM. Result:
-broken audio after any suspend/resume cycle. Now fully implemented with ordered
-teardown and complete reconstruction.
+Replaced the frequency-based HPF cutoff selection with named EQ presets. The
+catpt DSP supports only one 2nd-order biquad stage per stream (SET_BIQUAD IPC
+has no stage index), so each preset defines a complete filter profile.
 
-### Changes in v0.57.0
+### Changes in v0.58.0
 
-1. **Firmware SRAM reload** - `sst_fw_reload()` re-writes cached firmware from
-   host memory to SRAM after D3 power loss. The firmware(9) handle and
-   `sc->fw.data` persist in host memory across suspend; only SRAM is lost.
+1. **EQ preset enum** - `enum sst_eq_preset_id` with three presets: FLAT
+   (bypass), STOCK_SPEAKER (HPF 150Hz), MOD_SPEAKER (HPF 100Hz, warmer).
 
-2. **Suspend teardown** - `sst_acpi_suspend()` now performs ordered shutdown:
-   jack disable → PCM stream teardown → SSP stop → codec shutdown → topology
-   clear → DSP reset → D3 power-off.
+2. **EQ preset table** - `sst_eq_presets[]` replaces `sst_hpf_biquad[]` with
+   named entries containing pre-computed Q2.30 biquad coefficients.
 
-3. **Resume reconstruction** - `sst_acpi_resume()` fully rebuilds the audio
-   pipeline: D0 → SHIM init → firmware reload → DSP boot → FW version query →
-   module regions → stage caps → topology rebuild → SSP0 device formats →
-   codec re-init → speaker/headphone enable → mixer restore → jack enable →
-   ramp arm.
+3. **Preset API** - `sst_topology_set_widget_eq_preset()` replaces
+   `sst_topology_set_widget_hpf()`.
 
-4. **Volume ramp-in** - 5-step linear ramp (~50ms) from silence to target
-   volume on first PCMTRIG_START after resume, preventing speaker pop.
+4. **BASS mixer** - Now maps 0=flat, 1-50=stock_speaker, 51-100=mod_speaker
+   instead of frequency-indexed cutoffs.
 
-5. **Mixer state on stream start** - Volume, HPF cutoff, and limiter threshold
-   are now applied via IPC on every PCMTRIG_START, also fixing parameter loss
-   after stall recovery.
+5. **Stall recovery** - EQ preset now restored alongside volume after DSP
+   stream re-allocation.
 
-6. **PCM suspend/resume helpers** - `sst_pcm_suspend()` tears down streams and
-   stops timers; `sst_pcm_resume()` restores HPF/limiter widget params from
-   saved mixer state.
+6. **Suspend/resume** - Restores `eq_preset` instead of `hpf_cutoff`.
 
 ---
 
@@ -61,7 +52,7 @@ teardown and complete reconstruction.
 - DSP stream allocation (SYSTEM type, page table, module entry)
 - DSP position polling (read_pos_regaddr from DRAM)
 - Volume control (dB→Q1.31, rate-limited IPC)
-- HPF biquad (speaker protection, BASS mixer)
+- EQ presets (speaker protection, BASS mixer: flat/stock/mod)
 - Peak limiter (speaker protection, TREBLE mixer)
 - DSP stage capability detection
 - Dynamic pipeline topology
@@ -103,7 +94,7 @@ sound(4)  ←→  pcm child device (PCM_SOFTC_SIZE softc)
 | sst_dma.c | DMA controller | Working |
 | sst_pcm.c | sound(4) integration, suspend/resume, ramp | Working |
 | sst_ssp.c | I2S codec interface | Working |
-| sst_topology.c | Audio pipeline + HPF biquad + limiter | Working |
+| sst_topology.c | Audio pipeline + EQ presets + limiter | Working |
 | sst_jack.c | Headphone detect | Working |
 | sst_regs.h | Register definitions | Done |
 
@@ -125,6 +116,7 @@ sound(4)  ←→  pcm child device (PCM_SOFTC_SIZE softc)
 
 ## COMMIT HISTORY
 ```
+v0.58.0 - EQ presets: named biquad presets replace HPF cutoff selection (issue #4)
 v0.57.0 - Suspend/resume stability: full teardown/rebuild, FW reload, volume ramp (issue #10)
 v0.55.0 - Limiter before SSP0 output, limiter IPC, TREBLE mixer control (issue #3)
 v0.54.0 - HPF in playback pipeline, biquad IPC, BASS mixer control (issue #2)
