@@ -110,6 +110,7 @@ struct sst_eq_preset_entry {
 	const char		*name;
 	int32_t			b0, b1, b2;	/* Numerator, Q2.30 */
 	int32_t			a1, a2;		/* Denominator, Q2.30 */
+	int			peak_gain_db;	/* max gain at any freq (dB) */
 };
 
 #define SST_EQ_NUM_PRESETS	3
@@ -118,15 +119,15 @@ static const struct sst_eq_preset_entry sst_eq_presets[SST_EQ_NUM_PRESETS] = {
 	/* FLAT: bypass (b0=1.0, rest=0) */
 	{ SST_EQ_PRESET_FLAT,
 	  "flat",
-	  1073741824, 0, 0, 0, 0 },
+	  1073741824, 0, 0, 0, 0, 0 },
 	/* STOCK_SPEAKER: 2nd-order Butterworth HPF at 150Hz/48kHz */
 	{ SST_EQ_PRESET_STOCK_SPEAKER,
 	  "stock_speaker",
-	  1058936991, -2117873982, 1058936991, -2117669842, 1044336297 },
+	  1058936991, -2117873982, 1058936991, -2117669842, 1044336297, 0 },
 	/* MOD_SPEAKER: 2nd-order Butterworth HPF at 100Hz/48kHz */
 	{ SST_EQ_PRESET_MOD_SPEAKER,
 	  "mod_speaker",
-	  1063849116, -2127698232, 1063849116, -2127607086, 1054047555 },
+	  1063849116, -2127698232, 1063849116, -2127607086, 1054047555, 0 },
 };
 
 /*
@@ -705,6 +706,30 @@ sst_topology_set_widget_volume(struct sst_softc *sc, struct sst_widget *w,
 	if (w->type != SST_WIDGET_PGA && w->type != SST_WIDGET_MIXER)
 		return (EINVAL);
 
+	/*
+	 * Enforce headroom ceiling, accounting for EQ peak gain.
+	 *
+	 * The base ceiling is -SST_HEADROOM_DB (-3dBFS in half-dB steps).
+	 * If the pipeline's EQ preset boosts any frequency by peak_gain_db,
+	 * we must reduce the volume ceiling by the same amount so that
+	 * EQ peak + volume never exceeds -SST_HEADROOM_DB dBFS.
+	 */
+	{
+		int32_t ceiling;
+		struct sst_widget *hpf;
+
+		ceiling = -SST_HEADROOM_HALF_DB;
+		hpf = sst_topology_find_widget(sc, "HPF1.0");
+		if (hpf != NULL && hpf->pipeline_id == w->pipeline_id &&
+		    hpf->eq_preset < SST_EQ_NUM_PRESETS) {
+			int peak = sst_eq_presets[hpf->eq_preset].peak_gain_db;
+			if (peak > 0)
+				ceiling -= peak * 2; /* dB to half-dB steps */
+		}
+		if (volume > ceiling)
+			volume = ceiling;
+	}
+
 	w->volume = volume;
 
 	/* Update DSP if stream is active */
@@ -741,6 +766,23 @@ sst_topology_set_widget_eq_preset(struct sst_softc *sc, struct sst_widget *w,
 
 	entry = &sst_eq_presets[preset];
 	w->eq_preset = preset;
+
+	/*
+	 * Gain budget enforcement: if the new preset boosts any
+	 * frequency, pull the pipeline's PGA volume down so that
+	 * EQ peak + volume stays within headroom.
+	 */
+	if (entry->peak_gain_db > 0) {
+		struct sst_widget *pga;
+		int32_t ceiling;
+
+		ceiling = -(SST_HEADROOM_HALF_DB +
+		    entry->peak_gain_db * 2);
+		pga = sst_topology_find_widget(sc, "PGA1.0");
+		if (pga != NULL && pga->pipeline_id == w->pipeline_id &&
+		    pga->volume > ceiling)
+			sst_topology_set_widget_volume(sc, pga, pga->volume);
+	}
 
 	/* Send biquad coefficients to DSP if stream is active */
 	if (w->stream_id != 0 && sc->fw.state == SST_FW_STATE_RUNNING) {

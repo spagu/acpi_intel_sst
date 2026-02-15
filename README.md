@@ -95,6 +95,7 @@ mixer vol 80 && play -n synth 3 sine 440
 | EQ presets (speaker protection) | :white_check_mark: |
 | Peak limiter (speaker protection) | :white_check_mark: |
 | DSP stage capability detection | :white_check_mark: |
+| Gain staging / headroom (-3dBFS) | :white_check_mark: |
 | Dynamic pipeline topology | :white_check_mark: |
 | DSP stream stall recovery | :white_check_mark: |
 | Suspend/resume (S3) | :white_check_mark: |

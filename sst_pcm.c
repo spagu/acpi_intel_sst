@@ -1237,7 +1237,7 @@ sst_chan_getcaps(kobj_t obj, void *data)
 
 /*
  * Mixer percent (0-100) to Q1.31 lookup table.
- * Logarithmic curve: 0% = silence, 100% = -1dBFS (headroom).
+ * Logarithmic curve: 0% = silence, 100% = -1dBFS (before headroom scaling to -3dBFS).
  * Maps percent to dB range -60dB..(-1dB), then to Q1.31.
  */
 static const uint32_t sst_pct_to_q131[101] = {
@@ -1270,15 +1270,31 @@ static const uint32_t sst_pct_to_q131[101] = {
 };
 
 /*
+ * Headroom scale factor (Q1.31).
+ * The percent-to-Q1.31 table has its ceiling at -1dBFS.
+ * This factor applies additional attenuation to reach -SST_HEADROOM_DB dBFS.
+ * Value = round(2^31 * 10^((1 - SST_HEADROOM_DB) / 20))
+ * For SST_HEADROOM_DB=3: 10^(-2/20) = 0.7943 -> 0x65AC8C2E
+ */
+#define SST_HEADROOM_SCALE_Q131	0x65AC8C2E
+
+/*
  * Convert mixer percent (0-100) to Q1.31 linear gain.
  */
 static uint32_t
 sst_percent_to_q131(unsigned int pct)
 {
+	uint32_t gain;
 
 	if (pct > 100)
 		pct = 100;
-	return (sst_pct_to_q131[pct]);
+	gain = sst_pct_to_q131[pct];
+
+	/* Apply headroom: shift ceiling from -1dBFS to -3dBFS */
+	if (gain != 0)
+		gain = (uint32_t)((uint64_t)gain * SST_HEADROOM_SCALE_Q131 >> 31);
+
+	return (gain);
 }
 
 /*

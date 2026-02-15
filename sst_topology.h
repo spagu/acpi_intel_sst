@@ -101,6 +101,10 @@ enum sst_eq_preset_id {
 	SST_EQ_PRESET_MAX
 };
 
+/* Gain staging: global headroom policy */
+#define SST_HEADROOM_DB		3
+#define SST_HEADROOM_HALF_DB	6	/* in 0.5dB step units */
+
 /*
  * Widget Definition
  */
