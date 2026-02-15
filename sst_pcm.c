@@ -69,9 +69,52 @@ static struct pcmchan_caps *sst_chan_getcaps(kobj_t obj, void *data);
 /* Volume percent to Q1.31 (defined below, needed by poll timer and ramp) */
 static uint32_t sst_percent_to_q131(unsigned int pct);
 
-/* Volume ramp-in after resume: 5 steps × ~10ms = ~50ms total */
-#define SST_RAMP_STEPS		5
+/* Volume ramp-in: configurable duration, ~10ms per step */
+#define SST_RAMP_TICK_MS	10
 #define SST_RAMP_INTERVAL	(hz / 100 > 0 ? hz / 100 : 1)
+#define SST_RAMP_MS_DEFAULT	50
+#define SST_RAMP_MS_MAX		500
+
+/* Ramp curve types */
+#define SST_RAMP_LOG		0
+#define SST_RAMP_LINEAR		1
+#define SST_RAMP_SCURVE		2
+
+/*
+ * Logarithmic ramp table — 10 entries for 10 steps.
+ * Values are gain fraction × 1000 (permille).
+ * Attempt a perceptual curve: slow start, fast finish (dB-linear).
+ * Entry i represents gain at step (i+1)/10 of the ramp.
+ */
+static const int sst_ramp_log[] = {
+	 10,	/* step 1/10 — ~-40 dB */
+	 32,	/* step 2/10 — ~-30 dB */
+	 80,	/* step 3/10 — ~-22 dB */
+	160,	/* step 4/10 — ~-16 dB */
+	280,	/* step 5/10 — ~-11 dB */
+	420,	/* step 6/10 — ~-7.5 dB */
+	580,	/* step 7/10 — ~-4.7 dB */
+	740,	/* step 8/10 — ~-2.6 dB */
+	890,	/* step 9/10 — ~-1.0 dB */
+	1000,	/* step 10/10 — 0 dB (full) */
+};
+
+/*
+ * S-curve ramp table — slow start, fast middle, slow finish.
+ * Attempt a sinusoidal ease-in-out profile.
+ */
+static const int sst_ramp_scurve[] = {
+	 15,	/* step 1/10 */
+	 65,	/* step 2/10 */
+	170,	/* step 3/10 */
+	340,	/* step 4/10 */
+	500,	/* step 5/10 — midpoint */
+	660,	/* step 6/10 */
+	830,	/* step 7/10 */
+	935,	/* step 8/10 */
+	985,	/* step 9/10 */
+	1000,	/* step 10/10 — full */
+};
 
 /* DSP stream allocation helpers */
 static int sst_pcm_alloc_dsp_stream(struct sst_softc *sc,
@@ -948,28 +991,64 @@ sst_pcm_poll(void *arg)
 }
 
 /*
+ * Compute ramp gain fraction (0-1000 permille) for a given step.
+ * step is 1-based, steps is total step count.
+ */
+static int
+sst_ramp_gain(int curve, int step, int steps)
+{
+	int idx;
+	const int *tbl;
+	int tbl_len;
+
+	if (step >= steps)
+		return (1000);
+	if (step <= 0)
+		return (0);
+
+	switch (curve) {
+	case SST_RAMP_LOG:
+		tbl = sst_ramp_log;
+		tbl_len = nitems(sst_ramp_log);
+		break;
+	case SST_RAMP_SCURVE:
+		tbl = sst_ramp_scurve;
+		tbl_len = nitems(sst_ramp_scurve);
+		break;
+	case SST_RAMP_LINEAR:
+	default:
+		return (step * 1000 / steps);
+	}
+
+	/* Map step/steps → table index */
+	idx = step * tbl_len / steps;
+	if (idx >= tbl_len)
+		idx = tbl_len - 1;
+	return (tbl[idx]);
+}
+
+/*
  * Volume ramp-in callback.
  *
- * After resume, playback starts at silence and ramps to the target
- * volume over SST_RAMP_STEPS × SST_RAMP_INTERVAL to avoid pop noise.
+ * Ramps playback volume from silence to target over ramp_ms using
+ * the selected curve (log, linear, or s-curve).  Activated on every
+ * PCMTRIG_START when ramp_ms > 0.
  */
 static void
 sst_pcm_ramp_cb(void *arg)
 {
 	struct sst_softc *sc = arg;
 	struct sst_stream_params sp;
-	int step, i;
+	int step, i, gain;
 	uint32_t vol_l, vol_r;
 
 	step = ++sc->pcm.ramp_step;
+	gain = sst_ramp_gain(sc->pcm.ramp_curve, step, sc->pcm.ramp_steps);
 
-	/* Linear interpolation: step/RAMP_STEPS * target */
-	vol_l = sst_percent_to_q131(
-	    sc->pcm.vol_left * step / SST_RAMP_STEPS);
-	vol_r = sst_percent_to_q131(
-	    sc->pcm.vol_right * step / SST_RAMP_STEPS);
+	vol_l = sst_percent_to_q131(sc->pcm.vol_left * gain / 1000);
+	vol_r = sst_percent_to_q131(sc->pcm.vol_right * gain / 1000);
 
-	/* Apply to all active streams */
+	/* Apply to all active playback streams */
 	for (i = 0; i < SST_PCM_MAX_PLAY; i++) {
 		if (sc->pcm.play[i].stream_allocated) {
 			memset(&sp, 0, sizeof(sp));
@@ -981,11 +1060,11 @@ sst_pcm_ramp_cb(void *arg)
 		}
 	}
 
-	if (step < SST_RAMP_STEPS) {
+	if (step < sc->pcm.ramp_steps) {
 		callout_reset(&sc->pcm.ramp_callout,
 		    SST_RAMP_INTERVAL, sst_pcm_ramp_cb, sc);
 	} else {
-		sc->pcm.resume_ramp = false;
+		sc->pcm.ramp_active = false;
 	}
 }
 
@@ -1020,7 +1099,7 @@ sst_pcm_suspend(struct sst_softc *sc)
 
 	/* Stop ramp if in progress */
 	callout_stop(&sc->pcm.ramp_callout);
-	sc->pcm.resume_ramp = false;
+	sc->pcm.ramp_active = false;
 }
 
 /*
@@ -1050,7 +1129,7 @@ sst_pcm_resume(struct sst_softc *sc)
 	 * next PCMTRIG_START via sst_topology_apply_biquad/limiter.
 	 */
 
-	/* Volume will be applied on next PCMTRIG_START via ramp */
+	/* Volume will be applied on next PCMTRIG_START (with ramp if enabled) */
 }
 
 /*
@@ -1150,17 +1229,35 @@ sst_chan_trigger(kobj_t obj, void *data, int go)
 			/*
 			 * Playback: apply mixer state to stream.
 			 *
-			 * After resume, start at silence and ramp up to
-			 * avoid pop noise.  Also restores HPF and limiter
-			 * widget parameters to the newly allocated stream.
+			 * Ramp from silence when ramp_ms > 0, or when
+			 * resuming from S3 (resume_ramp_ms, always on).
+			 * Also restores HPF and limiter widget
+			 * parameters to the newly allocated stream.
 			 */
 			struct sst_stream_params sp;
 			uint32_t vol_l, vol_r;
+			int ramp_dur;
 
-			if (sc->pcm.resume_ramp) {
+			/*
+			 * Pick ramp duration: after S3 resume always
+			 * uses resume_ramp_ms; normal start uses ramp_ms.
+			 */
+			if (sc->pcm.after_resume) {
+				ramp_dur = sc->pcm.resume_ramp_ms;
+				sc->pcm.after_resume = false;
+			} else {
+				ramp_dur = sc->pcm.ramp_ms;
+			}
+
+			if (ramp_dur > 0) {
 				vol_l = 0;
 				vol_r = 0;
+				sc->pcm.ramp_steps = ramp_dur /
+				    SST_RAMP_TICK_MS;
+				if (sc->pcm.ramp_steps < 1)
+					sc->pcm.ramp_steps = 1;
 				sc->pcm.ramp_step = 0;
+				sc->pcm.ramp_active = true;
 				callout_reset(&sc->pcm.ramp_callout,
 				    SST_RAMP_INTERVAL, sst_pcm_ramp_cb, sc);
 			} else {
@@ -1628,10 +1725,15 @@ sst_pcm_init(struct sst_softc *sc)
 	sc->pcm.cap_vol_right = 100;
 	sc->pcm.mic_mute = 0;
 
-	/* Resume ramp callout */
+	/* Volume ramp-in defaults */
 	callout_init(&sc->pcm.ramp_callout, 1);	/* 1 = MP-safe */
-	sc->pcm.resume_ramp = false;
+	sc->pcm.ramp_ms = SST_RAMP_MS_DEFAULT;
+	sc->pcm.resume_ramp_ms = SST_RAMP_MS_DEFAULT;
+	sc->pcm.ramp_curve = SST_RAMP_LOG;
+	sc->pcm.ramp_active = false;
+	sc->pcm.after_resume = false;
 	sc->pcm.ramp_step = 0;
+	sc->pcm.ramp_steps = 0;
 
 	sst_dbg(sc, SST_DBG_LIFE, "PCM subsystem initialized: %d play, %d rec streams\n",
 	    SST_PCM_MAX_PLAY, SST_PCM_MAX_REC);

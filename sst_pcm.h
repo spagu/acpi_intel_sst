@@ -157,9 +157,14 @@ struct sst_pcm {
 	int			vol_ticks;	/* tick count of last SET_VOLUME */
 	bool			vol_pending;	/* deferred volume update waiting */
 
-	/* Resume state */
-	bool			resume_ramp;	/* Volume ramp-in pending after resume */
-	int			ramp_step;	/* Current ramp step (0-5) */
+	/* Volume ramp-in state */
+	int			ramp_ms;	/* Ramp duration ms (0=off, default 50) */
+	int			resume_ramp_ms;	/* Ramp after S3 resume ms (always on) */
+	int			ramp_curve;	/* 0=log, 1=linear, 2=s-curve */
+	int			ramp_steps;	/* Total steps for current ramp */
+	int			ramp_step;	/* Current ramp step */
+	bool			ramp_active;	/* Ramp in progress */
+	bool			after_resume;	/* Next start is after S3 resume */
 	struct callout		ramp_callout;	/* Ramp timer */
 
 	/* Telemetry (read on-demand via sysctl handlers) */
