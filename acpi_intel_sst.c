@@ -3291,9 +3291,32 @@ sst_acpi_suspend(device_t dev)
 	struct sst_softc *sc = device_get_softc(dev);
 
 	device_printf(dev, "Suspending...\n");
+
+	/* 1. Stop jack detection polling */
+	sst_jack_disable(sc);
+
+	/* 2. Tear down active PCM streams */
+	sst_pcm_suspend(sc);
+
+	/* 3. Stop SSP ports */
+	sst_ssp_stop(sc, 0);
+	sst_ssp_stop(sc, 1);
+
+	/* 4. Shutdown codec (mute, power down, release I2C) */
+	sst_codec_fini(sc);
+
+	/* 5. Clear topology state so it can be rebuilt on resume */
+	sc->topology.loaded = false;
+	sc->topology.pipeline_count = 0;
+	sc->topology.widget_count = 0;
+	sc->topology.route_count = 0;
+
+	/* 6. Reset DSP and power off */
 	sst_reset(sc);
 	acpi_pwr_switch_consumer(sc->handle, ACPI_STATE_D3);
 	sc->state = SST_STATE_SUSPENDED;
+
+	device_printf(dev, "Suspended\n");
 	return (0);
 }
 
@@ -3304,27 +3327,74 @@ sst_acpi_resume(device_t dev)
 	int error;
 
 	device_printf(dev, "Resuming...\n");
+
+	/* 1. Power to D0 */
 	acpi_pwr_switch_consumer(sc->handle, ACPI_STATE_D0);
 	DELAY(10000);
 
+	/* 2. Init SHIM (mask interrupts, reset DSP) */
 	sst_init(sc);
-
 	sc->ipc.ready = false;
 	sc->ipc.state = SST_IPC_STATE_IDLE;
 
-	if (sc->fw.state == SST_FW_STATE_RUNNING) {
-		sc->fw.state = SST_FW_STATE_LOADED;
-		error = sst_fw_boot(sc);
-		if (error) {
-			device_printf(dev, "Resume: DSP boot failed\n");
-			sc->state = SST_STATE_ERROR;
-			return (error);
-		}
-		sst_fw_alloc_module_regions(sc);
-		sst_ipc_probe_stage_caps(sc);
+	/* 3. Re-write firmware to SRAM and boot DSP */
+	error = sst_fw_reload(sc);
+	if (error) {
+		device_printf(dev, "Resume: firmware reload failed: %d\n",
+		    error);
+		sc->state = SST_STATE_ERROR;
+		return (error);
 	}
 
+	error = sst_fw_boot(sc);
+	if (error) {
+		device_printf(dev, "Resume: DSP boot failed: %d\n", error);
+		sc->state = SST_STATE_ERROR;
+		return (error);
+	}
+
+	/* 4. Post-boot setup (same as initial attach) */
+	sst_ipc_get_fw_version(sc, NULL);
+	sst_fw_alloc_module_regions(sc);
+	sst_ipc_probe_stage_caps(sc);
+
+	/* 5. Rebuild audio pipeline */
+	sst_topology_load_default(sc);
+
+	/* 6. SET_DEVICE_FORMATS for SSP0 */
+	{
+		struct sst_device_format devfmt;
+
+		memset(&devfmt, 0, sizeof(devfmt));
+		devfmt.iface = SST_SSP_IFACE_0;
+		devfmt.mclk = SST_MCLK_FREQ_24_MHZ;
+		devfmt.mode = SST_SSP_MODE_I2S_PROVIDER;
+		devfmt.clock_divider = 9;
+		devfmt.channels = 2;
+		error = sst_ipc_set_device_formats(sc, &devfmt);
+		if (error)
+			device_printf(dev,
+			    "Resume: SET_DEVICE_FORMATS failed: %d"
+			    " (non-fatal)\n", error);
+	}
+
+	/* 7. Re-init codec and enable outputs */
+	if (sst_codec_init(sc) == 0) {
+		sst_codec_enable_speaker(sc);
+		sst_codec_enable_headphone(sc);
+	}
+
+	/* 8. Restore mixer state to topology widgets */
+	sst_pcm_resume(sc);
+
+	/* 9. Re-enable jack detection */
+	sst_jack_enable(sc);
+
+	/* 10. Mark resume ramp pending (anti-pop) */
+	sc->pcm.resume_ramp = true;
+
 	sc->state = SST_STATE_RUNNING;
+	device_printf(dev, "Resumed\n");
 	return (0);
 }
 

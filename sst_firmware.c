@@ -535,6 +535,39 @@ sst_fw_unload(struct sst_softc *sc)
 }
 
 /*
+ * Reload firmware to SRAM from cached host memory.
+ *
+ * After suspend (D3), SRAM contents are lost. The firmware(9) handle
+ * and sc->fw.data remain valid in host memory. This function re-writes
+ * all modules to IRAM/DRAM without re-fetching from disk.
+ */
+int
+sst_fw_reload(struct sst_softc *sc)
+{
+	int error;
+
+	if (sc->fw.data == NULL || sc->fw.size == 0) {
+		device_printf(sc->dev, "No cached firmware for reload\n");
+		return (EINVAL);
+	}
+
+	device_printf(sc->dev, "Reloading firmware to SRAM (%zu bytes)...\n",
+	    sc->fw.size);
+
+	sst_dsp_stall(sc, true);
+
+	/* sst_fw_parse() re-writes all modules to IRAM/DRAM */
+	error = sst_fw_parse(sc);
+	if (error) {
+		device_printf(sc->dev, "Firmware reload failed: %d\n", error);
+		return (error);
+	}
+
+	sc->fw.state = SST_FW_STATE_LOADED;
+	return (0);
+}
+
+/*
  * Boot DSP with loaded firmware
  *
  * Based on Linux catpt catpt_boot_firmware():

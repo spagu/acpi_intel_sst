@@ -136,6 +136,11 @@ struct sst_pcm {
 	int			vol_ticks;	/* tick count of last SET_VOLUME */
 	bool			vol_pending;	/* deferred volume update waiting */
 
+	/* Resume state */
+	bool			resume_ramp;	/* Volume ramp-in pending after resume */
+	int			ramp_step;	/* Current ramp step (0-5) */
+	struct callout		ramp_callout;	/* Ramp timer */
+
 	/* State */
 	bool			registered;	/* PCM device registered */
 };
@@ -148,6 +153,8 @@ struct sst_softc;
  */
 int	sst_pcm_init(struct sst_softc *sc);
 void	sst_pcm_fini(struct sst_softc *sc);
+void	sst_pcm_suspend(struct sst_softc *sc);
+void	sst_pcm_resume(struct sst_softc *sc);
 int	sst_pcm_register(struct sst_softc *sc);
 void	sst_pcm_unregister(struct sst_softc *sc);
 

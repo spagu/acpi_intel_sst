@@ -66,8 +66,12 @@ static int sst_chan_trigger(kobj_t obj, void *data, int go);
 static uint32_t sst_chan_getptr(kobj_t obj, void *data);
 static struct pcmchan_caps *sst_chan_getcaps(kobj_t obj, void *data);
 
-/* Volume percent to Q1.31 (defined below, needed by poll timer) */
+/* Volume percent to Q1.31 (defined below, needed by poll timer and ramp) */
 static uint32_t sst_percent_to_q131(unsigned int pct);
+
+/* Volume ramp-in after resume: 5 steps × ~10ms = ~50ms total */
+#define SST_RAMP_STEPS		5
+#define SST_RAMP_INTERVAL	(hz / 100 > 0 ? hz / 100 : 1)
 
 /* DSP stream allocation helpers */
 static int sst_pcm_alloc_dsp_stream(struct sst_softc *sc,
@@ -882,6 +886,97 @@ sst_pcm_poll(void *arg)
 }
 
 /*
+ * Volume ramp-in callback.
+ *
+ * After resume, playback starts at silence and ramps to the target
+ * volume over SST_RAMP_STEPS × SST_RAMP_INTERVAL to avoid pop noise.
+ */
+static void
+sst_pcm_ramp_cb(void *arg)
+{
+	struct sst_softc *sc = arg;
+	struct sst_stream_params sp;
+	int step, i;
+	uint32_t vol_l, vol_r;
+
+	step = ++sc->pcm.ramp_step;
+
+	/* Linear interpolation: step/RAMP_STEPS * target */
+	vol_l = sst_percent_to_q131(
+	    sc->pcm.vol_left * step / SST_RAMP_STEPS);
+	vol_r = sst_percent_to_q131(
+	    sc->pcm.vol_right * step / SST_RAMP_STEPS);
+
+	/* Apply to all active streams */
+	for (i = 0; i < SST_PCM_MAX_PLAY; i++) {
+		if (sc->pcm.play[i].stream_allocated) {
+			memset(&sp, 0, sizeof(sp));
+			sp.stream_id = sc->pcm.play[i].stream_id;
+			sp.volume_left = vol_l;
+			sp.volume_right = vol_r;
+			sp.mute = sc->pcm.mute;
+			sst_ipc_stream_set_params(sc, &sp);
+		}
+	}
+
+	if (step < SST_RAMP_STEPS) {
+		callout_reset(&sc->pcm.ramp_callout,
+		    SST_RAMP_INTERVAL, sst_pcm_ramp_cb, sc);
+	} else {
+		sc->pcm.resume_ramp = false;
+	}
+}
+
+/*
+ * Suspend PCM subsystem — tear down active streams.
+ * Called from sst_acpi_suspend() before DSP reset.
+ */
+void
+sst_pcm_suspend(struct sst_softc *sc)
+{
+	int i;
+
+	for (i = 0; i < SST_PCM_MAX_PLAY; i++) {
+		struct sst_pcm_channel *ch = &sc->pcm.play[i];
+		if (ch->state == SST_PCM_STATE_RUNNING)
+			callout_stop(&ch->poll_timer);
+		if (ch->stream_allocated)
+			sst_pcm_free_dsp_stream(sc, ch);
+		ch->state = SST_PCM_STATE_INIT;
+	}
+	for (i = 0; i < SST_PCM_MAX_REC; i++)
+		sc->pcm.rec[i].state = SST_PCM_STATE_INIT;
+
+	/* Stop ramp if in progress */
+	callout_stop(&sc->pcm.ramp_callout);
+	sc->pcm.resume_ramp = false;
+}
+
+/*
+ * Resume PCM subsystem — restore mixer state to topology widgets.
+ * Called from sst_acpi_resume() after topology rebuild.
+ * Mixer values are in sc->pcm (host memory, survived suspend).
+ * Widget params just need to be set so next PCMTRIG_START applies them.
+ */
+void
+sst_pcm_resume(struct sst_softc *sc)
+{
+	struct sst_widget *w;
+
+	/* Restore HPF cutoff to widget */
+	w = sst_topology_find_widget(sc, "HPF1.0");
+	if (w != NULL)
+		w->hpf_cutoff = sc->pcm.hpf_cutoff;
+
+	/* Restore limiter threshold to widget */
+	w = sst_topology_find_widget(sc, "LIMITER1.0");
+	if (w != NULL)
+		w->limiter_threshold = sc->pcm.limiter_threshold;
+
+	/* Volume will be applied on next PCMTRIG_START via ramp */
+}
+
+/*
  * Trigger (start/stop)
  *
  * Uses the catpt IPC protocol for all stream management.
@@ -978,6 +1073,61 @@ sst_chan_trigger(kobj_t obj, void *data, int go)
 		 * and DAC format so codec locks to active BCLK.
 		 */
 		sst_codec_pll_rearm(sc);
+
+		/*
+		 * Step 7: Apply current mixer state to stream.
+		 *
+		 * After resume, start at silence and ramp up to
+		 * avoid pop noise.  Also restores HPF and limiter
+		 * widget parameters to the newly allocated stream.
+		 */
+		{
+			struct sst_stream_params sp;
+			uint32_t vol_l, vol_r;
+
+			if (sc->pcm.resume_ramp) {
+				/* Start with silence, ramp up over ~50ms */
+				vol_l = 0;
+				vol_r = 0;
+				sc->pcm.ramp_step = 0;
+				callout_reset(&sc->pcm.ramp_callout,
+				    SST_RAMP_INTERVAL, sst_pcm_ramp_cb, sc);
+			} else {
+				vol_l = sst_percent_to_q131(sc->pcm.vol_left);
+				vol_r = sst_percent_to_q131(sc->pcm.vol_right);
+			}
+
+			memset(&sp, 0, sizeof(sp));
+			sp.stream_id = ch->stream_id;
+			sp.volume_left = vol_l;
+			sp.volume_right = vol_r;
+			sp.mute = sc->pcm.mute;
+			sst_ipc_stream_set_params(sc, &sp);
+		}
+
+		/* Apply HPF to stream if widget exists */
+		{
+			struct sst_widget *hpf_w;
+
+			hpf_w = sst_topology_find_widget(sc, "HPF1.0");
+			if (hpf_w != NULL && sc->pcm.hpf_cutoff > 0) {
+				hpf_w->stream_id = ch->stream_id;
+				sst_topology_set_widget_hpf(sc, hpf_w,
+				    sc->pcm.hpf_cutoff);
+			}
+		}
+
+		/* Apply limiter to stream if widget exists */
+		{
+			struct sst_widget *lim_w;
+
+			lim_w = sst_topology_find_widget(sc, "LIMITER1.0");
+			if (lim_w != NULL && sc->pcm.limiter_threshold > 0) {
+				lim_w->stream_id = ch->stream_id;
+				sst_topology_set_widget_limiter(sc, lim_w,
+				    sc->pcm.limiter_threshold);
+			}
+		}
 
 		/* Initialize position tracking */
 		ch->ptr = 0;
@@ -1345,6 +1495,11 @@ sst_pcm_init(struct sst_softc *sc)
 	sc->pcm.vol_right = 100;
 	sc->pcm.mute = 0;
 
+	/* Resume ramp callout */
+	callout_init(&sc->pcm.ramp_callout, 1);	/* 1 = MP-safe */
+	sc->pcm.resume_ramp = false;
+	sc->pcm.ramp_step = 0;
+
 	device_printf(sc->dev, "PCM subsystem initialized: %d play, %d rec streams\n",
 	    SST_PCM_MAX_PLAY, SST_PCM_MAX_REC);
 
@@ -1357,6 +1512,7 @@ sst_pcm_init(struct sst_softc *sc)
 void
 sst_pcm_fini(struct sst_softc *sc)
 {
+	callout_drain(&sc->pcm.ramp_callout);
 	sst_pcm_unregister(sc);
 
 	/*

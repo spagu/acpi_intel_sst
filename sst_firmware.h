@@ -133,6 +133,7 @@ void	sst_fw_fini(struct sst_softc *sc);
 int	sst_fw_load(struct sst_softc *sc);
 void	sst_fw_unload(struct sst_softc *sc);
 int	sst_fw_boot(struct sst_softc *sc);
+int	sst_fw_reload(struct sst_softc *sc);
 void	sst_fw_alloc_module_regions(struct sst_softc *sc);
 
 #endif /* _SST_FIRMWARE_H_ */
