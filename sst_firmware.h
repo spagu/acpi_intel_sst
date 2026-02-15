@@ -114,6 +114,12 @@ struct sst_firmware {
 
 	/* DRAM bump allocator for module persistent/scratch memory */
 	uint32_t		dram_alloc_next;	/* Next free DRAM offset */
+
+	/* DSP processing stage capabilities (probed after boot) */
+	bool			has_volume;	/* SET_VOLUME stage (action 1) */
+	bool			has_biquad;	/* SET_BIQUAD stage (action 4) - HPF/EQ */
+	bool			has_limiter;	/* SET_LIMITER stage (action 5) - peak limiter */
+	bool			caps_probed;	/* true after probing complete */
 };
 
 /* Forward declaration */

@@ -1137,10 +1137,15 @@ static int
 sst_mixer_init(struct snd_mixer *m)
 {
 	struct sst_softc *sc = mix_getdevinfo(m);
+	uint32_t devs;
 
-	/* Register mixer controls */
-	mix_setdevs(m, SOUND_MASK_PCM | SOUND_MASK_VOLUME | SOUND_MASK_BASS |
-		       SOUND_MASK_TREBLE);
+	/* Register mixer controls based on DSP capabilities */
+	devs = SOUND_MASK_PCM | SOUND_MASK_VOLUME;
+	if (sc->fw.has_biquad)
+		devs |= SOUND_MASK_BASS;
+	if (sc->fw.has_limiter)
+		devs |= SOUND_MASK_TREBLE;
+	mix_setdevs(m, devs);
 
 	/* Set initial volumes */
 	sc->pcm.vol_left = 100;

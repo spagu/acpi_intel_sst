@@ -460,4 +460,7 @@ int	sst_ipc_set_limiter(struct sst_softc *sc, uint32_t stream_id,
 /* Power management */
 int	sst_ipc_set_dx(struct sst_softc *sc, uint32_t state);
 
+/* DSP stage capability probing */
+int	sst_ipc_probe_stage_caps(struct sst_softc *sc);
+
 #endif /* _SST_IPC_H_ */

@@ -2863,6 +2863,7 @@ dsp_init:
 		} else {
 			sst_ipc_get_fw_version(sc, NULL);
 			sst_fw_alloc_module_regions(sc);
+			sst_ipc_probe_stage_caps(sc);
 			sst_topology_load_default(sc);
 		}
 	}
@@ -3143,6 +3144,7 @@ sst_pci_attach(device_t dev)
 				/* Get firmware version */
 				sst_ipc_get_fw_version(sc, NULL);
 				sst_fw_alloc_module_regions(sc);
+				sst_ipc_probe_stage_caps(sc);
 				/* Load default audio topology */
 				sst_topology_load_default(sc);
 			}
@@ -3319,6 +3321,7 @@ sst_acpi_resume(device_t dev)
 			return (error);
 		}
 		sst_fw_alloc_module_regions(sc);
+		sst_ipc_probe_stage_caps(sc);
 	}
 
 	sc->state = SST_STATE_RUNNING;
