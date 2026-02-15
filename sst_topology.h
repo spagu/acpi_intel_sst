@@ -273,4 +273,7 @@ int	sst_topology_disconnect_route(struct sst_softc *sc, struct sst_route *r);
 struct sst_pipeline *sst_topology_get_pipeline(struct sst_softc *sc,
 					       int dir, int stream_num);
 
+/* Sysctl interface */
+int	sst_topology_sysctl_init(struct sst_softc *sc);
+
 #endif /* _SST_TOPOLOGY_H_ */

@@ -13,6 +13,7 @@
 #include <sys/bus.h>
 #include <sys/systm.h>
 #include <sys/malloc.h>
+#include <sys/sysctl.h>
 
 #include <machine/bus.h>
 
@@ -831,4 +832,56 @@ sst_topology_get_pipeline(struct sst_softc *sc, int dir, int stream_num)
 	}
 
 	return (NULL);
+}
+
+/*
+ * Sysctl handler for EQ preset switching.
+ * Reads/writes sc->pcm.eq_preset and applies to the HPF widget.
+ */
+static int
+sst_eq_preset_sysctl(SYSCTL_HANDLER_ARGS)
+{
+	struct sst_softc *sc = arg1;
+	int preset, error;
+
+	preset = (int)sc->pcm.eq_preset;
+	error = sysctl_handle_int(oidp, &preset, 0, req);
+	if (error || req->newptr == NULL)
+		return (error);
+
+	if (preset < 0 || preset >= SST_EQ_NUM_PRESETS)
+		return (EINVAL);
+
+	sc->pcm.eq_preset = (enum sst_eq_preset_id)preset;
+
+	{
+		struct sst_widget *hpf_w;
+		hpf_w = sst_topology_find_widget(sc, "HPF1.0");
+		if (hpf_w != NULL)
+			sst_topology_set_widget_eq_preset(sc, hpf_w,
+			    sc->pcm.eq_preset);
+	}
+
+	return (0);
+}
+
+/*
+ * Register EQ preset sysctl node under device tree.
+ * Creates dev.acpi_intel_sst.N.eq_preset (RW).
+ */
+int
+sst_topology_sysctl_init(struct sst_softc *sc)
+{
+	struct sysctl_ctx_list *ctx;
+	struct sysctl_oid *tree;
+
+	ctx = device_get_sysctl_ctx(sc->dev);
+	tree = device_get_sysctl_tree(sc->dev);
+
+	SYSCTL_ADD_PROC(ctx, SYSCTL_CHILDREN(tree), OID_AUTO,
+	    "eq_preset", CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_MPSAFE,
+	    sc, 0, sst_eq_preset_sysctl, "I",
+	    "EQ preset (0=flat, 1=stock_speaker, 2=mod_speaker)");
+
+	return (0);
 }
