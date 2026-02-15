@@ -2901,6 +2901,9 @@ dsp_init:
 	}
 	error = 0;
 
+	/* EQ preset sysctl */
+	sst_topology_sysctl_init(sc);
+
 	/* RT286 codec initialization and output enable */
 	if (sst_codec_init(sc) == 0) {
 		sst_codec_enable_speaker(sc);
@@ -3162,6 +3165,9 @@ sst_pci_attach(device_t dev)
 			sst_jack_enable(sc);
 		}
 		error = 0;
+
+		/* EQ preset sysctl */
+		sst_topology_sysctl_init(sc);
 
 		/* RT286 codec initialization and output enable */
 		if (sst_codec_init(sc) == 0) {
