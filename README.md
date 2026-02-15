@@ -9,7 +9,7 @@
 [![FreeBSD](https://img.shields.io/badge/FreeBSD-15--CURRENT-AB2B28?style=for-the-badge&logo=freebsd&logoColor=white)](https://www.freebsd.org/)
 [![License](https://img.shields.io/badge/License-BSD--3--Clause-0078D4?style=for-the-badge)](LICENSE)
 [![Platform](https://img.shields.io/badge/Intel-Broadwell--U-0071C5?style=for-the-badge&logo=intel&logoColor=white)](https://ark.intel.com/)
-[![Status](https://img.shields.io/badge/Audio-Working!-2ea44f?style=for-the-badge&logo=headphones&logoColor=white)](#current-status-v0530)
+[![Status](https://img.shields.io/badge/Audio-Working!-2ea44f?style=for-the-badge&logo=headphones&logoColor=white)](#current-status-v0550)
 
 [![Language](https://img.shields.io/badge/C-Kernel_Module-A8B9CC?style=for-the-badge&logo=c&logoColor=white)](https://github.com/spagu/acpi_intel_sst)
 [![Firmware](https://img.shields.io/badge/Firmware-IntcSST2.bin-FF6F00?style=for-the-badge&logo=intel&logoColor=white)](#2-install-firmware)
@@ -32,7 +32,7 @@ graph TD
     A["Application (play, mpv, firefox...)"] --> B["/dev/dsp — sound(4)"]
     B --> C["acpi_intel_sst.ko"]
     C -->|"IPC (catpt)"| D["DSP Firmware (IntcSST2.bin)"]
-    D -->|"HPF + Gain + Limiter"| D2["DSP Pipeline"]
+    D -->|"HPF + Gain + Limiter*"| D2["DSP Pipeline"]
     D2 -->|"DMA"| E["SSP0 — I2S 48kHz stereo"]
     E --> F["RT286 / ALC3263 codec (I2C0)"]
     F --> G["Speakers / Headphones"]
@@ -69,7 +69,7 @@ mixer vol 80 && play -n synth 3 sine 440
 
 ---
 
-## Current Status (v0.53.0)
+## Current Status (v0.55.0)
 
 <table>
 <tr><td>
@@ -82,16 +82,22 @@ mixer vol 80 && play -n synth 3 sine 440
 | IPC framework (catpt) | :white_check_mark: |
 | RT286 codec I2C | :white_check_mark: |
 | SSP/I2S audio output | :white_check_mark: |
+| PCM sound(4) | :white_check_mark: |
+| Jack detection | :white_check_mark: |
+| **Audio playback** | **:white_check_mark:** |
 
 </td><td>
 
 | Component | Status |
 |:----------|:------:|
-| PCM sound(4) | :white_check_mark: |
-| Jack detection | :white_check_mark: |
-| **Audio playback** | **:white_check_mark:** |
+| Volume control (dB→Q1.31) | :white_check_mark: |
+| Volume IPC rate-limiting | :white_check_mark: |
+| HPF biquad (speaker protection) | :white_check_mark: |
+| Peak limiter (speaker protection) | :white_check_mark: |
+| DSP stage capability detection | :white_check_mark: |
+| Dynamic pipeline topology | :white_check_mark: |
+| DSP stream stall recovery | :white_check_mark: |
 | Audio capture | :construction: |
-| Volume via IPC | :construction: |
 | Suspend/resume | :construction: |
 
 </td></tr>
@@ -263,7 +269,7 @@ These devices use the same Intel SST DSP and may work (untested):
 | [`sst_ssp.c`](sst_ssp.c) | I2S/SSP port configuration (2 ports) |
 | [`sst_dma.c`](sst_dma.c) | DMA controller (DesignWare DW-DMAC, 8 channels) |
 | [`sst_jack.c`](sst_jack.c) | Headphone jack detection (GPIO polling, debounce) |
-| [`sst_topology.c`](sst_topology.c) | Audio pipeline configuration (default Broadwell-U topology, HPF biquad) |
+| [`sst_topology.c`](sst_topology.c) | Audio pipeline configuration (dynamic topology with HPF biquad, limiter) |
 | [`sst_regs.h`](sst_regs.h) | Hardware register definitions (SHIM, VDRTCTL, SSP, DMA) |
 
 ---
@@ -273,7 +279,6 @@ These devices use the same Intel SST DSP and may work (untested):
 | Issue | Details |
 |:------|:--------|
 | **Capture disabled** | Channels registered but skipped; DSP can't do simultaneous play+capture on same SSP |
-| **Volume via IPC partial** | Gain widget exists; HPF (bass) control sends biquad coefficients to DSP |
 | **No suspend/resume** | Driver doesn't handle D3 transitions during sleep |
 | **Single platform tested** | Only Dell XPS 13 9343; other Broadwell-U/Haswell untested |
 
@@ -284,7 +289,7 @@ These devices use the same Intel SST DSP and may work (untested):
 | | File | Description |
 |:--|:-----|:------------|
 | :book: | [STATUS.md](STATUS.md) | Current driver status, known issues, next steps |
-| :scroll: | [CHANGELOG.md](CHANGELOG.md) | Detailed version history (v0.1.0 - v0.53.0) |
+| :scroll: | [CHANGELOG.md](CHANGELOG.md) | Detailed version history (v0.1.0 - v0.55.0) |
 | :handshake: | [CONTRIBUTING.md](CONTRIBUTING.md) | How to contribute |
 | :wrench: | [acpi/README.md](acpi/README.md) | DSDT patch instructions for Dell XPS 13 9343 |
 | :bar_chart: | [DIAGRAMS.md](DIAGRAMS.md) | Architecture & process flow diagrams (Mermaid) |
