@@ -1,47 +1,44 @@
 # Intel SST Audio Driver - Session Status
-## Date: 2026-02-14
-## Version: v0.55.0
+## Date: 2026-02-15
+## Version: v0.57.0
 
 ---
 
 ## LAST SESSION SUMMARY
 
-### Audio Output Achieved (with distortion)
+### Suspend/Resume Stability (Issue #10)
 
-After fixing the NID shift bug from v0.51.0, the codec now communicates correctly
-over I2C and the DSP streams audio data through SSP0 to the RT286 codec. Sound is
-audible for the first time, though significant distortion ("machine gun" / stuttering)
-remains.
+The driver's suspend/resume was previously minimal — suspend only reset the DSP
+and powered to D3, resume attempted a bare DSP boot with empty SRAM. Result:
+broken audio after any suspend/resume cycle. Now fully implemented with ordered
+teardown and complete reconstruction.
 
-### All Fixes in v0.52.0
+### Changes in v0.57.0
 
-1. **NID shift <<24 → <<20 (CRITICAL)** - v0.51.0 had introduced wrong NID shift
-   in sst_codec.h. HDA verb encoding uses NID in bits 27:20 (shift by 20), not
-   bits 31:24 (shift by 24). Verified against Linux rl6347a I2C source. Fixed in
-   all 18 macros. Codec register readbacks now return correct values.
+1. **Firmware SRAM reload** - `sst_fw_reload()` re-writes cached firmware from
+   host memory to SRAM after D3 power loss. The firmware(9) handle and
+   `sc->fw.data` persist in host memory across suspend; only SRAM is lost.
 
-2. **ISR debug printf removal** - Removed `device_printf` from IPC notification
-   handler in interrupt path. Was firing hundreds of times per second during
-   playback, causing audio jitter.
+2. **Suspend teardown** - `sst_acpi_suspend()` now performs ordered shutdown:
+   jack disable → PCM stream teardown → SSP stop → codec shutdown → topology
+   clear → DSP reset → D3 power-off.
 
-3. **Channel map fix** - Changed stereo channel_map from `0xFFFFFF20` to
-   `0xFFFFFF10`. Linux catpt uses sequential indices (0,1,2...) for channel
-   mapping, not the catpt_channel_index enum values (LEFT=0, RIGHT=2).
+3. **Resume reconstruction** - `sst_acpi_resume()` fully rebuilds the audio
+   pipeline: D0 → SHIM init → firmware reload → DSP boot → FW version query →
+   module regions → stage caps → topology rebuild → SSP0 device formats →
+   codec re-init → speaker/headphone enable → mixer restore → jack enable →
+   ramp arm.
 
-4. **I2C separate read transactions** - Implemented `sst_i2c_recv()` for
-   separate write+read I2C transactions (matching Linux rl6347a protocol).
+4. **Volume ramp-in** - 5-step linear ramp (~50ms) from silence to target
+   volume on first PCMTRIG_START after resume, preventing speaker pop.
 
-5. **RX FIFO drain** - Added FIFO drain before I2C write to clear stale data.
+5. **Mixer state on stream start** - Volume, HPF cutoff, and limiter threshold
+   are now applied via IPC on every PCMTRIG_START, also fixing parameter loss
+   after stall recovery.
 
-6. **SET_DEVICE_FORMATS at init** - Send SSP device format IPC once at attach
-   (like Linux catpt_dai_pcm_new), before any stream allocation.
-
-7. **Both speaker + headphone enabled** - Enable both output paths at init.
-
-8. **Codec PLL rearm** - Re-enable codec PLL after SSP starts clocking I2S,
-   so codec locks to active BCLK.
-
-9. **Poll debug reduction** - Reduced position poll debug from 20 to 3 prints.
+6. **PCM suspend/resume helpers** - `sst_pcm_suspend()` tears down streams and
+   stops timers; `sst_pcm_resume()` restores HPF/limiter widget params from
+   saved mixer state.
 
 ---
 
@@ -59,19 +56,25 @@ remains.
 - SSP/I2S port configuration (firmware-managed)
 - PCM sound(4) registration (child device pattern)
 - Jack detection (GPIO polling)
-- RT286 codec I2C communication (NID shift FIXED)
+- RT286 codec I2C communication
 - Codec initialization (PLL, DAC power, pin control, I2S mode)
 - DSP stream allocation (SYSTEM type, page table, module entry)
 - DSP position polling (read_pos_regaddr from DRAM)
-- **Audio output - sound is audible!**
+- Volume control (dB→Q1.31, rate-limited IPC)
+- HPF biquad (speaker protection, BASS mixer)
+- Peak limiter (speaker protection, TREBLE mixer)
+- DSP stage capability detection
+- Dynamic pipeline topology
+- DSP stream stall recovery
+- **Audio playback - working!**
+- **Suspend/resume (S3) - stable across multiple cycles**
+- **Resume volume ramp (anti-pop)**
 
 ### Known Issues
-1. **Audio distortion** - "machine gun" / stuttering effect during playback.
-   Sound is recognizable but heavily distorted. Possible causes:
-   - SSP SSCR0 DSS=7 may indicate 8-bit data width (firmware config)
-   - SSTSA=0x103 shows 3 active time slots for 2ch audio (slot 8 suspicious)
-   - DMA page table PFN format / buffer sync may need investigation
-   - Possible interleaving mismatch (PER_CHANNEL vs PER_SAMPLE)
+1. **Audio capture disabled** - Channels registered but skipped; DSP can't do
+   simultaneous play+capture on same SSP.
+2. **Single platform tested** - Only Dell XPS 13 9343; other Broadwell-U/Haswell
+   untested.
 
 ### Architecture
 ```
@@ -80,6 +83,8 @@ sound(4)  ←→  pcm child device (PCM_SOFTC_SIZE softc)
               acpi_intel_sst (sst_softc)
                    ↕ IPC (catpt)
               DSP Firmware (IntcSST2.bin)
+                   ↕ HPF + Gain + Limiter
+              DSP Pipeline
                    ↕ SSP0 (I2S)
               RT286/ALC3263 codec (I2C0 control)
                    ↕
@@ -89,14 +94,14 @@ sound(4)  ←→  pcm child device (PCM_SOFTC_SIZE softc)
 ### Key File Map
 | File | Purpose | Status |
 |------|---------|--------|
-| acpi_intel_sst.c | Main driver, power, ISR | Working |
-| sst_firmware.c | FW load/parse/boot | Working |
+| acpi_intel_sst.c | Main driver, power, suspend/resume, ISR | Working |
+| sst_firmware.c | FW load/parse/boot/reload | Working |
 | sst_ipc.c | Host↔DSP messaging (catpt) | Working |
 | sst_ipc.h | IPC protocol defs | Done |
 | sst_codec.c | RT286 codec over I2C | Working |
 | sst_codec.h | Codec register definitions | Done |
 | sst_dma.c | DMA controller | Working |
-| sst_pcm.c | sound(4) integration | 90% |
+| sst_pcm.c | sound(4) integration, suspend/resume, ramp | Working |
 | sst_ssp.c | I2S codec interface | Working |
 | sst_topology.c | Audio pipeline + HPF biquad + limiter | Working |
 | sst_jack.c | Headphone detect | Working |
@@ -106,30 +111,21 @@ sound(4)  ←→  pcm child device (PCM_SOFTC_SIZE softc)
 
 ## NEXT STEPS (priority order)
 
-### Phase 1: Fix Audio Distortion
-- [ ] Investigate SSP data width (SSCR0 DSS field) - 8-bit vs 16-bit
-- [ ] Check SSTSA time slot configuration - 3 slots for 2ch audio
-- [ ] Verify page table PFN format matches catpt expectations
-- [ ] Try PER_SAMPLE interleaving instead of PER_CHANNEL
-- [ ] Add bus_dmamap_sync to audio buffer before DSP reads
-- [ ] Compare full IPC payload byte-for-byte with Linux catpt
+### Phase 1: Audio Capture
+- [ ] Enable capture stream allocation on SSP1
+- [ ] Test microphone input via ADC path
+- [ ] Jack-based input source switching
 
-### Phase 2: Audio Quality Polish
-- [ ] Investigate write position updates for SYSTEM streams
-- [ ] Volume control via IPC (SET_VOLUME)
-- [ ] Proper capture stream support
-- [ ] Jack-based output switching (speaker vs headphone)
-
-### Phase 3: Production Readiness
+### Phase 2: Production Readiness
 - [ ] Remove remaining debug printf from attach path
-- [ ] Error recovery (stream restart on underrun)
-- [ ] Power management (D3 suspend/resume)
-- [ ] Module unload/reload stability
+- [ ] Module unload/reload stability hardening
+- [ ] Test on other Broadwell-U/Haswell platforms
 
 ---
 
 ## COMMIT HISTORY
 ```
+v0.57.0 - Suspend/resume stability: full teardown/rebuild, FW reload, volume ramp (issue #10)
 v0.55.0 - Limiter before SSP0 output, limiter IPC, TREBLE mixer control (issue #3)
 v0.54.0 - HPF in playback pipeline, biquad IPC, BASS mixer control (issue #2)
 v0.52.0 - First audio output! Fix NID shift, channel map, I2C, ISR debug
