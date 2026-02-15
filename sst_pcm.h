@@ -96,6 +96,7 @@ struct sst_pcm_channel {
 	struct callout		poll_timer;	/* Polling callout */
 	uint32_t		last_pos;	/* Last polled position */
 	int			dbg_polls;	/* Debug poll counter */
+	uint32_t		stall_count;	/* Consecutive polls with no movement */
 };
 
 /*
@@ -130,6 +131,10 @@ struct sst_pcm {
 
 	/* Limiter control */
 	uint32_t		limiter_threshold; /* Preset index, 0=bypass */
+
+	/* Volume rate limiting (prevent DSP IPC flood) */
+	int			vol_ticks;	/* tick count of last SET_VOLUME */
+	bool			vol_pending;	/* deferred volume update waiting */
 
 	/* State */
 	bool			registered;	/* PCM device registered */
