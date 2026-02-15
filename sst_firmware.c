@@ -50,8 +50,8 @@ sst_fw_validate_header(struct sst_softc *sc, const struct sst_fw_header *hdr,
 		return (EINVAL);
 	}
 
-	device_printf(sc->dev, "Firmware: size=%u, modules=%u, format=%u\n",
-		      hdr->file_size, hdr->modules, hdr->file_format);
+	sst_dbg(sc, SST_DBG_OPS, "Firmware: size=%u, modules=%u, format=%u\n",
+		hdr->file_size, hdr->modules, hdr->file_format);
 
 	return (0);
 }
@@ -103,7 +103,7 @@ sst_fw_load_block(struct sst_softc *sc, const struct sst_block_header *blk,
 		return (EINVAL);
 	}
 
-	device_printf(sc->dev,
+	sst_dbg(sc, SST_DBG_OPS,
 	    "  Block: type=%s(%u) offset=0x%x size=0x%x -> BAR0+0x%lx\n",
 	    type_name, blk->ram_type, blk->ram_offset, blk->size,
 	    (unsigned long)offset);
@@ -208,7 +208,7 @@ sst_fw_load_module(struct sst_softc *sc, const uint8_t *data, size_t size,
 		return (EINVAL);
 	}
 
-	device_printf(sc->dev,
+	sst_dbg(sc, SST_DBG_OPS,
 	    "Module[%u]: slot=%u, size=%u, blocks=%u, entry=0x%08x,"
 	    " persist=%u, scratch=%u\n",
 	    mod->module_id, mod->slot, mod->mod_size, mod->blocks,
@@ -302,7 +302,7 @@ sst_fw_parse(struct sst_softc *sc)
 	remaining = sc->fw.size - sizeof(struct sst_fw_header);
 
 	if (remaining >= 4) {
-		device_printf(sc->dev,
+		sst_dbg(sc, SST_DBG_TRACE,
 		    "First module bytes: %02x %02x %02x %02x (\"%.4s\")\n",
 		    ptr[0], ptr[1], ptr[2], ptr[3], (const char *)ptr);
 	}
@@ -336,7 +336,7 @@ sst_fw_parse(struct sst_softc *sc)
 		remaining -= consumed;
 	}
 
-	device_printf(sc->dev,
+	sst_dbg(sc, SST_DBG_LIFE,
 	    "All %u modules loaded, %zu bytes remaining in firmware\n",
 	    hdr->modules, remaining);
 
@@ -372,7 +372,7 @@ sst_fw_alloc_module_regions(struct sst_softc *sc)
 
 	sc->fw.dram_alloc_next = alloc_start;
 
-	device_printf(sc->dev,
+	sst_dbg(sc, SST_DBG_OPS,
 	    "DRAM allocator: start=0x%x (mbox ends ~0x%x)\n",
 	    alloc_start,
 	    (uint32_t)(sc->ipc.mbox_out + SST_MBOX_SIZE_OUT));
@@ -399,7 +399,7 @@ sst_fw_alloc_module_regions(struct sst_softc *sc)
 
 		if (sc->fw.mod[i].persistent_size > 0 ||
 		    sc->fw.mod[i].scratch_size > 0) {
-			device_printf(sc->dev,
+			sst_dbg(sc, SST_DBG_OPS,
 			    "  Module %u: persist @0x%x (%u bytes) "
 			    "scratch @0x%x (%u bytes)\n",
 			    i,
@@ -418,7 +418,7 @@ sst_fw_alloc_module_regions(struct sst_softc *sc)
 		    (unsigned long)sc->ipc.mbox_in);
 	}
 
-	device_printf(sc->dev,
+	sst_dbg(sc, SST_DBG_OPS,
 	    "DRAM allocator: used 0x%x - 0x%x (%u bytes, mbox@0x%lx)\n",
 	    alloc_start, sc->fw.dram_alloc_next,
 	    sc->fw.dram_alloc_next - alloc_start,
@@ -477,7 +477,7 @@ sst_fw_load(struct sst_softc *sc)
 	/* Select firmware path based on platform */
 	fw_path = SST_FW_PATH_BDW;
 
-	device_printf(sc->dev, "Loading firmware: %s\n", fw_path);
+	sst_dbg(sc, SST_DBG_LIFE, "Loading firmware: %s\n", fw_path);
 
 	/* Request firmware */
 	sc->fw.fw = firmware_get(fw_path);
@@ -493,7 +493,7 @@ sst_fw_load(struct sst_softc *sc)
 	sc->fw.data = sc->fw.fw->data;
 	sc->fw.size = sc->fw.fw->datasize;
 
-	device_printf(sc->dev, "Firmware loaded: %zu bytes\n", sc->fw.size);
+	sst_dbg(sc, SST_DBG_LIFE, "Firmware loaded: %zu bytes\n", sc->fw.size);
 
 	/* Parse and load to DSP */
 	error = sst_fw_parse(sc);
@@ -504,8 +504,8 @@ sst_fw_load(struct sst_softc *sc)
 	}
 
 	sc->fw.state = SST_FW_STATE_LOADED;
-	device_printf(sc->dev, "Firmware parsed: entry=0x%08x\n",
-		      sc->fw.entry_point);
+	sst_dbg(sc, SST_DBG_LIFE, "Firmware parsed: entry=0x%08x\n",
+		sc->fw.entry_point);
 
 	return (0);
 }
@@ -551,7 +551,7 @@ sst_fw_reload(struct sst_softc *sc)
 		return (EINVAL);
 	}
 
-	device_printf(sc->dev, "Reloading firmware to SRAM (%zu bytes)...\n",
+	sst_dbg(sc, SST_DBG_LIFE, "Reloading firmware to SRAM (%zu bytes)...\n",
 	    sc->fw.size);
 
 	sst_dsp_stall(sc, true);
@@ -590,11 +590,11 @@ sst_fw_boot(struct sst_softc *sc)
 		return (EINVAL);
 	}
 
-	device_printf(sc->dev, "Booting DSP (catpt sequence)...\n");
+	sst_dbg(sc, SST_DBG_LIFE, "Booting DSP (catpt sequence)...\n");
 
 	/* Read initial CSR state */
 	csr = sst_shim_read(sc, SST_SHIM_CSR);
-	device_printf(sc->dev, "  Initial CSR: 0x%08x (STALL=%d RST=%d)\n",
+	sst_dbg(sc, SST_DBG_TRACE, "  Initial CSR: 0x%08x (STALL=%d RST=%d)\n",
 	    csr, !!(csr & SST_CSR_STALL), !!(csr & SST_CSR_RST));
 
 	/*
@@ -607,7 +607,7 @@ sst_fw_boot(struct sst_softc *sc)
 		device_printf(sc->dev, "  Failed to stall DSP\n");
 	}
 	csr = sst_shim_read(sc, SST_SHIM_CSR);
-	device_printf(sc->dev, "  After stall: CSR=0x%08x (STALL=%d)\n",
+	sst_dbg(sc, SST_DBG_TRACE, "  After stall: CSR=0x%08x (STALL=%d)\n",
 	    csr, !!(csr & SST_CSR_STALL));
 
 	/*
@@ -623,7 +623,7 @@ sst_fw_boot(struct sst_softc *sc)
 		iram4 = bus_read_4(sc->mem_res, SST_IRAM_OFFSET + 4);
 		dram0 = bus_read_4(sc->mem_res, SST_DRAM_OFFSET);
 		dram4 = bus_read_4(sc->mem_res, SST_DRAM_OFFSET + 4);
-		device_printf(sc->dev,
+		sst_dbg(sc, SST_DBG_TRACE,
 		    "  SRAM check: IRAM[0]=0x%08x [4]=0x%08x"
 		    " DRAM[0]=0x%08x [4]=0x%08x\n",
 		    iram0, iram4, dram0, dram4);
@@ -661,7 +661,7 @@ sst_fw_boot(struct sst_softc *sc)
 	{
 		uint32_t stale_ipcd = sst_shim_read(sc, SST_SHIM_IPCD);
 		uint32_t stale_isrx = sst_shim_read(sc, SST_SHIM_ISRX);
-		device_printf(sc->dev,
+		sst_dbg(sc, SST_DBG_TRACE,
 		    "  Pre-boot: IPCD=0x%08x ISRX=0x%08x IMRX=0x%08x\n",
 		    stale_ipcd, stale_isrx,
 		    sst_shim_read(sc, SST_SHIM_IMRX));
@@ -671,7 +671,7 @@ sst_fw_boot(struct sst_softc *sc)
 		 * RST is already cleared (done in SHIM config during attach).
 		 * Linux catpt: only toggles STALL, RST stays cleared.
 		 */
-		device_printf(sc->dev,
+		sst_dbg(sc, SST_DBG_TRACE,
 		    "  Clearing STALL (BIT 10) to start DSP...\n");
 		error = sst_dsp_stall(sc, false);
 		if (error) {
@@ -679,11 +679,11 @@ sst_fw_boot(struct sst_softc *sc)
 			return (error);
 		}
 		csr = sst_shim_read(sc, SST_SHIM_CSR);
-		device_printf(sc->dev,
+		sst_dbg(sc, SST_DBG_TRACE,
 		    "  After unstall: CSR=0x%08x (STALL=%d RST=%d)\n",
 		    csr, !!(csr & SST_CSR_STALL), !!(csr & SST_CSR_RST));
 
-		device_printf(sc->dev,
+		sst_dbg(sc, SST_DBG_LIFE,
 		    "DSP running, waiting for FW ready...\n");
 
 		/*
@@ -720,7 +720,7 @@ sst_fw_boot(struct sst_softc *sc)
 					 */
 					if ((ipcd & SST_IPC_FW_READY) &&
 					    (ipcd & SST_IPC_BUSY)) {
-						device_printf(sc->dev,
+						sst_dbg(sc, SST_DBG_LIFE,
 						    "DSP FW_READY! "
 						    "IPCD=0x%08x "
 						    "(was 0x%08x) "
@@ -741,7 +741,7 @@ sst_fw_boot(struct sst_softc *sc)
 					 * log it but keep waiting
 					 */
 					if (ipcd != stale_ipcd) {
-						device_printf(sc->dev,
+						sst_dbg(sc, SST_DBG_TRACE,
 						    "  IPCD changed: "
 						    "0x%08x -> 0x%08x "
 						    "(fw_ready=%d) "
@@ -756,7 +756,7 @@ sst_fw_boot(struct sst_softc *sc)
 
 				/* Periodic status dump */
 				if (elapsed > 0 && elapsed % 1000 == 0) {
-					device_printf(sc->dev,
+					sst_dbg(sc, SST_DBG_TRACE,
 					    "  Boot poll %ds: "
 					    "CSR=0x%08x "
 					    "IPCD=0x%08x "
@@ -800,7 +800,7 @@ sst_fw_boot(struct sst_softc *sc)
 	}
 
 	sc->fw.state = SST_FW_STATE_RUNNING;
-	device_printf(sc->dev, "DSP firmware running!\n");
+	sst_dbg(sc, SST_DBG_LIFE, "DSP firmware running!\n");
 
 	/*
 	 * Parse FW_READY mailbox from DSP
@@ -829,7 +829,7 @@ sst_fw_boot(struct sst_softc *sc)
 		 */
 		mbox_offset = SST_IPC_MBOX_OFFSET(ipcd_val);
 
-		device_printf(sc->dev,
+		sst_dbg(sc, SST_DBG_TRACE,
 		    "FW_READY: IPCD=0x%08x mbox_addr_raw=0x%x "
 		    "mbox_offset=0x%x\n",
 		    ipcd_val, ipcd_val & SST_IPC_MBOX_ADDR_MASK,
@@ -850,7 +850,7 @@ sst_fw_boot(struct sst_softc *sc)
 		}
 
 		/* Also dump what's at DRAM[0] for comparison */
-		device_printf(sc->dev,
+		sst_dbg(sc, SST_DBG_TRACE,
 		    "  DRAM[0x000000]=0x%08x DRAM[0x%06x]=0x%08x\n",
 		    bus_read_4(sc->mem_res, SST_DRAM_OFFSET),
 		    mbox_offset,
@@ -863,7 +863,7 @@ sst_fw_boot(struct sst_softc *sc)
 			    mbox_offset + k * 4);
 		}
 
-		device_printf(sc->dev,
+		sst_dbg(sc, SST_DBG_OPS,
 		    "FW_READY mailbox @0x%x: inbox=0x%x outbox=0x%x "
 		    "in_sz=0x%x out_sz=0x%x info_sz=%u\n",
 		    mbox_offset,
@@ -885,7 +885,7 @@ sst_fw_boot(struct sst_softc *sc)
 			 */
 			sc->ipc.mbox_in = fw_ready.outbox_offset;
 			sc->ipc.mbox_out = fw_ready.inbox_offset;
-			device_printf(sc->dev,
+			sst_dbg(sc, SST_DBG_LIFE,
 			    "IPC mailbox configured: "
 			    "in=BAR0+0x%lx (%lu bytes) "
 			    "out=BAR0+0x%lx (%lu bytes)\n",
@@ -907,7 +907,7 @@ sst_fw_boot(struct sst_softc *sc)
 		if (fw_ready.fw_info_size > 0 &&
 		    fw_ready.fw_info_size <= SST_FW_INFO_SIZE_MAX) {
 			fw_ready.fw_info[SST_FW_INFO_SIZE_MAX - 1] = '\0';
-			device_printf(sc->dev, "FW info: %s\n",
+			sst_dbg(sc, SST_DBG_LIFE, "FW info: %s\n",
 			    fw_ready.fw_info);
 		}
 	}
@@ -925,7 +925,7 @@ sst_fw_boot(struct sst_softc *sc)
 		vdrtctl2 = bus_read_4(sc->shim_res, SST_PCI_VDRTCTL2);
 		vdrtctl2 |= SST_VDRTCTL2_DCLCGE;
 		bus_write_4(sc->shim_res, SST_PCI_VDRTCTL2, vdrtctl2);
-		device_printf(sc->dev, "DCLCGE re-enabled after FW boot\n");
+		sst_dbg(sc, SST_DBG_OPS, "DCLCGE re-enabled after FW boot\n");
 	}
 
 	return (0);

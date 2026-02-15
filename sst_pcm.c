@@ -304,7 +304,7 @@ sst_pcm_alloc_pgtbl(struct sst_softc *sc, struct sst_pcm_channel *ch)
 	bus_dmamap_sync(ch->pgtbl_tag, ch->pgtbl_map,
 	    BUS_DMASYNC_PREWRITE);
 
-	device_printf(sc->dev,
+	sst_dbg(sc, SST_DBG_LIFE,
 	    "PCM: pgtbl allocated: %u pages, phys=0x%lx, first_pfn=0x%x\n",
 	    num_pages, (unsigned long)ch->pgtbl_addr,
 	    (uint32_t)(ch->dma_addr >> PAGE_SHIFT));
@@ -408,7 +408,7 @@ sst_chan_init(kobj_t obj, void *devinfo, struct snd_dbuf *b,
 	struct sst_pcm_channel *ch;
 	int error;
 
-	device_printf(sc->dev, "PCM: chan_init dir=%d b=%p c=%p\n",
+	sst_dbg(sc, SST_DBG_LIFE, "PCM: chan_init dir=%d b=%p c=%p\n",
 	    dir, b, c);
 
 	/* Allocate channel slot from pool */
@@ -419,7 +419,7 @@ sst_chan_init(kobj_t obj, void *devinfo, struct snd_dbuf *b,
 		return (NULL);
 	}
 
-	device_printf(sc->dev, "PCM: chan slot %d allocated\n", ch->index);
+	sst_dbg(sc, SST_DBG_LIFE, "PCM: chan slot %d allocated\n", ch->index);
 
 	/* SSP port: 0 for playback, 1 for capture */
 	ch->ssp_port = (dir == PCMDIR_PLAY) ? 0 : 1;
@@ -430,7 +430,7 @@ sst_chan_init(kobj_t obj, void *devinfo, struct snd_dbuf *b,
 	ch->sndbuf = b;
 
 	/* Allocate DMA buffer */
-	device_printf(sc->dev, "PCM: allocating DMA buffer\n");
+	sst_dbg(sc, SST_DBG_TRACE, "PCM: allocating DMA buffer\n");
 	error = sst_pcm_alloc_buffer(sc, ch);
 	if (error) {
 		device_printf(sc->dev, "PCM: DMA buffer alloc failed: %d\n",
@@ -439,7 +439,7 @@ sst_chan_init(kobj_t obj, void *devinfo, struct snd_dbuf *b,
 		return (NULL);
 	}
 
-	device_printf(sc->dev, "PCM: DMA buf=%p size=%zu\n",
+	sst_dbg(sc, SST_DBG_TRACE, "PCM: DMA buf=%p size=%zu\n",
 	    ch->buf, ch->buf_size);
 
 	/* Allocate page table for DSP ring buffer */
@@ -455,7 +455,7 @@ sst_chan_init(kobj_t obj, void *devinfo, struct snd_dbuf *b,
 	ch->dma_ch = -1;
 
 	/* Setup sound buffer */
-	device_printf(sc->dev, "PCM: sndbuf_setup buf=%p size=%zu\n",
+	sst_dbg(sc, SST_DBG_TRACE, "PCM: sndbuf_setup buf=%p size=%zu\n",
 	    ch->buf, ch->buf_size);
 	if (sndbuf_setup(b, ch->buf, ch->buf_size) != 0) {
 		device_printf(sc->dev, "Failed to setup sound buffer\n");
@@ -478,7 +478,7 @@ sst_chan_init(kobj_t obj, void *devinfo, struct snd_dbuf *b,
 	ch->stream_allocated = false;
 	ch->read_pos_regaddr = 0;
 
-	device_printf(sc->dev, "PCM: Allocated %s channel %d\n",
+	sst_dbg(sc, SST_DBG_LIFE, "PCM: Allocated %s channel %d\n",
 	    (dir == PCMDIR_PLAY) ? "playback" : "capture", ch->index);
 
 	return (ch);
@@ -514,7 +514,7 @@ sst_chan_free(kobj_t obj, void *data)
 	/* Release channel slot back to pool */
 	sst_pcm_release_channel(sc, ch);
 
-	device_printf(sc->dev, "PCM: Released %s stream %d\n",
+	sst_dbg(sc, SST_DBG_LIFE, "PCM: Released %s stream %d\n",
 	    (ch->dir == PCMDIR_PLAY) ? "playback" : "capture", ch->index);
 
 	return (0);
@@ -697,7 +697,7 @@ sst_pcm_alloc_dsp_stream(struct sst_softc *sc, struct sst_pcm_channel *ch)
 
 	req.num_notifications = 0; /* Linux catpt sends 0 */
 
-	device_printf(sc->dev,
+	sst_dbg(sc, SST_DBG_OPS,
 	    "DSP stream alloc: type=%u path=%u fmt=%u mod=0x%x "
 	    "rate=%u depth=%u ch=%u pgtbl=0x%x pages=%u "
 	    "persist=0x%x/%u scratch=0x%x/%u\n",
@@ -720,12 +720,19 @@ sst_pcm_alloc_dsp_stream(struct sst_softc *sc, struct sst_pcm_channel *ch)
 	ch->stream_allocated = true;
 	ch->read_pos_regaddr = rsp.read_pos_regaddr;
 
-	device_printf(sc->dev,
+	/* Capture telemetry register addresses */
+	ch->peak_meter_regaddr[0] = rsp.peak_meter_regaddr[0];
+	ch->peak_meter_regaddr[1] = rsp.peak_meter_regaddr[1];
+	ch->volume_regaddr[0] = rsp.volume_regaddr[0];
+	ch->volume_regaddr[1] = rsp.volume_regaddr[1];
+
+	sst_dbg(sc, SST_DBG_LIFE,
 	    "PCM: Allocated DSP stream %u for %s "
-	    "(read_pos=0x%x pres_pos=0x%x)\n",
+	    "(read_pos=0x%x pres_pos=0x%x peak=0x%x/0x%x)\n",
 	    ch->stream_id,
 	    (ch->dir == PCMDIR_PLAY) ? "playback" : "capture",
-	    rsp.read_pos_regaddr, rsp.pres_pos_regaddr);
+	    rsp.read_pos_regaddr, rsp.pres_pos_regaddr,
+	    rsp.peak_meter_regaddr[0], rsp.peak_meter_regaddr[1]);
 
 	return (0);
 }
@@ -779,7 +786,7 @@ sst_pcm_poll(void *arg)
 
 	/* Debug: show first 3 polls after each start */
 	if (ch->dbg_polls < 3) {
-		device_printf(sc->dev,
+		sst_dbg(sc, SST_DBG_TRACE,
 		    "poll[%d]: pos=%u last=%u (buf=%zu blk=%u)\n",
 		    ch->dbg_polls, pos, ch->last_pos,
 		    ch->buf_size, ch->blk_size);
@@ -807,7 +814,7 @@ sst_pcm_poll(void *arg)
 	 * 200 polls at ~5ms = 1 second of no movement.
 	 */
 	if (ch->stall_count == 200 && ch->stream_allocated) {
-		device_printf(sc->dev,
+		sst_dbg(sc, SST_DBG_LIFE,
 		    "PCM: stream %u stalled at pos=%u, restarting\n",
 		    ch->stream_id, pos);
 		/*
@@ -865,7 +872,7 @@ sst_pcm_poll(void *arg)
 				}
 			}
 
-			device_printf(sc->dev,
+			sst_dbg(sc, SST_DBG_LIFE,
 			    "PCM: stream recovered as %u\n",
 			    ch->stream_id);
 		} else {
@@ -876,6 +883,33 @@ sst_pcm_poll(void *arg)
 	}
 
 	ch->last_pos = pos;
+
+	/*
+	 * Telemetry: read peak meters from DSP DRAM.
+	 * The DSP writes Q1.31 peak levels to these registers.
+	 * Only for playback — capture peak meters are less useful.
+	 */
+	if (ch->dir == PCMDIR_PLAY && ch->peak_meter_regaddr[0] != 0) {
+		uint32_t pl, pr;
+
+		pl = bus_read_4(sc->mem_res, ch->peak_meter_regaddr[0]);
+		pr = bus_read_4(sc->mem_res, ch->peak_meter_regaddr[1]);
+		sc->pcm.peak_left = pl;
+		sc->pcm.peak_right = pr;
+
+		/* Clipping detection: Q1.31 near full-scale */
+		if (pl >= 0x7F000000 || pr >= 0x7F000000)
+			sc->pcm.clip_count++;
+
+		/* Limiter activity: DSP volume register drops below peak */
+		if (ch->volume_regaddr[0] != 0) {
+			uint32_t dsp_vol;
+
+			dsp_vol = bus_read_4(sc->mem_res,
+			    ch->volume_regaddr[0]);
+			sc->pcm.limiter_active = (dsp_vol < pl);
+		}
+	}
 
 	/*
 	 * Flush deferred volume update.
@@ -1161,7 +1195,7 @@ sst_chan_trigger(kobj_t obj, void *data, int go)
 		ch->dbg_polls = 0;
 		ch->state = SST_PCM_STATE_RUNNING;
 
-		device_printf(sc->dev,
+		sst_dbg(sc, SST_DBG_OPS,
 		    "PCM: %s started (stream=%u read_pos=0x%x)\n",
 		    (ch->dir == PCMDIR_PLAY) ? "playback" : "capture",
 		    ch->stream_id, ch->read_pos_regaddr);
@@ -1196,7 +1230,7 @@ sst_chan_trigger(kobj_t obj, void *data, int go)
 
 		ch->state = SST_PCM_STATE_PREPARED;
 
-		device_printf(sc->dev, "PCM: %s stopped\n",
+		sst_dbg(sc, SST_DBG_OPS, "PCM: %s stopped\n",
 		    (ch->dir == PCMDIR_PLAY) ? "playback" : "capture");
 		break;
 
@@ -1538,7 +1572,7 @@ sst_pcm_init(struct sst_softc *sc)
 	sc->pcm.resume_ramp = false;
 	sc->pcm.ramp_step = 0;
 
-	device_printf(sc->dev, "PCM subsystem initialized: %d play, %d rec streams\n",
+	sst_dbg(sc, SST_DBG_LIFE, "PCM subsystem initialized: %d play, %d rec streams\n",
 	    SST_PCM_MAX_PLAY, SST_PCM_MAX_REC);
 
 	return (0);
@@ -1571,10 +1605,10 @@ sst_pcm_fini(struct sst_softc *sc)
 int
 sst_pcm_register(struct sst_softc *sc)
 {
-	device_printf(sc->dev, "PCM: Creating child pcm device\n");
+	sst_dbg(sc, SST_DBG_LIFE, "PCM: Creating child pcm device\n");
 
 	if (sc->pcm.pcm_dev != NULL || sc->pcm.registered) {
-		device_printf(sc->dev, "PCM: Already registered\n");
+		sst_dbg(sc, SST_DBG_LIFE, "PCM: Already registered\n");
 		return (0);
 	}
 
@@ -1593,7 +1627,7 @@ sst_pcm_register(struct sst_softc *sc)
 
 	/* Pass our softc to the child via ivars */
 	device_set_ivars(sc->pcm.pcm_dev, sc);
-	device_printf(sc->dev,
+	sst_dbg(sc, SST_DBG_LIFE,
 	    "PCM: child=%p ivars set to sc=%p sc->dev=%p\n",
 	    sc->pcm.pcm_dev, sc, sc->dev);
 
@@ -1661,7 +1695,7 @@ sst_pcm_child_attach(device_t dev)
 		return (ENXIO);
 	}
 
-	device_printf(dev, "PCM child attach: parent=%s sc=%p\n",
+	sst_dbg(sc, SST_DBG_LIFE, "PCM child attach: parent=%s sc=%p\n",
 	    device_get_nameunit(sc->dev), sc);
 
 	/* Build status string */
@@ -1702,7 +1736,7 @@ sst_pcm_child_attach(device_t dev)
 
 	sc->pcm.registered = true;
 
-	device_printf(dev, "PCM registered: %s (%d play, %d rec)\n",
+	sst_dbg(sc, SST_DBG_LIFE, "PCM registered: %s (%d play, %d rec)\n",
 	    status, SST_PCM_MAX_PLAY, SST_PCM_MAX_REC);
 
 	return (0);

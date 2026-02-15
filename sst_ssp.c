@@ -158,7 +158,7 @@ ssp_configure_i2s(struct sst_softc *sc, int port, struct sst_ssp_config *config)
 	ssp_write(sc, port, SSP_SSTSA, (1 << config->channels) - 1);
 	ssp_write(sc, port, SSP_SSRSA, (1 << config->channels) - 1);
 
-	device_printf(sc->dev, "SSP%d: Configured I2S %uHz/%ubit/%uch %s\n",
+	sst_dbg(sc, SST_DBG_OPS, "SSP%d: Configured I2S %uHz/%ubit/%uch %s\n",
 		      port, config->sample_rate, config->sample_bits,
 		      config->channels, config->master ? "master" : "slave");
 
@@ -193,7 +193,7 @@ sst_ssp_init(struct sst_softc *sc)
 
 	sc->ssp.initialized = true;
 
-	device_printf(sc->dev, "SSP initialized: %d ports\n", SST_SSP_PORTS);
+	sst_dbg(sc, SST_DBG_LIFE, "SSP initialized: %d ports\n", SST_SSP_PORTS);
 
 	return (0);
 }
@@ -294,7 +294,7 @@ sst_ssp_start(struct sst_softc *sc, int port)
 
 	sc->ssp.port[port].state = SST_SSP_STATE_RUNNING;
 
-	device_printf(sc->dev, "SSP%d: Started\n", port);
+	sst_dbg(sc, SST_DBG_OPS, "SSP%d: Started\n", port);
 
 	return (0);
 }
@@ -327,7 +327,7 @@ sst_ssp_stop(struct sst_softc *sc, int port)
 
 	sc->ssp.port[port].state = SST_SSP_STATE_CONFIGURED;
 
-	device_printf(sc->dev, "SSP%d: Stopped\n", port);
+	sst_dbg(sc, SST_DBG_OPS, "SSP%d: Stopped\n", port);
 
 	return (0);
 }
@@ -464,12 +464,12 @@ sst_ssp_dump_regs(struct sst_softc *sc, int port)
 	if (port < 0 || port >= SST_SSP_PORTS)
 		return;
 
-	device_printf(sc->dev, "SSP%d Register Dump:\n", port);
-	device_printf(sc->dev, "  SSCR0: 0x%08x\n", ssp_read(sc, port, SSP_SSCR0));
-	device_printf(sc->dev, "  SSCR1: 0x%08x\n", ssp_read(sc, port, SSP_SSCR1));
-	device_printf(sc->dev, "  SSSR:  0x%08x\n", ssp_read(sc, port, SSP_SSSR));
-	device_printf(sc->dev, "  SSPSP: 0x%08x\n", ssp_read(sc, port, SSP_SSPSP));
-	device_printf(sc->dev, "  SSACD: 0x%08x\n", ssp_read(sc, port, SSP_SSACD));
-	device_printf(sc->dev, "  SSTSA: 0x%08x\n", ssp_read(sc, port, SSP_SSTSA));
-	device_printf(sc->dev, "  SSRSA: 0x%08x\n", ssp_read(sc, port, SSP_SSRSA));
+	sst_dbg(sc, SST_DBG_TRACE, "SSP%d Register Dump:\n", port);
+	sst_dbg(sc, SST_DBG_TRACE, "  SSCR0: 0x%08x\n", ssp_read(sc, port, SSP_SSCR0));
+	sst_dbg(sc, SST_DBG_TRACE, "  SSCR1: 0x%08x\n", ssp_read(sc, port, SSP_SSCR1));
+	sst_dbg(sc, SST_DBG_TRACE, "  SSSR:  0x%08x\n", ssp_read(sc, port, SSP_SSSR));
+	sst_dbg(sc, SST_DBG_TRACE, "  SSPSP: 0x%08x\n", ssp_read(sc, port, SSP_SSPSP));
+	sst_dbg(sc, SST_DBG_TRACE, "  SSACD: 0x%08x\n", ssp_read(sc, port, SSP_SSACD));
+	sst_dbg(sc, SST_DBG_TRACE, "  SSTSA: 0x%08x\n", ssp_read(sc, port, SSP_SSTSA));
+	sst_dbg(sc, SST_DBG_TRACE, "  SSRSA: 0x%08x\n", ssp_read(sc, port, SSP_SSRSA));
 }

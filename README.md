@@ -9,7 +9,7 @@
 [![FreeBSD](https://img.shields.io/badge/FreeBSD-15--CURRENT-AB2B28?style=for-the-badge&logo=freebsd&logoColor=white)](https://www.freebsd.org/)
 [![License](https://img.shields.io/badge/License-BSD--3--Clause-0078D4?style=for-the-badge)](LICENSE)
 [![Platform](https://img.shields.io/badge/Intel-Broadwell--U-0071C5?style=for-the-badge&logo=intel&logoColor=white)](https://ark.intel.com/)
-[![Status](https://img.shields.io/badge/Audio-Working!-2ea44f?style=for-the-badge&logo=headphones&logoColor=white)](#current-status-v0580)
+[![Status](https://img.shields.io/badge/Audio-Working!-2ea44f?style=for-the-badge&logo=headphones&logoColor=white)](#current-status-v0600)
 
 [![Language](https://img.shields.io/badge/C-Kernel_Module-A8B9CC?style=for-the-badge&logo=c&logoColor=white)](https://github.com/spagu/acpi_intel_sst)
 [![Firmware](https://img.shields.io/badge/Firmware-IntcSST2.bin-FF6F00?style=for-the-badge&logo=intel&logoColor=white)](#2-install-firmware)
@@ -69,7 +69,7 @@ mixer vol 80 && play -n synth 3 sine 440
 
 ---
 
-## Current Status (v0.58.0)
+## Current Status (v0.60.0)
 
 <table>
 <tr><td>
@@ -100,6 +100,9 @@ mixer vol 80 && play -n synth 3 sine 440
 | DSP stream stall recovery | :white_check_mark: |
 | Suspend/resume (S3) | :white_check_mark: |
 | Resume volume ramp (anti-pop) | :white_check_mark: |
+| Debug verbosity sysctl (0-3) | :white_check_mark: |
+| DSP peak meter telemetry | :white_check_mark: |
+| Clipping detection | :white_check_mark: |
 | Audio capture | :construction: |
 
 </td></tr>
@@ -229,6 +232,26 @@ All runtime parameters are exposed via `sysctl` under `dev.acpi_intel_sst.0.*`.
 DSP parameters take effect immediately on active streams without pipeline restart.
 State is persisted across suspend/resume cycles.
 
+### Debug
+
+| Sysctl | RW | Range | Default | Description |
+|:-------|:--:|:------|:--------|:------------|
+| `debug` | RW | 0-3 | 1 | Debug verbosity: 0=quiet (errors only), 1=lifecycle (attach, fw load, stream alloc), 2=operational (IPC, volume, EQ), 3=trace (polls, register dumps). |
+
+> Boot-time override: add `hint.acpi_intel_sst.0.debug="3"` to `/boot/device.hints`.
+
+### DSP Telemetry
+
+| Sysctl | RW | Type | Description |
+|:-------|:--:|:-----|:------------|
+| `telemetry.peak_left` | RO | uint | Raw Q1.31 peak level, left channel |
+| `telemetry.peak_right` | RO | uint | Raw Q1.31 peak level, right channel |
+| `telemetry.peak_db_left` | RO | string | Peak level in dB (e.g. "-3.2 dB") |
+| `telemetry.peak_db_right` | RO | string | Peak level in dB (e.g. "-3.2 dB") |
+| `telemetry.clip_count` | RO | uint | Cumulative clipping events |
+| `telemetry.clip_reset` | WO | int | Write 1 to clear clip counter |
+| `telemetry.limiter_active` | RO | int | DSP limiter currently engaging (0/1) |
+
 ### DSP Audio Parameters
 
 | Sysctl | RW | Range | Default | Description |
@@ -301,6 +324,16 @@ sysctl dev.acpi_intel_sst.0.peq_q=141
 # --- PEQ boost engages gain budget ---
 sysctl dev.acpi_intel_sst.0.peq_gain=12   # max boost, volume ceiling drops
 sysctl dev.acpi_intel_sst.0.peq_freq=0     # disable PEQ, revert to HPF
+
+# --- Debug verbosity ---
+sysctl dev.acpi_intel_sst.0.debug=0           # quiet (errors only)
+sysctl dev.acpi_intel_sst.0.debug=3           # full trace
+
+# --- Telemetry ---
+sysctl dev.acpi_intel_sst.0.telemetry.peak_db_left   # current peak level
+sysctl dev.acpi_intel_sst.0.telemetry.clip_count      # clipping events
+sysctl dev.acpi_intel_sst.0.telemetry.clip_reset=1    # reset clip counter
+sysctl dev.acpi_intel_sst.0.telemetry.limiter_active  # limiter engaging?
 
 # --- Jack detection ---
 sysctl dev.acpi_intel_sst.0.jack.headphone    # check headphone state
@@ -376,7 +409,7 @@ These devices use the same Intel SST DSP and may work (untested):
 | | File | Description |
 |:--|:-----|:------------|
 | :book: | [STATUS.md](STATUS.md) | Current driver status, known issues, next steps |
-| :scroll: | [CHANGELOG.md](CHANGELOG.md) | Detailed version history (v0.1.0 - v0.58.0) |
+| :scroll: | [CHANGELOG.md](CHANGELOG.md) | Detailed version history (v0.1.0 - v0.60.0) |
 | :handshake: | [CONTRIBUTING.md](CONTRIBUTING.md) | How to contribute |
 | :wrench: | [acpi/README.md](acpi/README.md) | DSDT patch instructions for Dell XPS 13 9343 |
 | :bar_chart: | [DIAGRAMS.md](DIAGRAMS.md) | Architecture & process flow diagrams (Mermaid) |

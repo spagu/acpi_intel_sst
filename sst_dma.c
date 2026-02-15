@@ -239,7 +239,7 @@ dma_build_lli(struct sst_softc *sc, int ch, struct sst_dma_config *config)
 	bus_dmamap_sync(dch->lli_tag, dch->lli_map,
 	    BUS_DMASYNC_PREWRITE);
 
-	device_printf(sc->dev,
+	sst_dbg(sc, SST_DBG_OPS,
 	    "DMA%d: Built %u LLI descriptors (blk=%zu, ts=%u)\n",
 	    ch, config->blk_count, config->blk_size, block_ts);
 
@@ -285,7 +285,7 @@ sst_dma_init(struct sst_softc *sc)
 	sc->dma.initialized = true;
 	sc->dma.active_mask = 0;
 
-	device_printf(sc->dev, "DMA initialized: %d channels\n",
+	sst_dbg(sc, SST_DBG_LIFE, "DMA initialized: %d channels\n",
 		      SST_DMA_CHANNELS);
 
 	return (0);
@@ -324,7 +324,7 @@ sst_dma_alloc(struct sst_softc *sc)
 		if (sc->dma.ch[i].state == SST_DMA_STATE_IDLE) {
 			sc->dma.ch[i].state = SST_DMA_STATE_CONFIGURED;
 			sc->dma.active_mask |= (1 << i);
-			device_printf(sc->dev, "DMA: Allocated channel %d\n", i);
+			sst_dbg(sc, SST_DBG_OPS, "DMA: Allocated channel %d\n", i);
 			return (i);
 		}
 	}
@@ -352,7 +352,7 @@ sst_dma_free(struct sst_softc *sc, int ch)
 	sc->dma.ch[ch].callback_arg = NULL;
 	sc->dma.active_mask &= ~(1 << ch);
 
-	device_printf(sc->dev, "DMA: Freed channel %d\n", ch);
+	sst_dbg(sc, SST_DBG_OPS, "DMA: Freed channel %d\n", ch);
 }
 
 /*
@@ -426,7 +426,7 @@ sst_dma_configure(struct sst_softc *sc, int ch, struct sst_dma_config *config)
 		dma_ch_write(sc, ch, DMA_CTL_LO, dch->lli[0].ctl_lo);
 		dma_ch_write(sc, ch, DMA_CTL_HI, dch->lli[0].ctl_hi);
 
-		device_printf(sc->dev,
+		sst_dbg(sc, SST_DBG_OPS,
 		    "DMA%d: Configured LLP circular src=0x%lx dst=0x%lx "
 		    "size=%zu blk=%zu x %u\n",
 		    ch, (unsigned long)config->src,
@@ -474,7 +474,7 @@ sst_dma_configure(struct sst_softc *sc, int ch, struct sst_dma_config *config)
 		/* No linked list */
 		dma_ch_write(sc, ch, DMA_LLP, 0);
 
-		device_printf(sc->dev,
+		sst_dbg(sc, SST_DBG_OPS,
 		    "DMA%d: Configured single src=0x%lx dst=0x%lx size=%zu\n",
 		    ch, (unsigned long)config->src,
 		    (unsigned long)config->dst, config->size);
@@ -528,7 +528,7 @@ sst_dma_start(struct sst_softc *sc, int ch)
 		uint32_t cfg_reg = dma_read(sc, DMA_CFG);
 		uint32_t ctl_lo = dma_ch_read(sc, ch, DMA_CTL_LO);
 		uint32_t llp = dma_ch_read(sc, ch, DMA_LLP);
-		device_printf(sc->dev,
+		sst_dbg(sc, SST_DBG_TRACE,
 		    "DMA%d: post-enable CHEN=0x%08x CFG=0x%08x "
 		    "CTL_LO=0x%08x LLP=0x%08x\n",
 		    ch, chen, cfg_reg, ctl_lo, llp);
@@ -536,7 +536,7 @@ sst_dma_start(struct sst_softc *sc, int ch)
 
 	dch->state = SST_DMA_STATE_RUNNING;
 
-	device_printf(sc->dev, "DMA%d: Started (%s mode)\n", ch,
+	sst_dbg(sc, SST_DBG_OPS, "DMA%d: Started (%s mode)\n", ch,
 	    dch->lli_count > 0 ? "LLP circular" : "single-block");
 
 	return (0);
@@ -584,7 +584,7 @@ sst_dma_stop(struct sst_softc *sc, int ch)
 
 	sc->dma.ch[ch].state = SST_DMA_STATE_CONFIGURED;
 
-	device_printf(sc->dev, "DMA%d: Stopped\n", ch);
+	sst_dbg(sc, SST_DBG_OPS, "DMA%d: Stopped\n", ch);
 
 	return (0);
 }

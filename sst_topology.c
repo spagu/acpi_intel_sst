@@ -675,7 +675,7 @@ sst_topology_create_playback_pipe(struct sst_softc *sc)
 		r->connected = true;
 	}
 
-	device_printf(sc->dev,
+	sst_dbg(sc, SST_DBG_OPS,
 	    "Topology: Created playback pipeline (id=%u) "
 	    "widgets=%u [HPF=%s, Limiter=%s]\n",
 	    pipe->id, pipe->widget_count,
@@ -780,7 +780,7 @@ sst_topology_create_capture_pipe(struct sst_softc *sc)
 		r->connected = true;
 	}
 
-	device_printf(sc->dev, "Topology: Created capture pipeline (id=%u)\n",
+	sst_dbg(sc, SST_DBG_OPS, "Topology: Created capture pipeline (id=%u)\n",
 		      pipe->id);
 
 	return (0);
@@ -796,7 +796,7 @@ sst_topology_init(struct sst_softc *sc)
 	sc->topology.loaded = false;
 	sc->topology.initialized = true;
 
-	device_printf(sc->dev, "Topology subsystem initialized\n");
+	sst_dbg(sc, SST_DBG_OPS, "Topology subsystem initialized\n");
 
 	return (0);
 }
@@ -835,7 +835,7 @@ sst_topology_load_default(struct sst_softc *sc)
 		return (EBUSY);
 	}
 
-	device_printf(sc->dev, "Loading default topology...\n");
+	sst_dbg(sc, SST_DBG_OPS, "Loading default topology...\n");
 
 	/* Create playback pipeline */
 	error = sst_topology_create_playback_pipe(sc);
@@ -860,7 +860,7 @@ sst_topology_load_default(struct sst_softc *sc)
 
 	sc->topology.loaded = true;
 
-	device_printf(sc->dev, "Topology loaded: %u pipelines, %u widgets, %u routes\n",
+	sst_dbg(sc, SST_DBG_OPS, "Topology loaded: %u pipelines, %u widgets, %u routes\n",
 		      sc->topology.pipeline_count,
 		      sc->topology.widget_count,
 		      sc->topology.route_count);
@@ -901,7 +901,7 @@ sst_topology_create_pipeline(struct sst_softc *sc, uint32_t pipe_id)
 	/* Pipeline is ready - actual DSP setup happens on stream allocation */
 	pipe->state = SST_PIPE_STATE_CREATED;
 
-	device_printf(sc->dev, "Topology: Pipeline '%s' created\n", pipe->name);
+	sst_dbg(sc, SST_DBG_OPS, "Topology: Pipeline '%s' created\n", pipe->name);
 
 	return (0);
 }
@@ -972,7 +972,7 @@ sst_topology_start_pipeline(struct sst_softc *sc, uint32_t pipe_id)
 
 	pipe->state = SST_PIPE_STATE_RUNNING;
 
-	device_printf(sc->dev, "Topology: Pipeline '%s' started (stream=%u)\n",
+	sst_dbg(sc, SST_DBG_OPS, "Topology: Pipeline '%s' started (stream=%u)\n",
 		      pipe->name, pipe->stream_id);
 
 	return (0);
@@ -1001,7 +1001,7 @@ sst_topology_stop_pipeline(struct sst_softc *sc, uint32_t pipe_id)
 
 	pipe->state = SST_PIPE_STATE_PAUSED;
 
-	device_printf(sc->dev, "Topology: Pipeline '%s' stopped\n", pipe->name);
+	sst_dbg(sc, SST_DBG_OPS, "Topology: Pipeline '%s' stopped\n", pipe->name);
 
 	return (0);
 }
@@ -1551,6 +1551,94 @@ sst_peq_q_sysctl(SYSCTL_HANDLER_ARGS)
 }
 
 /*
+ * Q1.31 to dB conversion lookup table (integer-only).
+ * Maps Q1.31 peak value ranges to dB × 10 (for one decimal place).
+ * 0x7FFFFFFF = 0.0 dB (full-scale), 0 = -inf dB.
+ */
+static const struct {
+	uint32_t	threshold;	/* Q1.31 lower bound */
+	int		db_x10;		/* dB × 10 */
+} sst_db_lut[] = {
+	{ 0x7F000000,    0 },	/*  0.0 dB  (near full-scale) */
+	{ 0x72148384,  -10 },	/* -1.0 dB */
+	{ 0x65AC8C2F,  -20 },	/* -2.0 dB */
+	{ 0x5A9DF7AB,  -30 },	/* -3.0 dB */
+	{ 0x50C335D4,  -40 },	/* -4.0 dB */
+	{ 0x47FACDAB,  -50 },	/* -5.0 dB */
+	{ 0x40000000,  -60 },	/* -6.0 dB */
+	{ 0x32F52CFE,  -80 },	/* -8.0 dB */
+	{ 0x28619AE9, -100 },	/* -10.0 dB */
+	{ 0x1FD93C2E, -120 },	/* -12.0 dB */
+	{ 0x143D1362, -150 },	/* -15.0 dB */
+	{ 0x0A12478A, -180 },	/* -18.0 dB */
+	{ 0x065AC8C3, -200 },	/* -20.0 dB */
+	{ 0x032F52D0, -240 },	/* -24.0 dB */
+	{ 0x01999A00, -280 },	/* -28.0 dB */
+	{ 0x00CCCD00, -320 },	/* -32.0 dB */
+	{ 0x00346DC6, -400 },	/* -40.0 dB */
+	{ 0x000A43AA, -480 },	/* -48.0 dB */
+	{ 0x00003415, -600 },	/* -60.0 dB */
+	{ 0x00000000, -960 },	/* -96.0 dB (silence) */
+};
+
+static int
+sst_q131_to_db_x10(uint32_t val)
+{
+	int i;
+
+	if (val == 0)
+		return (-960);
+	for (i = 0; i < (int)(sizeof(sst_db_lut) / sizeof(sst_db_lut[0])) - 1;
+	    i++) {
+		if (val >= sst_db_lut[i].threshold)
+			return (sst_db_lut[i].db_x10);
+	}
+	return (sst_db_lut[i].db_x10);
+}
+
+/*
+ * Telemetry sysctl: peak level in dB (human-readable string).
+ * arg2 = 0 for left, 1 for right.
+ */
+static int
+sst_peak_db_sysctl(SYSCTL_HANDLER_ARGS)
+{
+	struct sst_softc *sc = oidp->oid_arg1;
+	int channel = oidp->oid_arg2;
+	uint32_t peak;
+	int db_x10;
+	char buf[16];
+
+	peak = (channel == 0) ? sc->pcm.peak_left : sc->pcm.peak_right;
+	db_x10 = sst_q131_to_db_x10(peak);
+
+	snprintf(buf, sizeof(buf), "%d.%d dB",
+	    db_x10 / 10, (db_x10 < 0 ? -db_x10 : db_x10) % 10);
+
+	return (sysctl_handle_string(oidp, buf, sizeof(buf), req));
+}
+
+/*
+ * Telemetry sysctl: reset clip counter.
+ */
+static int
+sst_clip_reset_sysctl(SYSCTL_HANDLER_ARGS)
+{
+	struct sst_softc *sc = oidp->oid_arg1;
+	int val = 0;
+	int error;
+
+	error = sysctl_handle_int(oidp, &val, 0, req);
+	if (error || req->newptr == NULL)
+		return (error);
+
+	if (val == 1)
+		sc->pcm.clip_count = 0;
+
+	return (0);
+}
+
+/*
  * Register all DSP parameter sysctls under device tree.
  * Creates dev.acpi_intel_sst.N.{eq_preset,hpf_cutoff,...} (RW).
  */
@@ -1597,6 +1685,59 @@ sst_topology_sysctl_init(struct sst_softc *sc)
 	    "peq_q", CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_MPSAFE,
 	    sc, 0, sst_peq_q_sysctl, "I",
 	    "PEQ Q factor x100 (30-1000, e.g. 71=0.71)");
+
+	/* Debug verbosity control */
+	SYSCTL_ADD_INT(ctx, SYSCTL_CHILDREN(tree), OID_AUTO,
+	    "debug", CTLFLAG_RW, &sc->debug_level, 0,
+	    "Debug verbosity (0=quiet, 1=lifecycle, 2=operational, 3=trace)");
+
+	/* Telemetry subtree */
+	{
+		struct sysctl_oid *telem_tree;
+
+		telem_tree = SYSCTL_ADD_NODE(ctx, SYSCTL_CHILDREN(tree),
+		    OID_AUTO, "telemetry",
+		    CTLFLAG_RD | CTLFLAG_MPSAFE, 0,
+		    "DSP telemetry");
+
+		SYSCTL_ADD_UINT(ctx, SYSCTL_CHILDREN(telem_tree), OID_AUTO,
+		    "peak_left", CTLFLAG_RD,
+		    &sc->pcm.peak_left, 0,
+		    "Left channel peak level (Q1.31 raw)");
+
+		SYSCTL_ADD_UINT(ctx, SYSCTL_CHILDREN(telem_tree), OID_AUTO,
+		    "peak_right", CTLFLAG_RD,
+		    &sc->pcm.peak_right, 0,
+		    "Right channel peak level (Q1.31 raw)");
+
+		SYSCTL_ADD_PROC(ctx, SYSCTL_CHILDREN(telem_tree), OID_AUTO,
+		    "peak_db_left",
+		    CTLTYPE_STRING | CTLFLAG_RD | CTLFLAG_MPSAFE,
+		    sc, 0, sst_peak_db_sysctl, "A",
+		    "Left channel peak in dB");
+
+		SYSCTL_ADD_PROC(ctx, SYSCTL_CHILDREN(telem_tree), OID_AUTO,
+		    "peak_db_right",
+		    CTLTYPE_STRING | CTLFLAG_RD | CTLFLAG_MPSAFE,
+		    sc, 1, sst_peak_db_sysctl, "A",
+		    "Right channel peak in dB");
+
+		SYSCTL_ADD_UINT(ctx, SYSCTL_CHILDREN(telem_tree), OID_AUTO,
+		    "clip_count", CTLFLAG_RD,
+		    &sc->pcm.clip_count, 0,
+		    "Cumulative clipping events");
+
+		SYSCTL_ADD_PROC(ctx, SYSCTL_CHILDREN(telem_tree), OID_AUTO,
+		    "clip_reset",
+		    CTLTYPE_INT | CTLFLAG_WR | CTLFLAG_MPSAFE,
+		    sc, 0, sst_clip_reset_sysctl, "I",
+		    "Write 1 to reset clip counter");
+
+		SYSCTL_ADD_INT(ctx, SYSCTL_CHILDREN(telem_tree), OID_AUTO,
+		    "limiter_active", CTLFLAG_RD,
+		    (int *)&sc->pcm.limiter_active, 0,
+		    "Limiter currently engaging (0/1)");
+	}
 
 	return (0);
 }
