@@ -14,6 +14,8 @@
 #include <sys/types.h>
 #include <sys/callout.h>
 
+#include "sst_topology.h"
+
 /*
  * PCM Channel Configuration
  *
@@ -126,8 +128,8 @@ struct sst_pcm {
 	int			vol_right;	/* Right volume (0-100) */
 	int			mute;		/* Mute state */
 
-	/* HPF control */
-	uint32_t		hpf_cutoff;	/* HPF cutoff in Hz, 0=bypass */
+	/* EQ preset control */
+	enum sst_eq_preset_id	eq_preset;	/* Active EQ preset */
 
 	/* Limiter control */
 	uint32_t		limiter_threshold; /* Preset index, 0=bypass */
