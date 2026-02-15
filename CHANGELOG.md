@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.63.1] - 2026-02-15
+
+### Changed: Enable Full-Duplex Capture + Playback (Issue #26)
+
+Removes the exclusive-mode safety guard added in v0.62.0 that blocked
+capture while playback was active (EBUSY) and preempted capture when
+playback started. Now that v0.63.0 moved telemetry to on-demand sysctl
+reads, the bus contention that caused DSP stalls is resolved and both
+directions can coexist safely.
+
+### Removed
+
+- **Exclusive-mode capture guard** (`sst_pcm.c`) — No longer returns
+  EBUSY when capture starts while playback is active.
+- **Playback-preempts-capture logic** (`sst_pcm.c`) — No longer forcibly
+  frees capture streams when playback starts.
+
+---
+
 ## [0.63.0] - 2026-02-15
 
 ### Added: On-Demand DSP Telemetry (Issue #25)
