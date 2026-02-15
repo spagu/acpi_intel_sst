@@ -13,7 +13,9 @@
 #   make help     - Show this help
 
 KMOD=   acpi_intel_sst
-SRCS=   acpi_intel_sst.c sst_firmware.c sst_ipc.c sst_ssp.c sst_dma.c sst_pcm.c sst_jack.c sst_codec.c sst_topology.c
+SRCS=   acpi_intel_sst.c sst_power.c sst_pch.c sst_sram.c \
+	sst_firmware.c sst_ipc.c sst_ssp.c sst_dma.c \
+	sst_pcm.c sst_jack.c sst_codec.c sst_topology.c
 SRCS+=  device_if.h bus_if.h acpi_if.h channel_if.h mixer_if.h
 SRCS+=  opt_acpi.h opt_snd.h
 

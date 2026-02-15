@@ -5,6 +5,54 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.60.0] - 2026-02-15
+
+### Added: Debug Verbosity & DSP Telemetry (Issue #9)
+
+Production-ready debug verbosity control and live DSP telemetry. Default boot
+output reduced to ~2-3 lines (attach + firmware version). All ~530 diagnostic
+`device_printf` calls converted to `sst_dbg()` macro with categorized levels.
+Error messages always print regardless of level.
+
+### Added
+
+- **`debug` sysctl** (`dev.acpi_intel_sst.0.debug`, RW, int 0-3) - Runtime
+  debug verbosity control:
+  - 0 = Quiet: errors only
+  - 1 = Lifecycle (default): attach/detach, firmware load, stream alloc/free
+  - 2 = Operational: IPC traffic, volume/EQ/limiter changes, register config
+  - 3 = Trace: poll debug, register dumps, timing, BAR scans
+- **`sst_dbg()` macro** (`acpi_intel_sst.h`) - Conditional debug output using
+  `__predict_false()` for zero overhead when debug level is below threshold.
+- **Boot-time override** via `device.hints`: `hint.acpi_intel_sst.0.debug="3"`
+  enables full trace at attach before sysctl is available.
+- **DSP telemetry sysctl subtree** (`dev.acpi_intel_sst.0.telemetry.*`):
+  - `peak_left` / `peak_right` (RO, uint) - Raw Q1.31 peak meter levels
+  - `peak_db_left` / `peak_db_right` (RO, string) - Human-readable dB
+    (e.g. "-3.2 dB") via integer-only lookup table with interpolation
+  - `clip_count` (RO, uint) - Cumulative clipping events (Q1.31 >= 0x7F000000)
+  - `clip_reset` (WO, int) - Write 1 to clear clip counter
+  - `limiter_active` (RO, int) - DSP limiter currently engaging (0/1)
+- **Peak meter polling** (`sst_pcm.c`) - Reads DSP peak meter registers during
+  existing ~5ms poll timer for playback channels. Zero additional overhead.
+- **Q1.31-to-dB lookup table** (`sst_topology.c`) - 20-entry integer-only
+  conversion table mapping Q1.31 ranges to dB x10 values.
+
+### Changed
+
+- **~530 `device_printf` calls converted to `sst_dbg()`** across all 9 source
+  files (`acpi_intel_sst.c`, `sst_firmware.c`, `sst_pcm.c`, `sst_ipc.c`,
+  `sst_codec.c`, `sst_dma.c`, `sst_ssp.c`, `sst_topology.c`, `sst_jack.c`).
+  Error/failure messages remain as unconditional `device_printf`.
+- **Default boot output** reduced from ~530 lines to ~2-3 lines (driver version
+  + attach success).
+- **`debug_level` field** added to `struct sst_softc`, initialized to
+  `SST_DBG_LIFE` (1) in attach.
+- **Peak meter register addresses** captured from ALLOC_STREAM IPC response
+  and stored in `struct sst_pcm_channel`.
+
+---
+
 ## [0.59.0] - 2026-02-15
 
 ### Added: Runtime DSP Parameter Control via Sysctl (Issue #7)
@@ -1068,7 +1116,8 @@ IRQ allocation, IPC init, firmware load (IntcSST2.bin), DMA/SSP/PCM/topology ini
 - `Fixed` for any bug fixes
 - `Security` for vulnerability fixes
 
-[Unreleased]: https://github.com/spagu/acpi_intel_sst/compare/v0.59.0...HEAD
+[Unreleased]: https://github.com/spagu/acpi_intel_sst/compare/v0.60.0...HEAD
+[0.60.0]: https://github.com/spagu/acpi_intel_sst/compare/v0.59.0...v0.60.0
 [0.59.0]: https://github.com/spagu/acpi_intel_sst/compare/v0.58.0...v0.59.0
 [0.58.0]: https://github.com/spagu/acpi_intel_sst/compare/v0.57.0...v0.58.0
 [0.57.0]: https://github.com/spagu/acpi_intel_sst/compare/v0.55.0...v0.57.0

@@ -80,7 +80,7 @@ sst_i2c_init(struct sst_softc *sc)
 	if (bus_space_map(codec->mem_tag, SST_I2C0_PRIV_BASE,
 	    0x100, 0, &priv_handle) == 0) {
 		pmcsr = bus_space_read_4(codec->mem_tag, priv_handle, 0x84);
-		device_printf(sc->dev,
+		sst_dbg(sc, SST_DBG_OPS,
 		    "codec: I2C0 PMCSR=0x%08x (D%d)\n", pmcsr, pmcsr & 3);
 		if ((pmcsr & 3) != 0) {
 			bus_space_write_4(codec->mem_tag, priv_handle, 0x84,
@@ -88,7 +88,7 @@ sst_i2c_init(struct sst_softc *sc)
 			DELAY(50000);
 			pmcsr = bus_space_read_4(codec->mem_tag, priv_handle,
 			    0x84);
-			device_printf(sc->dev,
+			sst_dbg(sc, SST_DBG_OPS,
 			    "codec: I2C0 PMCSR after D0: 0x%08x\n", pmcsr);
 		}
 		bus_space_unmap(codec->mem_tag, priv_handle, 0x100);
@@ -158,7 +158,7 @@ sst_i2c_init(struct sst_softc *sc)
 		return (ETIMEDOUT);
 	}
 
-	device_printf(sc->dev, "codec: I2C0 controller initialized\n");
+	sst_dbg(sc, SST_DBG_LIFE, "codec: I2C0 controller initialized\n");
 	return (0);
 }
 
@@ -516,7 +516,7 @@ sst_codec_init(struct sst_softc *sc)
 
 	memset(codec, 0, sizeof(*codec));
 
-	device_printf(sc->dev, "codec: initializing RT286...\n");
+	sst_dbg(sc, SST_DBG_LIFE, "codec: initializing RT286...\n");
 
 	/* Step 1: Set up I2C */
 	error = sst_i2c_init(sc);
@@ -535,7 +535,7 @@ sst_codec_init(struct sst_softc *sc)
 	}
 
 	codec->vendor_id = vendor_id;
-	device_printf(sc->dev, "codec: vendor ID = 0x%08x\n", vendor_id);
+	sst_dbg(sc, SST_DBG_LIFE, "codec: vendor ID = 0x%08x\n", vendor_id);
 
 	if (vendor_id != RT286_VENDOR_ID && vendor_id != RT288_VENDOR_ID) {
 		device_printf(sc->dev,
@@ -545,11 +545,11 @@ sst_codec_init(struct sst_softc *sc)
 		goto fail;
 	}
 
-	device_printf(sc->dev, "codec: %s confirmed\n",
+	sst_dbg(sc, SST_DBG_LIFE, "codec: %s confirmed\n",
 	    vendor_id == RT288_VENDOR_ID ? "RT288" : "RT286");
 
 	/* Step 3: Write index register defaults */
-	device_printf(sc->dev, "codec: writing %d index register defaults\n",
+	sst_dbg(sc, SST_DBG_OPS, "codec: writing %d index register defaults\n",
 	    (int)nitems(rt286_index_defaults));
 	for (i = 0; i < (int)nitems(rt286_index_defaults); i++) {
 		error = sst_codec_index_write(sc,
@@ -589,7 +589,7 @@ sst_codec_init(struct sst_softc *sc)
 	/* Step 8: Depop - already configured in defaults (0x67-0x69) */
 
 	codec->initialized = true;
-	device_printf(sc->dev, "codec: RT286 initialization complete\n");
+	sst_dbg(sc, SST_DBG_LIFE, "codec: RT286 initialization complete\n");
 	return (0);
 
 fail:
@@ -614,7 +614,7 @@ sst_codec_enable_speaker(struct sst_softc *sc)
 		return (ENXIO);
 	}
 
-	device_printf(sc->dev, "codec: enabling speaker output...\n");
+	sst_dbg(sc, SST_DBG_OPS, "codec: enabling speaker output...\n");
 
 	/*
 	 * Audio Function Group → D0, PLL clock mode.
@@ -708,7 +708,7 @@ sst_codec_enable_speaker(struct sst_softc *sc)
 	sst_codec_write(sc, RT286_SET_EAPD(RT286_NID_SPK), 0x02);
 
 	codec->speaker_active = true;
-	device_printf(sc->dev, "codec: speaker output enabled\n");
+	sst_dbg(sc, SST_DBG_OPS, "codec: speaker output enabled\n");
 
 	return (0);
 }
@@ -730,7 +730,7 @@ sst_codec_enable_headphone(struct sst_softc *sc)
 		return (ENXIO);
 	}
 
-	device_printf(sc->dev, "codec: enabling headphone output...\n");
+	sst_dbg(sc, SST_DBG_OPS, "codec: enabling headphone output...\n");
 
 	/* Audio Function Group → D0 (PLL mode, bit 6 clear) */
 	sst_codec_write(sc,
@@ -766,7 +766,7 @@ sst_codec_enable_headphone(struct sst_softc *sc)
 	sst_codec_write(sc, RT286_SET_EAPD(RT286_NID_HP), 0x02);
 
 	codec->hp_active = true;
-	device_printf(sc->dev, "codec: headphone output enabled\n");
+	sst_dbg(sc, SST_DBG_OPS, "codec: headphone output enabled\n");
 	return (0);
 }
 
@@ -817,7 +817,7 @@ sst_codec_fini(struct sst_softc *sc)
 	if (!codec->initialized)
 		return;
 
-	device_printf(sc->dev, "codec: shutting down RT286...\n");
+	sst_dbg(sc, SST_DBG_LIFE, "codec: shutting down RT286...\n");
 
 	/* Mute speaker outputs */
 	if (codec->speaker_active) {
@@ -871,5 +871,5 @@ sst_codec_fini(struct sst_softc *sc)
 	/* Tear down I2C */
 	sst_i2c_fini(sc);
 
-	device_printf(sc->dev, "codec: RT286 shutdown complete\n");
+	sst_dbg(sc, SST_DBG_LIFE, "codec: RT286 shutdown complete\n");
 }

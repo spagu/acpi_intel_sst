@@ -46,9 +46,9 @@ sst_ipc_init(struct sst_softc *sc)
 	sc->ipc.rx_count = 0;
 	sc->ipc.error_count = 0;
 
-	device_printf(sc->dev, "IPC initialized: mbox_in=0x%lx, mbox_out=0x%lx\n",
-		      (unsigned long)sc->ipc.mbox_in,
-		      (unsigned long)sc->ipc.mbox_out);
+	sst_dbg(sc, SST_DBG_LIFE, "IPC initialized: mbox_in=0x%lx, mbox_out=0x%lx\n",
+		(unsigned long)sc->ipc.mbox_in,
+		(unsigned long)sc->ipc.mbox_out);
 
 	return (0);
 }
@@ -122,7 +122,7 @@ sst_ipc_send(struct sst_softc *sc, uint32_t header, void *data, size_t size)
 		rb0 = bus_read_4(sc->mem_res, sc->ipc.mbox_in);
 		rb1 = bus_read_4(sc->mem_res, sc->ipc.mbox_in + 4);
 		rb2 = bus_read_4(sc->mem_res, sc->ipc.mbox_in + 8);
-		device_printf(sc->dev,
+		sst_dbg(sc, SST_DBG_TRACE,
 		    "IPC: mbox readback @0x%lx: %08x %08x %08x\n",
 		    (unsigned long)sc->ipc.mbox_in, rb0, rb1, rb2);
 	}
@@ -229,10 +229,10 @@ sst_ipc_poll_ready(struct sst_softc *sc)
 		/* First message after boot is "ready" notification */
 		if (!sc->ipc.ready) {
 			sc->ipc.ready = true;
-			device_printf(sc->dev,
+			sst_dbg(sc, SST_DBG_LIFE,
 			    "DSP signaled ready (polled): IPCD=0x%08x\n", ipcd);
 		} else {
-			device_printf(sc->dev,
+			sst_dbg(sc, SST_DBG_TRACE,
 			    "IPC: DSP notification (polled): 0x%08x\n", ipcd);
 		}
 		sc->ipc.msg.reply = ipcd;
@@ -254,10 +254,10 @@ sst_ipc_poll_ready(struct sst_softc *sc)
 		 */
 		if (!sc->ipc.ready) {
 			sc->ipc.ready = true;
-			device_printf(sc->dev,
+			sst_dbg(sc, SST_DBG_LIFE,
 			    "DSP signaled ready via DONE (polled): IPCD=0x%08x\n", ipcd);
 		} else {
-			device_printf(sc->dev, "IPC: Reply done (polled): 0x%08x\n", ipcd);
+			sst_dbg(sc, SST_DBG_TRACE, "IPC: Reply done (polled): 0x%08x\n", ipcd);
 		}
 
 		sc->ipc.msg.reply = ipcd;
@@ -268,7 +268,7 @@ sst_ipc_poll_ready(struct sst_softc *sc)
 	/* Check for our outgoing message being processed (BUSY cleared in IPCX) */
 	ipcx = sst_shim_read(sc, SST_SHIM_IPCX);
 	if ((sc->ipc.state == SST_IPC_STATE_PENDING) && !(ipcx & SST_IPC_BUSY)) {
-		device_printf(sc->dev, "IPC: Command accepted: IPCX=0x%08x\n", ipcx);
+		sst_dbg(sc, SST_DBG_TRACE, "IPC: Command accepted: IPCX=0x%08x\n", ipcx);
 		return (1);
 	}
 
@@ -288,7 +288,7 @@ sst_ipc_wait_ready(struct sst_softc *sc, int timeout_ms)
 
 	/* If no IRQ, use polling mode */
 	if (sc->irq_res == NULL) {
-		device_printf(sc->dev, "IPC: Using polling mode (no IRQ)\n");
+		sst_dbg(sc, SST_DBG_TRACE, "IPC: Using polling mode (no IRQ)\n");
 
 		while (elapsed < timeout_ms) {
 			/* Poll IPC registers */
@@ -302,7 +302,7 @@ sst_ipc_wait_ready(struct sst_softc *sc, int timeout_ms)
 				uint32_t csr = sst_shim_read(sc, SST_SHIM_CSR);
 				uint32_t isr = sst_shim_read(sc, SST_SHIM_ISRX);
 				uint32_t ipcd = sst_shim_read(sc, SST_SHIM_IPCD);
-				device_printf(sc->dev,
+				sst_dbg(sc, SST_DBG_TRACE,
 				    "IPC poll: CSR=0x%08x ISR=0x%08x IPCD=0x%08x\n",
 				    csr, isr, ipcd);
 			}
@@ -416,7 +416,7 @@ sst_ipc_intr(struct sst_softc *sc)
 		sc->ipc.state = SST_IPC_STATE_DONE;
 		cv_signal(&sc->ipc.wait_cv);
 
-		device_printf(sc->dev,
+		sst_dbg(sc, SST_DBG_TRACE,
 		    "IPC reply: IPCX=0x%08x status=%d\n",
 		    ipcx, sc->ipc.msg.status);
 
@@ -446,7 +446,7 @@ sst_ipc_intr(struct sst_softc *sc)
 			/* First notification after boot is FW_READY */
 			if (!sc->ipc.ready) {
 				sc->ipc.ready = true;
-				device_printf(sc->dev,
+				sst_dbg(sc, SST_DBG_LIFE,
 				    "IPC: DSP ready: IPCD=0x%08x\n",
 				    ipcd);
 			} else {
@@ -492,9 +492,9 @@ sst_ipc_get_fw_version(struct sst_softc *sc, struct sst_fw_version *version)
 	if (version != NULL)
 		*version = reply.version;
 
-	device_printf(sc->dev, "Firmware version: %u.%u.%u (type=%u)\n",
-		      reply.version.major, reply.version.minor,
-		      reply.version.build, reply.version.type);
+	sst_dbg(sc, SST_DBG_OPS, "Firmware version: %u.%u.%u (type=%u)\n",
+		reply.version.major, reply.version.minor,
+		reply.version.build, reply.version.type);
 
 	return (0);
 }
@@ -539,7 +539,7 @@ sst_ipc_alloc_stream(struct sst_softc *sc, struct sst_alloc_stream_req *req,
 
 	header = SST_IPC_HEADER(SST_IPC_GLBL_ALLOCATE_STREAM, 0, 0);
 
-	device_printf(sc->dev,
+	sst_dbg(sc, SST_DBG_OPS,
 	    "IPC: alloc stream path=%u type=%u fmt=%u "
 	    "paysize=%zu off=%zu arrsz=%zu\n",
 	    req->path_id, req->stream_type, req->format_id,
@@ -553,7 +553,7 @@ sst_ipc_alloc_stream(struct sst_softc *sc, struct sst_alloc_stream_req *req,
 			size_t k;
 			if (end > paysize)
 				end = paysize;
-			device_printf(sc->dev, "IPC: [%02zu]", j);
+			sst_dbg(sc, SST_DBG_TRACE, "IPC: [%02zu]", j);
 			for (k = j; k < end; k++)
 				printf(" %02x", payload[k]);
 			printf("\n");
@@ -584,7 +584,7 @@ sst_ipc_alloc_stream(struct sst_softc *sc, struct sst_alloc_stream_req *req,
 		for (j = 0; j < 12; j++)
 			d[j] = bus_read_4(sc->mem_res,
 			    sc->ipc.mbox_out + j * 4);
-		device_printf(sc->dev,
+		sst_dbg(sc, SST_DBG_TRACE,
 		    "IPC: mbox_out @0x%lx: %08x %08x %08x %08x "
 		    "%08x %08x %08x %08x\n",
 		    (unsigned long)sc->ipc.mbox_out,
@@ -594,14 +594,14 @@ sst_ipc_alloc_stream(struct sst_softc *sc, struct sst_alloc_stream_req *req,
 		for (j = 0; j < 12; j++)
 			d[j] = bus_read_4(sc->mem_res,
 			    sc->ipc.mbox_in + j * 4);
-		device_printf(sc->dev,
+		sst_dbg(sc, SST_DBG_TRACE,
 		    "IPC: mbox_in  @0x%lx: %08x %08x %08x %08x "
 		    "%08x %08x %08x %08x\n",
 		    (unsigned long)sc->ipc.mbox_in,
 		    d[0], d[1], d[2], d[3], d[4], d[5], d[6], d[7]);
 
 		/* Also check the ISR cached reply */
-		device_printf(sc->dev,
+		sst_dbg(sc, SST_DBG_TRACE,
 		    "IPC: cached reply[0..7]: %02x %02x %02x %02x "
 		    "%02x %02x %02x %02x\n",
 		    sc->ipc.reply_data[0], sc->ipc.reply_data[1],
@@ -610,7 +610,7 @@ sst_ipc_alloc_stream(struct sst_softc *sc, struct sst_alloc_stream_req *req,
 		    sc->ipc.reply_data[6], sc->ipc.reply_data[7]);
 	}
 
-	device_printf(sc->dev,
+	sst_dbg(sc, SST_DBG_OPS,
 	    "IPC: Allocated stream hw_id=%u read_pos=0x%x pres_pos=0x%x\n",
 	    rsp->stream_hw_id, rsp->read_pos_regaddr,
 	    rsp->pres_pos_regaddr);
@@ -635,7 +635,7 @@ sst_ipc_free_stream(struct sst_softc *sc, uint32_t stream_id)
 		return (error);
 	}
 
-	device_printf(sc->dev, "IPC: Freed stream %u\n", stream_id);
+	sst_dbg(sc, SST_DBG_OPS, "IPC: Freed stream %u\n", stream_id);
 
 	return (0);
 }
@@ -829,7 +829,7 @@ sst_ipc_set_device_formats(struct sst_softc *sc,
 
 	header = SST_IPC_HEADER(SST_IPC_GLBL_SET_DEVICE_FORMATS, 0, 0);
 
-	device_printf(sc->dev,
+	sst_dbg(sc, SST_DBG_OPS,
 	    "IPC: set_device_formats iface=%u mclk=%u mode=%u "
 	    "clkdiv=%u ch=%u (size=%zu)\n",
 	    devfmt->iface, devfmt->mclk, devfmt->mode,
@@ -922,7 +922,7 @@ sst_ipc_set_dx(struct sst_softc *sc, uint32_t state)
 
 	header = SST_IPC_HEADER(SST_IPC_GLBL_ENTER_DX_STATE, 0, 0);
 
-	device_printf(sc->dev, "IPC: Setting DX state to %u\n", state);
+	sst_dbg(sc, SST_DBG_OPS, "IPC: Setting DX state to %u\n", state);
 
 	return sst_ipc_send(sc, header, &dx, sizeof(dx));
 }
@@ -962,7 +962,7 @@ sst_ipc_probe_stage_caps(struct sst_softc *sc)
 	bus_dmamap_t ring_map, pgtbl_map;
 	int error;
 
-	device_printf(sc->dev, "Probing DSP stage capabilities...\n");
+	sst_dbg(sc, SST_DBG_OPS, "Probing DSP stage capabilities...\n");
 
 	/*
 	 * Allocate a 1-page ring buffer and 1-page page table
@@ -1160,7 +1160,7 @@ sst_ipc_probe_stage_caps(struct sst_softc *sc)
 
 	sc->fw.caps_probed = true;
 
-	device_printf(sc->dev,
+	sst_dbg(sc, SST_DBG_OPS,
 	    "DSP stage caps: volume=%d biquad=%d limiter=%d\n",
 	    sc->fw.has_volume, sc->fw.has_biquad, sc->fw.has_limiter);
 

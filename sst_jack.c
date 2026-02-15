@@ -141,7 +141,7 @@ sst_jack_handle_change(struct sst_softc *sc, struct sst_jack_info *jack)
 	/* Get state name */
 	stateName = (jack->state == SST_JACK_INSERTED) ? "inserted" : "removed";
 
-	device_printf(sc->dev, "Jack: %s %s\n", typeName, stateName);
+	sst_dbg(sc, SST_DBG_LIFE, "Jack: %s %s\n", typeName, stateName);
 
 	/* Handle audio routing */
 	if (jack->type == SST_JACK_HEADPHONE) {
@@ -245,7 +245,7 @@ sst_jack_init(struct sst_softc *sc)
 
 	j->initialized = true;
 
-	device_printf(sc->dev, "Jack detection initialized (polling mode)\n");
+	sst_dbg(sc, SST_DBG_LIFE, "Jack detection initialized (polling mode)\n");
 
 	return (0);
 }
@@ -302,7 +302,7 @@ sst_jack_enable(struct sst_softc *sc)
 	/* Do initial detection */
 	sst_jack_poll(sc);
 
-	device_printf(sc->dev, "Jack detection enabled\n");
+	sst_dbg(sc, SST_DBG_OPS, "Jack detection enabled\n");
 
 	return (0);
 }
@@ -333,7 +333,7 @@ sst_jack_disable(struct sst_softc *sc)
 	/* Stop polling timer */
 	callout_drain(&j->poll_callout);
 
-	device_printf(sc->dev, "Jack detection disabled\n");
+	sst_dbg(sc, SST_DBG_OPS, "Jack detection disabled\n");
 }
 
 /*

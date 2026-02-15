@@ -54,6 +54,17 @@
 #define SST_ACPI_ID_BDW		"INT3438"
 #define SST_ACPI_ID_HSW		"INT33C8"
 
+/* Debug verbosity levels */
+#define SST_DBG_QUIET		0	/* Errors + attach/detach only */
+#define SST_DBG_LIFE		1	/* Lifecycle: FW load, stream alloc/free */
+#define SST_DBG_OPS		2	/* Operational: IPC, volume, EQ changes */
+#define SST_DBG_TRACE		3	/* Trace: polls, register dumps, timing */
+
+#define sst_dbg(sc, lvl, fmt, ...) do {				\
+	if (__predict_false((sc)->debug_level >= (lvl)))		\
+		device_printf((sc)->dev, fmt, ##__VA_ARGS__);	\
+} while (0)
+
 /* Driver State */
 enum sst_state {
 	SST_STATE_NONE = 0,
@@ -109,6 +120,9 @@ struct sst_softc {
 
 	/* Topology (audio pipeline) */
 	struct sst_topology	topology;
+
+	/* Debug verbosity (0=quiet .. 3=trace, default 1) */
+	int			debug_level;
 };
 
 /*
@@ -169,5 +183,26 @@ sst_dsp_read(struct sst_softc *sc, uint32_t offset)
 int	sst_dsp_stall(struct sst_softc *sc, bool stall);
 int	sst_dsp_reset(struct sst_softc *sc, bool reset);
 void	sst_dsp_set_regs_defaults(struct sst_softc *sc);
+
+/* sst_power.c */
+void	sst_reset(struct sst_softc *sc);
+void	sst_init(struct sst_softc *sc);
+void	sst_acpi_power_up(struct sst_softc *sc);
+int	sst_wpt_power_up(struct sst_softc *sc);
+
+/* sst_pch.c */
+void	sst_dump_pci_config(struct sst_softc *sc);
+int	sst_try_enable_hda(struct sst_softc *sc);
+int	sst_try_enable_adsp(struct sst_softc *sc);
+void	sst_probe_i2c_codec(struct sst_softc *sc);
+void	sst_iobp_probe(struct sst_softc *sc);
+void	sst_dump_pch_state(struct sst_softc *sc);
+
+/* sst_sram.c */
+void	sst_sram_sanitize(struct sst_softc *sc);
+bool	sst_test_bar0(struct sst_softc *sc);
+void	sst_scan_bar0(struct sst_softc *sc);
+int	sst_enable_sram_direct(device_t dev);
+int	sst_enable_sram(struct sst_softc *sc);
 
 #endif /* _ACPI_INTEL_SST_H_ */

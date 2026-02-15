@@ -76,8 +76,10 @@ struct sst_pcm_channel {
 	uint32_t		stream_id;	/* DSP stream ID */
 	bool			stream_allocated; /* Stream allocated flag */
 
-	/* DSP position register (from stream alloc response) */
+	/* DSP registers (from stream alloc response) */
 	uint32_t		read_pos_regaddr; /* BAR0 offset for position */
+	uint32_t		peak_meter_regaddr[2]; /* L/R peak meter offsets */
+	uint32_t		volume_regaddr[2]; /* L/R DSP volume offsets */
 
 	/* Page table for DSP ring buffer (PFN array) */
 	bus_dma_tag_t		pgtbl_tag;	/* DMA tag for page table */
@@ -154,6 +156,12 @@ struct sst_pcm {
 	bool			resume_ramp;	/* Volume ramp-in pending after resume */
 	int			ramp_step;	/* Current ramp step (0-5) */
 	struct callout		ramp_callout;	/* Ramp timer */
+
+	/* Telemetry (updated every poll cycle) */
+	uint32_t		peak_left;	/* Raw Q1.31 peak level, left */
+	uint32_t		peak_right;	/* Raw Q1.31 peak level, right */
+	uint32_t		clip_count;	/* Cumulative clipping events */
+	bool			limiter_active;	/* Limiter currently engaging */
 
 	/* State */
 	bool			registered;	/* PCM device registered */
