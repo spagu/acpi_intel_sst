@@ -131,8 +131,20 @@ struct sst_pcm {
 	/* EQ preset control */
 	enum sst_eq_preset_id	eq_preset;	/* Active EQ preset */
 
+	/* HPF state */
+	uint16_t		hpf_cutoff;	/* Current HPF cutoff Hz (0=flat) */
+
 	/* Limiter control */
 	uint32_t		limiter_threshold; /* Preset index, 0=bypass */
+	uint32_t		limiter_release; /* Override release µs (0=use preset) */
+
+	/* PEQ state */
+	uint16_t		peq_freq;	/* Center freq Hz (0=off → HPF mode) */
+	int			peq_gain;	/* Boost/cut dB (-12..+12) */
+	int			peq_q;		/* Q × 100 (30..1000) */
+
+	/* Biquad mode */
+	int			biquad_mode;	/* SST_BIQUAD_MODE_HPF or _PEQ */
 
 	/* Volume rate limiting (prevent DSP IPC flood) */
 	int			vol_ticks;	/* tick count of last SET_VOLUME */

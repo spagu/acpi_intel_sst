@@ -105,6 +105,10 @@ enum sst_eq_preset_id {
 #define SST_HEADROOM_DB		3
 #define SST_HEADROOM_HALF_DB	6	/* in 0.5dB step units */
 
+/* Biquad mode: HPF vs PEQ (mutually exclusive, single stage) */
+#define SST_BIQUAD_MODE_HPF	0
+#define SST_BIQUAD_MODE_PEQ	1
+
 /*
  * Widget Definition
  */
@@ -268,6 +272,14 @@ int	sst_topology_set_widget_eq_preset(struct sst_softc *sc,
 int	sst_topology_set_widget_limiter(struct sst_softc *sc,
 					struct sst_widget *w,
 					uint32_t threshold_idx);
+int	sst_topology_set_widget_limiter_ex(struct sst_softc *sc,
+					   struct sst_widget *w,
+					   uint32_t threshold_idx,
+					   uint32_t release_us);
+int	sst_topology_set_widget_biquad(struct sst_softc *sc,
+				       struct sst_widget *w,
+				       int32_t b0, int32_t b1, int32_t b2,
+				       int32_t a1, int32_t a2);
 
 /* Route management */
 int	sst_topology_connect_route(struct sst_softc *sc, struct sst_route *r);
@@ -276,6 +288,10 @@ int	sst_topology_disconnect_route(struct sst_softc *sc, struct sst_route *r);
 /* Get pipeline for PCM stream */
 struct sst_pipeline *sst_topology_get_pipeline(struct sst_softc *sc,
 					       int dir, int stream_num);
+
+/* Apply current biquad (HPF or PEQ) and limiter state to DSP */
+void	sst_topology_apply_biquad(struct sst_softc *sc);
+void	sst_topology_apply_limiter(struct sst_softc *sc);
 
 /* Sysctl interface */
 int	sst_topology_sysctl_init(struct sst_softc *sc);

@@ -843,14 +843,25 @@ sst_pcm_poll(void *arg)
 				sst_ipc_stream_set_params(sc, &vsp);
 			}
 
-			/* Restore EQ preset */
+			/* Restore biquad (HPF or PEQ) */
 			{
 				struct sst_widget *hpf_w;
 				hpf_w = sst_topology_find_widget(sc, "HPF1.0");
 				if (hpf_w != NULL) {
 					hpf_w->stream_id = ch->stream_id;
-					sst_topology_set_widget_eq_preset(sc,
-					    hpf_w, sc->pcm.eq_preset);
+					sst_topology_apply_biquad(sc);
+				}
+			}
+
+			/* Restore limiter with release override */
+			{
+				struct sst_widget *lim_w;
+				lim_w = sst_topology_find_widget(sc,
+				    "LIMITER1.0");
+				if (lim_w != NULL &&
+				    sc->pcm.limiter_threshold > 0) {
+					lim_w->stream_id = ch->stream_id;
+					sst_topology_apply_limiter(sc);
 				}
 			}
 
@@ -984,6 +995,12 @@ sst_pcm_resume(struct sst_softc *sc)
 	if (w != NULL)
 		w->limiter_threshold = sc->pcm.limiter_threshold;
 
+	/*
+	 * Biquad mode, HPF cutoff, PEQ params, and limiter release
+	 * are persisted in sc->pcm and will be re-applied on the
+	 * next PCMTRIG_START via sst_topology_apply_biquad/limiter.
+	 */
+
 	/* Volume will be applied on next PCMTRIG_START via ramp */
 }
 
@@ -1116,27 +1133,25 @@ sst_chan_trigger(kobj_t obj, void *data, int go)
 			sst_ipc_stream_set_params(sc, &sp);
 		}
 
-		/* Apply EQ preset to stream if widget exists */
+		/* Apply biquad (HPF or PEQ) to stream if widget exists */
 		{
 			struct sst_widget *hpf_w;
 
 			hpf_w = sst_topology_find_widget(sc, "HPF1.0");
 			if (hpf_w != NULL) {
 				hpf_w->stream_id = ch->stream_id;
-				sst_topology_set_widget_eq_preset(sc, hpf_w,
-				    sc->pcm.eq_preset);
+				sst_topology_apply_biquad(sc);
 			}
 		}
 
-		/* Apply limiter to stream if widget exists */
+		/* Apply limiter (with release override) to stream */
 		{
 			struct sst_widget *lim_w;
 
 			lim_w = sst_topology_find_widget(sc, "LIMITER1.0");
 			if (lim_w != NULL && sc->pcm.limiter_threshold > 0) {
 				lim_w->stream_id = ch->stream_id;
-				sst_topology_set_widget_limiter(sc, lim_w,
-				    sc->pcm.limiter_threshold);
+				sst_topology_apply_limiter(sc);
 			}
 		}
 
@@ -1321,9 +1336,17 @@ sst_mixer_init(struct snd_mixer *m)
 
 	/* Default EQ: stock speaker (HPF 150Hz) */
 	sc->pcm.eq_preset = SST_EQ_PRESET_STOCK_SPEAKER;
+	sc->pcm.hpf_cutoff = 150;
+	sc->pcm.biquad_mode = SST_BIQUAD_MODE_HPF;
+
+	/* Default PEQ: off */
+	sc->pcm.peq_freq = 0;
+	sc->pcm.peq_gain = 0;
+	sc->pcm.peq_q = 71;	/* Q = 0.71 */
 
 	/* Default limiter: -6 dBFS (mixer treble = 60, preset index 5) */
 	sc->pcm.limiter_threshold = 5;
+	sc->pcm.limiter_release = 0;	/* Use preset default */
 
 	return (0);
 }

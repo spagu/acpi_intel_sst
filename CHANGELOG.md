@@ -5,6 +5,54 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.59.0] - 2026-02-15
+
+### Added: Runtime DSP Parameter Control via Sysctl (Issue #7)
+
+Runtime sysctl interface for HPF cutoff, limiter threshold/release, and
+parametric EQ parameters. Coefficients are computed in kernel space using
+integer-only arithmetic (no FPU). All parameters take effect immediately
+on active streams without pipeline restart.
+
+### Added
+
+- **HPF cutoff sysctl** (`sst_topology.c`) - `dev.acpi_intel_sst.N.hpf_cutoff`
+  (0=flat, 50-500 Hz). 13-entry precomputed Butterworth HPF coefficient table
+  at 48kHz with frequency snapping to nearest entry. Overrides `eq_preset`.
+- **Limiter threshold sysctl** (`sst_topology.c`) -
+  `dev.acpi_intel_sst.N.limiter_threshold` (0=bypass, 1-8 preset indices).
+- **Limiter release sysctl** (`sst_topology.c`) -
+  `dev.acpi_intel_sst.N.limiter_release` (10000-500000 us, 0=preset default).
+  Overrides the preset's default release time.
+- **PEQ sysctls** (`sst_topology.c`) - `peq_freq` (200-16000 Hz), `peq_gain`
+  (-12 to +12 dB), `peq_q` (30-1000, x100). Integer-only peaking EQ biquad
+  design using 256-entry Q1.30 sine LUT + 25-entry 10^(g/40) gain table.
+- **Biquad mode tracking** (`sst_pcm.h`) - `SST_BIQUAD_MODE_HPF` /
+  `SST_BIQUAD_MODE_PEQ` defines. HPF and PEQ share the single biquad stage
+  (mutually exclusive). Setting `peq_freq > 0` activates PEQ; 0 reverts to HPF.
+- **`sst_topology_apply_biquad()`** / **`sst_topology_apply_limiter()`** -
+  central helpers that apply current biquad/limiter state, used by sysctls,
+  PCMTRIG_START, and stall recovery paths.
+- **`sst_topology_set_widget_limiter_ex()`** - limiter send with custom release.
+- **`sst_topology_set_widget_biquad()`** - raw biquad coefficient send.
+
+### Changed
+
+- **Headroom enforcement** (`sst_topology.c`) - Volume ceiling now accounts for
+  PEQ positive gain in addition to HPF preset peak\_gain\_db.
+- **`eq_preset` sysctl** - Now also sets `hpf_cutoff` to the preset's frequency
+  and reverts to HPF mode when written.
+- **PCMTRIG_START** (`sst_pcm.c`) - Uses `apply_biquad`/`apply_limiter` for
+  full state restore including HPF/PEQ mode and limiter release override.
+- **Stall recovery** (`sst_pcm.c`) - Restores biquad (HPF or PEQ) and limiter
+  with release override after stream re-allocation.
+- **`sst_pcm_resume()`** - Documents new state fields preserved across suspend.
+- **README.md** - Added comprehensive "Sysctl Configuration Reference" section
+  covering all driver sysctl parameters (DSP audio + jack detection), limiter
+  preset table, and usage examples.
+
+---
+
 ## [0.58.0] - 2026-02-15
 
 ### Changed: Parametric EQ Presets (Issue #4)
@@ -1020,7 +1068,8 @@ IRQ allocation, IPC init, firmware load (IntcSST2.bin), DMA/SSP/PCM/topology ini
 - `Fixed` for any bug fixes
 - `Security` for vulnerability fixes
 
-[Unreleased]: https://github.com/spagu/acpi_intel_sst/compare/v0.58.0...HEAD
+[Unreleased]: https://github.com/spagu/acpi_intel_sst/compare/v0.59.0...HEAD
+[0.59.0]: https://github.com/spagu/acpi_intel_sst/compare/v0.58.0...v0.59.0
 [0.58.0]: https://github.com/spagu/acpi_intel_sst/compare/v0.57.0...v0.58.0
 [0.57.0]: https://github.com/spagu/acpi_intel_sst/compare/v0.55.0...v0.57.0
 [0.55.0]: https://github.com/spagu/acpi_intel_sst/compare/v0.54.0...v0.55.0

@@ -223,6 +223,92 @@ play -n synth 3 sine 440  # requires audio/sox
 
 ---
 
+## Sysctl Configuration Reference
+
+All runtime parameters are exposed via `sysctl` under `dev.acpi_intel_sst.0.*`.
+DSP parameters take effect immediately on active streams without pipeline restart.
+State is persisted across suspend/resume cycles.
+
+### DSP Audio Parameters
+
+| Sysctl | RW | Range | Default | Description |
+|:-------|:--:|:------|:--------|:------------|
+| `eq_preset` | RW | 0-2 | 1 | EQ preset shortcut (0=flat, 1=stock\_speaker 150Hz, 2=mod\_speaker 100Hz). Sets `hpf_cutoff` and reverts to HPF mode. |
+| `hpf_cutoff` | RW | 0, 50-500 | 150 | HPF cutoff frequency in Hz. 0=flat bypass. Snaps to nearest table entry. Writing overrides `eq_preset`. |
+| `limiter_threshold` | RW | 0-8 | 5 | Limiter threshold preset index (0=bypass, 1=-24dBFS, 5=-6dBFS, 8=0dBFS). |
+| `limiter_release` | RW | 0, 10000-500000 | 0 | Limiter release time override in microseconds. 0=use preset default. |
+| `peq_freq` | RW | 0, 200-16000 | 0 | PEQ center frequency in Hz. 0=off (HPF mode). Setting >0 activates PEQ mode. |
+| `peq_gain` | RW | -12 to +12 | 0 | PEQ boost/cut in dB. Positive values reduce volume ceiling (gain budget). |
+| `peq_q` | RW | 30-1000 | 71 | PEQ Q factor x100 (e.g. 71=0.71, 141=1.41, 1000=10.0). |
+
+**Biquad mode:** HPF and PEQ share the single biquad stage (mutually exclusive).
+Setting `peq_freq > 0` activates PEQ mode; setting it to 0 reverts to HPF mode
+using the current `hpf_cutoff`.
+
+**Gain budget:** When PEQ has positive `peq_gain`, the volume ceiling is
+automatically reduced by that amount to prevent clipping. The 3dB headroom
+policy (from `SST_HEADROOM_DB`) is enforced on top.
+
+**Limiter presets:**
+
+| Index | Threshold | Attack | Default Release |
+|:-----:|:---------:|:------:|:---------------:|
+| 0 | bypass | - | - |
+| 1 | -24 dBFS | 1ms | 50ms |
+| 2 | -18 dBFS | 1ms | 75ms |
+| 3 | -12 dBFS | 1ms | 100ms |
+| 4 | -9 dBFS | 1ms | 115ms |
+| 5 | -6 dBFS | 1ms | 135ms |
+| 6 | -3 dBFS | 1ms | 160ms |
+| 7 | -1 dBFS | 1ms | 180ms |
+| 8 | 0 dBFS | 1ms | 200ms |
+
+### Jack Detection
+
+| Sysctl | RW | Description |
+|:-------|:--:|:------------|
+| `jack.headphone` | RO | Headphone jack state (0=removed, 1=inserted) |
+| `jack.microphone` | RO | Microphone jack state (0=removed, 1=inserted) |
+| `jack.enabled` | RW | Enable/disable jack detection polling |
+| `jack.hp_insertions` | RO | Headphone insertion count (lifetime) |
+| `jack.mic_insertions` | RO | Microphone insertion count (lifetime) |
+| `jack.poll_count` | RO | Jack polling cycle count |
+
+### Examples
+
+```sh
+# Show all driver parameters
+sysctl dev.acpi_intel_sst.0
+
+# --- HPF cutoff control ---
+sysctl dev.acpi_intel_sst.0.hpf_cutoff=100    # 100Hz high-pass
+sysctl dev.acpi_intel_sst.0.hpf_cutoff=0       # bypass (flat)
+
+# --- EQ presets (convenience shortcut) ---
+sysctl dev.acpi_intel_sst.0.eq_preset=1        # stock speaker (HPF 150Hz)
+sysctl dev.acpi_intel_sst.0.eq_preset=0        # flat bypass
+
+# --- Limiter ---
+sysctl dev.acpi_intel_sst.0.limiter_threshold=3     # -12dBFS
+sysctl dev.acpi_intel_sst.0.limiter_release=100000   # 100ms release override
+sysctl dev.acpi_intel_sst.0.limiter_release=0        # revert to preset default
+
+# --- Parametric EQ: +3dB peak at 1kHz, Q=1.41 ---
+sysctl dev.acpi_intel_sst.0.peq_freq=1000
+sysctl dev.acpi_intel_sst.0.peq_gain=3
+sysctl dev.acpi_intel_sst.0.peq_q=141
+
+# --- PEQ boost engages gain budget ---
+sysctl dev.acpi_intel_sst.0.peq_gain=12   # max boost, volume ceiling drops
+sysctl dev.acpi_intel_sst.0.peq_freq=0     # disable PEQ, revert to HPF
+
+# --- Jack detection ---
+sysctl dev.acpi_intel_sst.0.jack.headphone    # check headphone state
+sysctl dev.acpi_intel_sst.0.jack.enabled=0    # disable jack polling
+```
+
+---
+
 ## Hardware
 
 | Component | Details |

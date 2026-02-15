@@ -131,6 +131,337 @@ static const struct sst_eq_preset_entry sst_eq_presets[SST_EQ_NUM_PRESETS] = {
 };
 
 /*
+ * HPF cutoff lookup table: precomputed 2nd-order Butterworth HPF
+ * biquad coefficients (Q2.30) at 48kHz sample rate.
+ *
+ * Snap user-requested cutoff to nearest table entry.
+ * All HPFs have peak_gain_db = 0 (no boost).
+ */
+struct sst_hpf_coeff_entry {
+	uint16_t  cutoff_hz;
+	int32_t   b0, b1, b2, a1, a2;	/* Q2.30 */
+	int       peak_gain_db;
+};
+
+#define SST_HPF_NUM_ENTRIES	13
+
+static const struct sst_hpf_coeff_entry sst_hpf_table[SST_HPF_NUM_ENTRIES] = {
+	/* 0 Hz: flat bypass (b0=1.0, rest=0) */
+	{   0, 1073741824,           0,          0,          0,          0, 0 },
+	/*  50 Hz */
+	{  50, 1070557065, -2141114130, 1070557065, -2141073638, 1067412797, 0 },
+	/*  60 Hz */
+	{  60, 1069749283, -2139498567, 1069749283, -2139445397, 1065810023, 0 },
+	/*  80 Hz */
+	{  80, 1068102048, -2136204096, 1068102048, -2136117856, 1062549031, 0 },
+	/* 100 Hz */
+	{ 100, 1063849116, -2127698232, 1063849116, -2127607086, 1054047555, 0 },
+	/* 120 Hz */
+	{ 120, 1061401872, -2122803745, 1061401872, -2122664003, 1049203260, 0 },
+	/* 150 Hz */
+	{ 150, 1058936991, -2117873982, 1058936991, -2117669842, 1044336297, 0 },
+	/* 200 Hz */
+	{ 200, 1053339174, -2106678349, 1053339174, -2106318629, 1033298765, 0 },
+	/* 250 Hz */
+	{ 250, 1047779997, -2095559994, 1047779997, -2094984480, 1022400170, 0 },
+	/* 300 Hz */
+	{ 300, 1042260466, -2084520932, 1042260466, -2083668978, 1011642815, 0 },
+	/* 350 Hz */
+	{ 350, 1036781573, -2073563147, 1036781573, -2072374072, 1001028222, 0 },
+	/* 400 Hz */
+	{ 400, 1031344281, -2062688562, 1031344281, -2061101887,  990558028, 0 },
+	/* 500 Hz */
+	{ 500, 1020610704, -2041221409, 1020610704, -2038633771,  970082830, 0 },
+};
+
+/*
+ * Snap requested frequency to nearest HPF table entry.
+ * Returns table index.
+ */
+static int
+sst_hpf_snap_freq(int freq)
+{
+	int i, best, best_diff, diff;
+
+	if (freq <= 0)
+		return (0);	/* bypass */
+
+	best = 0;
+	best_diff = abs(freq - sst_hpf_table[0].cutoff_hz);
+
+	for (i = 1; i < SST_HPF_NUM_ENTRIES; i++) {
+		diff = abs(freq - (int)sst_hpf_table[i].cutoff_hz);
+		if (diff < best_diff) {
+			best_diff = diff;
+			best = i;
+		}
+	}
+
+	return (best);
+}
+
+/*
+ * PEQ (Parametric EQ) integer-only biquad coefficient computation.
+ *
+ * Peaking EQ transfer function (Audio EQ Cookbook):
+ *   b0 = 1 + alpha*A    b1 = -2*cos(w0)    b2 = 1 - alpha*A
+ *   a0 = 1 + alpha/A    a1 = -2*cos(w0)    a2 = 1 - alpha/A
+ *   where A = 10^(gain_dB/40), w0 = 2*pi*fc/fs, alpha = sin(w0)/(2*Q)
+ *
+ * All arithmetic uses int32/int64 — no FPU.
+ * Fixed-point format: Q2.30 (1.0 = 0x40000000).
+ */
+
+#define SST_Q30_ONE	0x40000000	/* 1.0 in Q2.30 */
+
+/*
+ * 256-entry Q1.30 sine lookup table (one quadrant: 0..pi/2).
+ * sin_q30[i] = round(2^30 * sin(i * pi/2 / 256))
+ */
+static const int32_t sst_sin_q30[257] = {
+	         0,   6588397,  13176560,  19764254,  26351244,  32937296,
+	  39522175,  46105646,  52687476,  59267429,  65845272,  72420770,
+	  78993690,  85563798,  92130862,  98694649, 105254925, 111811460,
+	 118364021, 124912377, 131456298, 137995551, 144529906, 151059133,
+	 157583002, 164101283, 170613746, 177120162, 183620302, 190113937,
+	 196600839, 203080779, 209553530, 216018864, 222476554, 228926374,
+	 235368098, 241801502, 248226360, 254642448, 261049543, 267447421,
+	 273835860, 280214638, 286583533, 292942324, 299290791, 305628714,
+	 311955874, 318272052, 324577029, 330870589, 337152516, 343422593,
+	 349680606, 355926341, 362159584, 368380122, 374587744, 380782238,
+	 386963394, 393131003, 399284855, 405424743, 411550461, 417661803,
+	 423758565, 429840543, 435907534, 441959336, 447995749, 454016574,
+	 460021612, 466010664, 471983535, 477940029, 483879950, 489803106,
+	 495709304, 501598352, 507470060, 513324237, 519160696, 524979250,
+	 530779712, 536561897, 542325622, 548070704, 553796963, 559504218,
+	 565192291, 570861005, 576510183, 582139651, 587749235, 593338763,
+	 598908064, 604456968, 609985306, 615492912, 620979618, 626445262,
+	 631889679, 637312707, 642714187, 648093959, 653451866, 658787751,
+	 664101460, 669392838, 674661733, 679907994, 685131472, 690332018,
+	 695509486, 700663731, 705794607, 710901974, 715985688, 721045611,
+	 726081604, 731093530, 736081253, 741044639, 745983553, 750897863,
+	 755787439, 760652150, 765491868, 770306466, 775095818, 779859800,
+	 784598289, 789311162, 793998300, 798659582, 803294891, 807904110,
+	 812487125, 817043823, 821574092, 826077824, 830554909, 835005243,
+	 839428722, 843825243, 848194707, 852537014, 856852069, 861139776,
+	 865400041, 869632773, 873837882, 878015281, 882164885, 886286609,
+	 890380371, 894446092, 898483693, 902493098, 906474232, 910427022,
+	 914351397, 918247288, 922114628, 925953350, 929763393, 933544693,
+	 937297192, 941020830, 944715551, 948381300, 952018024, 955625672,
+	 959204194, 962753541, 966273667, 969764527, 973226076, 976658272,
+	 980061075, 983434445, 986778343, 990092733, 993377580, 996632849,
+	 999858510, 1003054531, 1006220882, 1009357536, 1012464466, 1015541646,
+	1018589054, 1021606665, 1024594460, 1027552418, 1030480521, 1033378751,
+	1036247094, 1039085534, 1041894060, 1044672659, 1047421322, 1050140039,
+	1052828803, 1055487610, 1058116455, 1060715336, 1063284251, 1065823201,
+	1068332187, 1070811212, 1073260282, 1075679400, 1078068574, 1080427812,
+	1082757124, 1085056520, 1087326013, 1089565617, 1091775346, 1093955217,
+	1096105248, 1098225457, 1100315864, 1102376492, 1104407363, 1106408501,
+	1108379933, 1110321685, 1112233785, 1114116264, 1115969150, 1117792476,
+	1119586275, 1121350581, 1123085429, 1124790857, 1126466901, 1128113602,
+	1129730998, 1131319132, 1132878045, 1134407782, 1135908389, 1137379910,
+	1138822394, 1140235889, 1141620445, 1142976112, 1144302943, 1145600991,
+	1146870311, 1148110958, 1149322988, 1150506459,
+	1151661430,
+};
+
+/*
+ * Integer sine/cosine using quarter-wave LUT with linear interpolation.
+ * Input: angle in Q2.30 radians (not normalized — raw omega value).
+ * Output: Q2.30 result.
+ *
+ * We map the angle to a 0..2*pi range, then use quadrant folding
+ * with the 256-entry quarter-wave table.
+ *
+ * For DSP biquad design at 48kHz, omega = 2*pi*fc/48000 is always
+ * small (< pi), so we handle the full [0, 2*pi) range.
+ */
+
+/* pi in Q2.30: round(2^30 * pi) = 3373259426 (fits uint32_t) */
+#define SST_PI_Q30	3373259426U
+/* 2*pi in Q2.30 — wraps, so use uint32_t for mod arithmetic */
+#define SST_2PI_Q30	(SST_PI_Q30 * 2U)
+/* pi/2 in Q2.30 */
+#define SST_HALFPI_Q30	(SST_PI_Q30 / 2U)
+
+static int32_t
+sst_sin_q30_interp(uint32_t angle_q30)
+{
+	uint32_t norm, idx_frac;
+	int idx;
+	int32_t s0, s1, frac, result;
+	int negate;
+
+	/* Reduce to [0, 2*pi) */
+	if (angle_q30 >= SST_2PI_Q30)
+		angle_q30 = angle_q30 % SST_2PI_Q30;
+
+	/* Quadrant folding */
+	negate = 0;
+	if (angle_q30 >= SST_PI_Q30) {
+		angle_q30 -= SST_PI_Q30;
+		negate = 1;
+	}
+	if (angle_q30 > SST_HALFPI_Q30)
+		angle_q30 = SST_PI_Q30 - angle_q30;
+
+	/* Map [0, pi/2] to [0, 256] with fractional part */
+	/* norm = angle * 256 / (pi/2) in Q2.30 */
+	norm = (uint32_t)((uint64_t)angle_q30 * 256 / SST_HALFPI_Q30);
+
+	/* Integer and fractional index */
+	idx = (int)(norm >> 0);  /* This is 0..256 */
+	if (idx > 256)
+		idx = 256;
+
+	/* For sub-entry interpolation, compute frac from higher precision */
+	/* frac = (angle * 256 * 1024 / halfpi) & 0x3FF, scaled to Q30 */
+	idx_frac = (uint32_t)((uint64_t)angle_q30 * 256 * 1024 /
+	    SST_HALFPI_Q30);
+	frac = (int32_t)(idx_frac & 0x3FF);  /* 10-bit fraction */
+
+	s0 = sst_sin_q30[idx < 256 ? idx : 256];
+	s1 = sst_sin_q30[idx < 256 ? idx + 1 : 256];
+
+	/* Linear interpolation: s0 + (s1 - s0) * frac / 1024 */
+	result = s0 + (int32_t)(((int64_t)(s1 - s0) * frac) >> 10);
+
+	return (negate ? -result : result);
+}
+
+static int32_t
+sst_cos_q30_interp(uint32_t angle_q30)
+{
+	return (sst_sin_q30_interp(angle_q30 + SST_HALFPI_Q30));
+}
+
+/*
+ * 10^(gain_dB/40) lookup table for PEQ 'A' parameter.
+ * 25 entries for gain = -12..+12 dB (index = gain + 12).
+ * Q2.30 format: 1.0 = 0x40000000.
+ *
+ * A = 10^(g/40), used in peaking EQ:
+ *   b0 = 1 + alpha*A, b2 = 1 - alpha*A
+ *   a0 = 1 + alpha/A, a2 = 1 - alpha/A
+ */
+static const int32_t sst_peq_A_q30[25] = {
+	 538145694,  /* -12 dB: A = 0.50119 */
+	 570032831,  /* -11 dB: A = 0.53088 */
+	 603809400,  /* -10 dB: A = 0.56234 */
+	 639587356,  /*  -9 dB: A = 0.59566 */
+	 677485290,  /*  -8 dB: A = 0.63096 */
+	 717628817,  /*  -7 dB: A = 0.66834 */
+	 760150998,  /*  -6 dB: A = 0.70795 */
+	 805192776,  /*  -5 dB: A = 0.74989 */
+	 852903448,  /*  -4 dB: A = 0.79433 */
+	 903441154,  /*  -3 dB: A = 0.84140 */
+	 956973408,  /*  -2 dB: A = 0.89125 */
+	1013677647,  /*  -1 dB: A = 0.94406 */
+	1073741824,  /*   0 dB: A = 1.00000 (0x40000000) */
+	1137365027,  /*  +1 dB: A = 1.05925 */
+	1204758142,  /*  +2 dB: A = 1.12202 */
+	1276144550,  /*  +3 dB: A = 1.18850 */
+	1351760868,  /*  +4 dB: A = 1.25893 */
+	1431857735,  /*  +5 dB: A = 1.33352 */
+	1516700640,  /*  +6 dB: A = 1.41254 */
+	1606570803,  /*  +7 dB: A = 1.49624 */
+	1701766107,  /*  +8 dB: A = 1.58489 */
+	1802602089,  /*  +9 dB: A = 1.67880 */
+	1909412977,  /* +10 dB: A = 1.77828 */
+	2022552809,  /* +11 dB: A = 1.88365 */
+	2142396597,  /* +12 dB: A = 1.99526 */
+};
+
+/*
+ * Compute PEQ biquad coefficients (integer-only).
+ *
+ * Inputs:
+ *   fc_hz:   center frequency in Hz (200..16000)
+ *   gain_db: boost/cut in dB (-12..+12)
+ *   q_x100:  Q factor × 100 (30..1000, e.g. 71 = 0.71)
+ *   fs:      sample rate (typically 48000)
+ *
+ * Outputs:
+ *   b0, b1, b2, a1, a2 in Q2.30
+ *
+ * Returns 0 on success.
+ */
+static int
+sst_biquad_compute_peq(int fc_hz, int gain_db, int q_x100, int fs,
+    int32_t *out_b0, int32_t *out_b1, int32_t *out_b2,
+    int32_t *out_a1, int32_t *out_a2)
+{
+	uint32_t omega;		/* 2*pi*fc/fs in Q2.30 */
+	int32_t sin_w, cos_w;
+	int32_t A;		/* 10^(gain/40) in Q2.30 */
+	int64_t alpha;		/* sin(w)/(2*Q) in Q2.30 */
+	int64_t alphaA;		/* alpha * A in Q2.30 */
+	int64_t alphaOverA;	/* alpha / A in Q2.30 */
+	int64_t a0, b0, b1, b2, a1, a2;
+	int a_idx;
+
+	if (fc_hz < 200 || fc_hz > 16000)
+		return (EINVAL);
+	if (gain_db < -12 || gain_db > 12)
+		return (EINVAL);
+	if (q_x100 < 30 || q_x100 > 1000)
+		return (EINVAL);
+
+	/* omega = 2 * pi * fc / fs, in Q2.30 */
+	omega = (uint32_t)((uint64_t)SST_2PI_Q30 * fc_hz / fs);
+
+	/* sin(omega), cos(omega) via LUT */
+	sin_w = sst_sin_q30_interp(omega);
+	cos_w = sst_cos_q30_interp(omega);
+
+	/* A = 10^(gain_db/40) from lookup table */
+	a_idx = gain_db + 12;
+	if (a_idx < 0) a_idx = 0;
+	if (a_idx > 24) a_idx = 24;
+	A = sst_peq_A_q30[a_idx];
+
+	/* alpha = sin(w) / (2 * Q)
+	 * Q = q_x100 / 100, so alpha = sin(w) * 100 / (2 * q_x100)
+	 * = sin(w) * 50 / q_x100
+	 * sin_w is Q2.30, result stays Q2.30
+	 */
+	alpha = (int64_t)sin_w * 50 / q_x100;
+
+	/* alphaA = alpha * A (both Q2.30 → shift down 30) */
+	alphaA = (alpha * (int64_t)A) >> 30;
+
+	/* alphaOverA = alpha * Q30_ONE / A */
+	alphaOverA = (alpha * (int64_t)SST_Q30_ONE) / A;
+
+	/* Biquad coefficients (all in Q2.30 before normalization):
+	 *   b0 = 1 + alpha*A
+	 *   b1 = -2*cos(w)
+	 *   b2 = 1 - alpha*A
+	 *   a0 = 1 + alpha/A
+	 *   a1 = -2*cos(w)
+	 *   a2 = 1 - alpha/A
+	 */
+	b0 = SST_Q30_ONE + alphaA;
+	b1 = -2 * (int64_t)cos_w;
+	b2 = SST_Q30_ONE - alphaA;
+	a0 = SST_Q30_ONE + alphaOverA;
+	a1 = -2 * (int64_t)cos_w;
+	a2 = SST_Q30_ONE - alphaOverA;
+
+	/* Normalize: divide all by a0, keeping Q2.30 */
+	if (a0 == 0)
+		return (EINVAL);
+
+	*out_b0 = (int32_t)((b0 << 30) / a0);
+	*out_b1 = (int32_t)((b1 << 30) / a0);
+	*out_b2 = (int32_t)((b2 << 30) / a0);
+	*out_a1 = (int32_t)((a1 << 30) / a0);
+	*out_a2 = (int32_t)((a2 << 30) / a0);
+
+	return (0);
+}
+
+/*
  * Precomputed peak limiter threshold presets at 48kHz.
  * Q2.30 linear amplitude (range [-2.0, +2.0), 1.0 = 0x40000000).
  *
@@ -707,25 +1038,33 @@ sst_topology_set_widget_volume(struct sst_softc *sc, struct sst_widget *w,
 		return (EINVAL);
 
 	/*
-	 * Enforce headroom ceiling, accounting for EQ peak gain.
+	 * Enforce headroom ceiling, accounting for EQ/PEQ peak gain.
 	 *
 	 * The base ceiling is -SST_HEADROOM_DB (-3dBFS in half-dB steps).
-	 * If the pipeline's EQ preset boosts any frequency by peak_gain_db,
-	 * we must reduce the volume ceiling by the same amount so that
-	 * EQ peak + volume never exceeds -SST_HEADROOM_DB dBFS.
+	 * If the pipeline's biquad boosts any frequency (HPF preset
+	 * peak_gain_db or PEQ positive gain), reduce the volume ceiling
+	 * by the same amount so EQ peak + volume never exceeds
+	 * -SST_HEADROOM_DB dBFS.
 	 */
 	{
 		int32_t ceiling;
-		struct sst_widget *hpf;
+		int peak = 0;
 
 		ceiling = -SST_HEADROOM_HALF_DB;
-		hpf = sst_topology_find_widget(sc, "HPF1.0");
-		if (hpf != NULL && hpf->pipeline_id == w->pipeline_id &&
-		    hpf->eq_preset < SST_EQ_NUM_PRESETS) {
-			int peak = sst_eq_presets[hpf->eq_preset].peak_gain_db;
-			if (peak > 0)
-				ceiling -= peak * 2; /* dB to half-dB steps */
+
+		if (sc->pcm.biquad_mode == SST_BIQUAD_MODE_PEQ &&
+		    sc->pcm.peq_gain > 0) {
+			peak = sc->pcm.peq_gain;
+		} else {
+			struct sst_widget *hpf;
+			hpf = sst_topology_find_widget(sc, "HPF1.0");
+			if (hpf != NULL &&
+			    hpf->pipeline_id == w->pipeline_id &&
+			    hpf->eq_preset < SST_EQ_NUM_PRESETS)
+				peak = sst_eq_presets[hpf->eq_preset].peak_gain_db;
 		}
+		if (peak > 0)
+			ceiling -= peak * 2; /* dB to half-dB steps */
 		if (volume > ceiling)
 			volume = ceiling;
 	}
@@ -828,6 +1167,54 @@ sst_topology_set_widget_limiter(struct sst_softc *sc, struct sst_widget *w,
 }
 
 /*
+ * Set widget limiter with explicit release override.
+ * Uses threshold from preset table but substitutes custom release_us.
+ */
+int
+sst_topology_set_widget_limiter_ex(struct sst_softc *sc, struct sst_widget *w,
+				   uint32_t threshold_idx, uint32_t release_us)
+{
+	const struct sst_limiter_preset *entry;
+
+	if (w == NULL || w->module_type != SST_MOD_LIMITER)
+		return (EINVAL);
+
+	if (threshold_idx >= SST_LIMITER_NUM_PRESETS)
+		threshold_idx = SST_LIMITER_NUM_PRESETS - 1;
+	entry = &sst_limiter_presets[threshold_idx];
+
+	w->limiter_threshold = threshold_idx;
+
+	/* Send with custom release time */
+	if (w->stream_id != 0 && sc->fw.state == SST_FW_STATE_RUNNING) {
+		return sst_ipc_set_limiter(sc, w->stream_id,
+		    entry->threshold_linear, entry->attack_us,
+		    release_us);
+	}
+
+	return (0);
+}
+
+/*
+ * Set raw biquad coefficients on HPF widget (used by both HPF and PEQ).
+ */
+int
+sst_topology_set_widget_biquad(struct sst_softc *sc, struct sst_widget *w,
+			       int32_t b0, int32_t b1, int32_t b2,
+			       int32_t a1, int32_t a2)
+{
+	if (w == NULL || w->module_type != SST_MOD_HPF)
+		return (EINVAL);
+
+	if (w->stream_id != 0 && sc->fw.state == SST_FW_STATE_RUNNING) {
+		return sst_ipc_set_biquad(sc, w->stream_id,
+		    b0, b1, b2, a1, a2);
+	}
+
+	return (0);
+}
+
+/*
  * Connect a route
  */
 int
@@ -877,8 +1264,82 @@ sst_topology_get_pipeline(struct sst_softc *sc, int dir, int stream_num)
 }
 
 /*
+ * Helper: apply current biquad state (HPF or PEQ) to the HPF widget.
+ * Called when any biquad-related sysctl changes.
+ */
+void
+sst_topology_apply_biquad(struct sst_softc *sc)
+{
+	struct sst_widget *hpf_w;
+
+	hpf_w = sst_topology_find_widget(sc, "HPF1.0");
+	if (hpf_w == NULL)
+		return;
+
+	if (sc->pcm.biquad_mode == SST_BIQUAD_MODE_PEQ &&
+	    sc->pcm.peq_freq > 0) {
+		int32_t b0, b1, b2, a1, a2;
+		int error;
+
+		error = sst_biquad_compute_peq(sc->pcm.peq_freq,
+		    sc->pcm.peq_gain, sc->pcm.peq_q, 48000,
+		    &b0, &b1, &b2, &a1, &a2);
+		if (error == 0)
+			sst_topology_set_widget_biquad(sc, hpf_w,
+			    b0, b1, b2, a1, a2);
+	} else {
+		/* HPF mode: use lookup table */
+		int idx;
+		const struct sst_hpf_coeff_entry *entry;
+
+		idx = sst_hpf_snap_freq(sc->pcm.hpf_cutoff);
+		entry = &sst_hpf_table[idx];
+		sst_topology_set_widget_biquad(sc, hpf_w,
+		    entry->b0, entry->b1, entry->b2,
+		    entry->a1, entry->a2);
+	}
+
+	/*
+	 * Update gain budget: PEQ boost requires lowering volume ceiling.
+	 * Re-apply current volume so headroom logic kicks in.
+	 * The ceiling calculation in set_widget_volume reads
+	 * sc->pcm.biquad_mode and sc->pcm.peq_gain directly.
+	 */
+	{
+		struct sst_widget *pga;
+
+		pga = sst_topology_find_widget(sc, "PGA1.0");
+		if (pga != NULL && hpf_w->pipeline_id == pga->pipeline_id)
+			sst_topology_set_widget_volume(sc, pga, pga->volume);
+	}
+}
+
+/*
+ * Helper: apply current limiter state (with optional release override).
+ */
+void
+sst_topology_apply_limiter(struct sst_softc *sc)
+{
+	struct sst_widget *lim_w;
+
+	lim_w = sst_topology_find_widget(sc, "LIMITER1.0");
+	if (lim_w == NULL)
+		return;
+
+	if (sc->pcm.limiter_release > 0) {
+		sst_topology_set_widget_limiter_ex(sc, lim_w,
+		    sc->pcm.limiter_threshold, sc->pcm.limiter_release);
+	} else {
+		sst_topology_set_widget_limiter(sc, lim_w,
+		    sc->pcm.limiter_threshold);
+	}
+}
+
+/*
  * Sysctl handler for EQ preset switching.
  * Reads/writes sc->pcm.eq_preset and applies to the HPF widget.
+ * Writing eq_preset also sets hpf_cutoff to the preset's frequency
+ * and switches to HPF mode.
  */
 static int
 sst_eq_preset_sysctl(SYSCTL_HANDLER_ARGS)
@@ -896,20 +1357,202 @@ sst_eq_preset_sysctl(SYSCTL_HANDLER_ARGS)
 
 	sc->pcm.eq_preset = (enum sst_eq_preset_id)preset;
 
-	{
-		struct sst_widget *hpf_w;
-		hpf_w = sst_topology_find_widget(sc, "HPF1.0");
-		if (hpf_w != NULL)
-			sst_topology_set_widget_eq_preset(sc, hpf_w,
-			    sc->pcm.eq_preset);
+	/* Map preset to HPF cutoff */
+	switch (preset) {
+	case SST_EQ_PRESET_FLAT:
+		sc->pcm.hpf_cutoff = 0;
+		break;
+	case SST_EQ_PRESET_STOCK_SPEAKER:
+		sc->pcm.hpf_cutoff = 150;
+		break;
+	case SST_EQ_PRESET_MOD_SPEAKER:
+		sc->pcm.hpf_cutoff = 100;
+		break;
 	}
+
+	/* Switch to HPF mode and apply */
+	sc->pcm.biquad_mode = SST_BIQUAD_MODE_HPF;
+	sc->pcm.peq_freq = 0;
+	sst_topology_apply_biquad(sc);
 
 	return (0);
 }
 
 /*
- * Register EQ preset sysctl node under device tree.
- * Creates dev.acpi_intel_sst.N.eq_preset (RW).
+ * Sysctl handler for HPF cutoff frequency.
+ * Overrides eq_preset. 0 = flat bypass, 50-500 = cutoff in Hz.
+ */
+static int
+sst_hpf_cutoff_sysctl(SYSCTL_HANDLER_ARGS)
+{
+	struct sst_softc *sc = arg1;
+	int val, error;
+
+	val = (int)sc->pcm.hpf_cutoff;
+	error = sysctl_handle_int(oidp, &val, 0, req);
+	if (error || req->newptr == NULL)
+		return (error);
+
+	/* Clamp to valid range */
+	if (val < 0)
+		val = 0;
+	if (val > 0 && val < 50)
+		val = 50;
+	if (val > 500)
+		val = 500;
+
+	sc->pcm.hpf_cutoff = (uint16_t)val;
+
+	/* Switch to HPF mode */
+	sc->pcm.biquad_mode = SST_BIQUAD_MODE_HPF;
+	sc->pcm.peq_freq = 0;
+	sst_topology_apply_biquad(sc);
+
+	return (0);
+}
+
+/*
+ * Sysctl handler for limiter threshold preset index.
+ * 0 = bypass, 1-8 = threshold presets.
+ */
+static int
+sst_limiter_threshold_sysctl(SYSCTL_HANDLER_ARGS)
+{
+	struct sst_softc *sc = arg1;
+	int val, error;
+
+	val = (int)sc->pcm.limiter_threshold;
+	error = sysctl_handle_int(oidp, &val, 0, req);
+	if (error || req->newptr == NULL)
+		return (error);
+
+	if (val < 0 || val >= SST_LIMITER_NUM_PRESETS)
+		return (EINVAL);
+
+	sc->pcm.limiter_threshold = (uint32_t)val;
+	sst_topology_apply_limiter(sc);
+
+	return (0);
+}
+
+/*
+ * Sysctl handler for limiter release time override.
+ * 10000-500000 µs. Overrides the preset's default release.
+ * Set to 0 to revert to preset default.
+ */
+static int
+sst_limiter_release_sysctl(SYSCTL_HANDLER_ARGS)
+{
+	struct sst_softc *sc = arg1;
+	int val, error;
+
+	val = (int)sc->pcm.limiter_release;
+	error = sysctl_handle_int(oidp, &val, 0, req);
+	if (error || req->newptr == NULL)
+		return (error);
+
+	if (val != 0 && (val < 10000 || val > 500000))
+		return (EINVAL);
+
+	sc->pcm.limiter_release = (uint32_t)val;
+	sst_topology_apply_limiter(sc);
+
+	return (0);
+}
+
+/*
+ * Sysctl handler for PEQ center frequency.
+ * 0 = off (reverts to HPF mode), 200-16000 Hz = PEQ active.
+ */
+static int
+sst_peq_freq_sysctl(SYSCTL_HANDLER_ARGS)
+{
+	struct sst_softc *sc = arg1;
+	int val, error;
+
+	val = (int)sc->pcm.peq_freq;
+	error = sysctl_handle_int(oidp, &val, 0, req);
+	if (error || req->newptr == NULL)
+		return (error);
+
+	if (val != 0 && (val < 200 || val > 16000))
+		return (EINVAL);
+
+	sc->pcm.peq_freq = (uint16_t)val;
+
+	if (val > 0) {
+		sc->pcm.biquad_mode = SST_BIQUAD_MODE_PEQ;
+		/* Initialize defaults if not already set */
+		if (sc->pcm.peq_q == 0)
+			sc->pcm.peq_q = 71;	/* Q = 0.71 */
+	} else {
+		sc->pcm.biquad_mode = SST_BIQUAD_MODE_HPF;
+	}
+
+	sst_topology_apply_biquad(sc);
+
+	return (0);
+}
+
+/*
+ * Sysctl handler for PEQ gain in dB.
+ * -12 to +12 dB.
+ */
+static int
+sst_peq_gain_sysctl(SYSCTL_HANDLER_ARGS)
+{
+	struct sst_softc *sc = arg1;
+	int val, error;
+
+	val = sc->pcm.peq_gain;
+	error = sysctl_handle_int(oidp, &val, 0, req);
+	if (error || req->newptr == NULL)
+		return (error);
+
+	if (val < -12 || val > 12)
+		return (EINVAL);
+
+	sc->pcm.peq_gain = val;
+
+	/* Only recompute if PEQ is active */
+	if (sc->pcm.biquad_mode == SST_BIQUAD_MODE_PEQ &&
+	    sc->pcm.peq_freq > 0)
+		sst_topology_apply_biquad(sc);
+
+	return (0);
+}
+
+/*
+ * Sysctl handler for PEQ Q factor (× 100).
+ * 30-1000 (e.g. 71 = Q 0.71, 141 = Q 1.41).
+ */
+static int
+sst_peq_q_sysctl(SYSCTL_HANDLER_ARGS)
+{
+	struct sst_softc *sc = arg1;
+	int val, error;
+
+	val = sc->pcm.peq_q;
+	error = sysctl_handle_int(oidp, &val, 0, req);
+	if (error || req->newptr == NULL)
+		return (error);
+
+	if (val < 30 || val > 1000)
+		return (EINVAL);
+
+	sc->pcm.peq_q = val;
+
+	/* Only recompute if PEQ is active */
+	if (sc->pcm.biquad_mode == SST_BIQUAD_MODE_PEQ &&
+	    sc->pcm.peq_freq > 0)
+		sst_topology_apply_biquad(sc);
+
+	return (0);
+}
+
+/*
+ * Register all DSP parameter sysctls under device tree.
+ * Creates dev.acpi_intel_sst.N.{eq_preset,hpf_cutoff,...} (RW).
  */
 int
 sst_topology_sysctl_init(struct sst_softc *sc)
@@ -924,6 +1567,36 @@ sst_topology_sysctl_init(struct sst_softc *sc)
 	    "eq_preset", CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_MPSAFE,
 	    sc, 0, sst_eq_preset_sysctl, "I",
 	    "EQ preset (0=flat, 1=stock_speaker, 2=mod_speaker)");
+
+	SYSCTL_ADD_PROC(ctx, SYSCTL_CHILDREN(tree), OID_AUTO,
+	    "hpf_cutoff", CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_MPSAFE,
+	    sc, 0, sst_hpf_cutoff_sysctl, "I",
+	    "HPF cutoff frequency in Hz (0=flat, 50-500)");
+
+	SYSCTL_ADD_PROC(ctx, SYSCTL_CHILDREN(tree), OID_AUTO,
+	    "limiter_threshold", CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_MPSAFE,
+	    sc, 0, sst_limiter_threshold_sysctl, "I",
+	    "Limiter preset index (0=bypass, 1-8)");
+
+	SYSCTL_ADD_PROC(ctx, SYSCTL_CHILDREN(tree), OID_AUTO,
+	    "limiter_release", CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_MPSAFE,
+	    sc, 0, sst_limiter_release_sysctl, "I",
+	    "Limiter release time in us (0=preset default, 10000-500000)");
+
+	SYSCTL_ADD_PROC(ctx, SYSCTL_CHILDREN(tree), OID_AUTO,
+	    "peq_freq", CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_MPSAFE,
+	    sc, 0, sst_peq_freq_sysctl, "I",
+	    "PEQ center frequency in Hz (0=off, 200-16000)");
+
+	SYSCTL_ADD_PROC(ctx, SYSCTL_CHILDREN(tree), OID_AUTO,
+	    "peq_gain", CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_MPSAFE,
+	    sc, 0, sst_peq_gain_sysctl, "I",
+	    "PEQ boost/cut in dB (-12 to +12)");
+
+	SYSCTL_ADD_PROC(ctx, SYSCTL_CHILDREN(tree), OID_AUTO,
+	    "peq_q", CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_MPSAFE,
+	    sc, 0, sst_peq_q_sysctl, "I",
+	    "PEQ Q factor x100 (30-1000, e.g. 71=0.71)");
 
 	return (0);
 }
