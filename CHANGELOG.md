@@ -5,6 +5,45 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.57.0] - 2026-02-15
+
+### Improved: Suspend/Resume Stability (Issue #10)
+
+Full audio subsystem teardown on suspend and reconstruction on resume,
+eliminating broken audio after S3 sleep cycles.
+
+### Added
+
+- **Firmware SRAM reload** (`sst_firmware.c`) - `sst_fw_reload()` re-writes
+  cached firmware from host memory to SRAM after D3 power loss, without
+  re-fetching from disk. The firmware(9) handle stays valid across suspend.
+- **PCM suspend/resume helpers** (`sst_pcm.c`) - `sst_pcm_suspend()` tears
+  down active DSP streams and stops poll timers; `sst_pcm_resume()` restores
+  HPF and limiter widget parameters from saved mixer state.
+- **Volume ramp-in after resume** (`sst_pcm.c`) - 5-step linear ramp over
+  ~50ms (silence to target volume) on first PCMTRIG_START after resume,
+  preventing speaker pop noise. Uses a dedicated callout (`ramp_callout`).
+- **Mixer state application on stream start** (`sst_pcm.c`) - volume, HPF
+  cutoff, and limiter threshold are now applied via IPC on every
+  PCMTRIG_START, also fixing parameter loss after stall recovery.
+- **Resume ramp state fields** (`sst_pcm.h`) - `resume_ramp`, `ramp_step`,
+  and `ramp_callout` added to `struct sst_pcm`.
+
+### Changed
+
+- **Suspend** (`acpi_intel_sst.c`) now performs ordered teardown:
+  jack disable, PCM stream teardown, SSP stop, codec shutdown,
+  topology state clear, DSP reset, D3 power-off.
+- **Resume** (`acpi_intel_sst.c`) now fully reconstructs the audio pipeline:
+  D0 power-on, SHIM init, firmware reload to SRAM, DSP boot, FW version
+  query, module region allocation, stage capability probe, topology rebuild,
+  SSP0 device format configuration, codec re-init with speaker/headphone
+  enable, mixer state restore, jack detection restart, and ramp arm.
+- Previous resume only attempted a bare DSP boot with empty SRAM, resulting
+  in no audio output after any suspend/resume cycle.
+
+---
+
 ## [0.55.0] - 2026-02-14
 
 ### Added: Peak Limiter Before SSP0 Output (Issue #3)
@@ -935,7 +974,8 @@ IRQ allocation, IPC init, firmware load (IntcSST2.bin), DMA/SSP/PCM/topology ini
 - `Fixed` for any bug fixes
 - `Security` for vulnerability fixes
 
-[Unreleased]: https://github.com/spagu/acpi_intel_sst/compare/v0.55.0...HEAD
+[Unreleased]: https://github.com/spagu/acpi_intel_sst/compare/v0.57.0...HEAD
+[0.57.0]: https://github.com/spagu/acpi_intel_sst/compare/v0.55.0...v0.57.0
 [0.55.0]: https://github.com/spagu/acpi_intel_sst/compare/v0.54.0...v0.55.0
 [0.54.0]: https://github.com/spagu/acpi_intel_sst/compare/v0.53.0...v0.54.0
 [0.53.0]: https://github.com/spagu/acpi_intel_sst/compare/v0.52.0...v0.53.0
