@@ -66,6 +66,9 @@ static int sst_chan_trigger(kobj_t obj, void *data, int go);
 static uint32_t sst_chan_getptr(kobj_t obj, void *data);
 static struct pcmchan_caps *sst_chan_getcaps(kobj_t obj, void *data);
 
+/* Volume percent to Q1.31 (defined below, needed by poll timer) */
+static uint32_t sst_percent_to_q131(unsigned int pct);
+
 /* DSP stream allocation helpers */
 static int sst_pcm_alloc_dsp_stream(struct sst_softc *sc,
     struct sst_pcm_channel *ch);
@@ -784,8 +787,94 @@ sst_pcm_poll(void *arg)
 	    pos / ch->blk_size != ch->last_pos / ch->blk_size) {
 		ch->ptr = pos;
 		chn_intr(ch->pcm_ch);
+		ch->stall_count = 0;
+	} else if (pos == ch->last_pos) {
+		ch->stall_count++;
 	}
+
+	/*
+	 * DSP stream stall recovery.
+	 *
+	 * The catpt DSP firmware can stall its DMA engine after
+	 * processing many SET_VOLUME IPC messages.  The position
+	 * register stops advancing but the DSP core stays alive
+	 * (IPC still works).  Recover by re-issuing RESUME.
+	 *
+	 * 200 polls at ~5ms = 1 second of no movement.
+	 */
+	if (ch->stall_count == 200 && ch->stream_allocated) {
+		device_printf(sc->dev,
+		    "PCM: stream %u stalled at pos=%u, restarting\n",
+		    ch->stream_id, pos);
+		/*
+		 * Full stream restart: FREE old stream, ALLOC new one.
+		 *
+		 * The catpt DSP's DMA engine can stall after many
+		 * SET_VOLUME IPCs.  Neither RESUME nor RESET recovers
+		 * it.  The only fix is to tear down and reallocate
+		 * the entire stream, keeping the same ring buffer.
+		 */
+		sst_pcm_free_dsp_stream(sc, ch);
+
+		if (sst_pcm_alloc_dsp_stream(sc, ch) == 0) {
+			sst_ipc_stream_reset(sc, ch->stream_id);
+			sst_ipc_stream_pause(sc, ch->stream_id);
+
+			sst_shim_update_bits(sc, SST_SHIM_HMDC,
+			    SST_HMDC_HDDA_ALL, SST_HMDC_HDDA_ALL);
+
+			sst_ipc_stream_resume(sc, ch->stream_id);
+			sst_ssp_start(sc, ch->ssp_port);
+			sst_codec_pll_rearm(sc);
+
+			/* Restore current volume */
+			{
+				struct sst_stream_params vsp;
+				memset(&vsp, 0, sizeof(vsp));
+				vsp.stream_id = ch->stream_id;
+				vsp.volume_left =
+				    sst_percent_to_q131(sc->pcm.vol_left);
+				vsp.volume_right =
+				    sst_percent_to_q131(sc->pcm.vol_right);
+				sst_ipc_stream_set_params(sc, &vsp);
+			}
+
+			device_printf(sc->dev,
+			    "PCM: stream recovered as %u\n",
+			    ch->stream_id);
+		} else {
+			device_printf(sc->dev,
+			    "PCM: stream recovery failed\n");
+		}
+		ch->stall_count = 0;
+	}
+
 	ch->last_pos = pos;
+
+	/*
+	 * Flush deferred volume update.
+	 *
+	 * If the mixer rate-limiter deferred a SET_VOLUME, send
+	 * the final value now (from callout context, outside the
+	 * rapid ioctl storm).  Only flush once per deferral.
+	 */
+	if (ch->dir == PCMDIR_PLAY && sc->pcm.vol_pending) {
+		struct sst_stream_params vsp;
+		int elapsed = ticks - sc->pcm.vol_ticks;
+
+		if (elapsed >= hz / 2 && ch->stream_allocated) {
+			memset(&vsp, 0, sizeof(vsp));
+			vsp.stream_id = ch->stream_id;
+			vsp.volume_left =
+			    sst_percent_to_q131(sc->pcm.vol_left);
+			vsp.volume_right =
+			    sst_percent_to_q131(sc->pcm.vol_right);
+			vsp.mute = sc->pcm.mute;
+			sst_ipc_stream_set_params(sc, &vsp);
+			sc->pcm.vol_ticks = ticks;
+			sc->pcm.vol_pending = false;
+		}
+	}
 
 	/* Reschedule */
 	callout_reset(&ch->poll_timer, SST_PCM_POLL_TICKS,
@@ -1075,6 +1164,31 @@ sst_mixer_set(struct snd_mixer *m, unsigned dev, unsigned left, unsigned right)
 	case SOUND_MIXER_PCM:
 		sc->pcm.vol_left = left;
 		sc->pcm.vol_right = right;
+
+		/*
+		 * Rate-limit SET_VOLUME IPC to prevent flooding the DSP.
+		 *
+		 * Rapid mixer slider drags can generate dozens of volume
+		 * changes per second.  Each sends 2 IPC messages (L+R).
+		 * The DSP handles IPC synchronously, starving its DMA
+		 * engine and killing the stream.
+		 *
+		 * Throttle to at most one update per 100ms.  Intermediate
+		 * values are stored and sent by the poll timer as a
+		 * deferred update.
+		 */
+		{
+			int now = ticks;
+			int elapsed = now - sc->pcm.vol_ticks;
+
+			if (elapsed < hz / 2 && sc->pcm.vol_ticks != 0) {
+				/* Too soon — defer to poll timer */
+				sc->pcm.vol_pending = true;
+				break;
+			}
+			sc->pcm.vol_ticks = now;
+			sc->pcm.vol_pending = false;
+		}
 
 		/* Update volume on all active playback streams */
 		for (i = 0; i < SST_PCM_MAX_PLAY; i++) {
