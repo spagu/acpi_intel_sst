@@ -9,7 +9,7 @@
 [![FreeBSD](https://img.shields.io/badge/FreeBSD-15--CURRENT-AB2B28?style=for-the-badge&logo=freebsd&logoColor=white)](https://www.freebsd.org/)
 [![License](https://img.shields.io/badge/License-BSD--3--Clause-0078D4?style=for-the-badge)](LICENSE)
 [![Platform](https://img.shields.io/badge/Intel-Broadwell--U-0071C5?style=for-the-badge&logo=intel&logoColor=white)](https://ark.intel.com/)
-[![Status](https://img.shields.io/badge/Audio-Working!-2ea44f?style=for-the-badge&logo=headphones&logoColor=white)](#current-status-v0631)
+[![Status](https://img.shields.io/badge/Audio-Working!-2ea44f?style=for-the-badge&logo=headphones&logoColor=white)](#current-status-v0640)
 
 [![Language](https://img.shields.io/badge/C-Kernel_Module-A8B9CC?style=for-the-badge&logo=c&logoColor=white)](https://github.com/spagu/acpi_intel_sst)
 [![Firmware](https://img.shields.io/badge/Firmware-IntcSST2.bin-FF6F00?style=for-the-badge&logo=intel&logoColor=white)](#2-install-firmware)
@@ -78,7 +78,7 @@ sleep 5 && kill %1
 
 ---
 
-## Current Status (v0.63.1)
+## Current Status (v0.64.0)
 
 <table>
 <tr><td>
@@ -280,6 +280,14 @@ State is persisted across suspend/resume cycles.
 | `peq_gain` | RW | -12 to +12 | 0 | PEQ boost/cut in dB. Positive values reduce volume ceiling (gain budget). |
 | `peq_q` | RW | 30-1000 | 71 | PEQ Q factor x100 (e.g. 71=0.71, 141=1.41, 1000=10.0). |
 
+### Volume Ramp-In
+
+| Sysctl | RW | Range | Default | Description |
+|:-------|:--:|:------|:--------|:------------|
+| `ramp_ms` | RW | 0-500 | 50 | Volume ramp-in on playback start in ms. 0=off (immediate volume). |
+| `resume_ramp_ms` | RW | 0-500 | 50 | Volume ramp-in after S3 resume in ms. Always on by default, independent of `ramp_ms`. |
+| `ramp_curve` | RW | 0-2 | 0 | Ramp curve: 0=logarithmic (perceptual), 1=linear, 2=s-curve (ease-in-out). |
+
 **Biquad mode:** HPF and PEQ share the single biquad stage (mutually exclusive).
 Setting `peq_freq > 0` activates PEQ mode; setting it to 0 reverts to HPF mode
 using the current `hpf_cutoff`.
@@ -350,6 +358,14 @@ sysctl dev.acpi_intel_sst.0.telemetry.peak_db_left   # current peak level
 sysctl dev.acpi_intel_sst.0.telemetry.clip_count      # clipping events
 sysctl dev.acpi_intel_sst.0.telemetry.clip_reset=1    # reset clip counter
 sysctl dev.acpi_intel_sst.0.telemetry.limiter_active  # limiter engaging?
+
+# --- Volume ramp-in ---
+sysctl dev.acpi_intel_sst.0.ramp_ms=100        # 100ms fade-in on playback start
+sysctl dev.acpi_intel_sst.0.ramp_ms=0           # disable (immediate volume)
+sysctl dev.acpi_intel_sst.0.resume_ramp_ms=80   # 80ms fade-in after S3 resume
+sysctl dev.acpi_intel_sst.0.ramp_curve=0        # logarithmic (default)
+sysctl dev.acpi_intel_sst.0.ramp_curve=1        # linear
+sysctl dev.acpi_intel_sst.0.ramp_curve=2        # s-curve
 
 # --- Jack detection ---
 sysctl dev.acpi_intel_sst.0.jack.headphone    # check headphone state
@@ -427,7 +443,7 @@ These devices use the same Intel SST DSP and may work (untested):
 | | File | Description |
 |:--|:-----|:------------|
 | :book: | [STATUS.md](STATUS.md) | Current driver status, known issues, next steps |
-| :scroll: | [CHANGELOG.md](CHANGELOG.md) | Detailed version history (v0.1.0 - v0.63.1) |
+| :scroll: | [CHANGELOG.md](CHANGELOG.md) | Detailed version history (v0.1.0 - v0.64.0) |
 | :handshake: | [CONTRIBUTING.md](CONTRIBUTING.md) | How to contribute |
 | :wrench: | [acpi/README.md](acpi/README.md) | DSDT patch instructions for Dell XPS 13 9343 |
 | :bar_chart: | [DIAGRAMS.md](DIAGRAMS.md) | Architecture & process flow diagrams (Mermaid) |

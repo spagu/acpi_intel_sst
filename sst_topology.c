@@ -1790,6 +1790,17 @@ sst_topology_sysctl_init(struct sst_softc *sc)
 	    "debug", CTLFLAG_RW, &sc->debug_level, 0,
 	    "Debug verbosity (0=quiet, 1=lifecycle, 2=operational, 3=trace)");
 
+	/* Volume ramp-in controls */
+	SYSCTL_ADD_INT(ctx, SYSCTL_CHILDREN(tree), OID_AUTO,
+	    "ramp_ms", CTLFLAG_RW, &sc->pcm.ramp_ms, 0,
+	    "Volume ramp-in on playback start ms (0=off, default 50, max 500)");
+	SYSCTL_ADD_INT(ctx, SYSCTL_CHILDREN(tree), OID_AUTO,
+	    "resume_ramp_ms", CTLFLAG_RW, &sc->pcm.resume_ramp_ms, 0,
+	    "Volume ramp-in after S3 resume ms (always on, default 50, max 500)");
+	SYSCTL_ADD_INT(ctx, SYSCTL_CHILDREN(tree), OID_AUTO,
+	    "ramp_curve", CTLFLAG_RW, &sc->pcm.ramp_curve, 0,
+	    "Ramp curve (0=logarithmic, 1=linear, 2=s-curve)");
+
 	/* Telemetry subtree */
 	{
 		struct sysctl_oid *telem_tree;

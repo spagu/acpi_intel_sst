@@ -1607,8 +1607,8 @@ sst_acpi_resume(device_t dev)
 	/* 9. Re-enable jack detection */
 	sst_jack_enable(sc);
 
-	/* 10. Mark resume ramp pending (anti-pop) */
-	sc->pcm.resume_ramp = true;
+	/* 10. Mark next playback start as post-resume (always ramps) */
+	sc->pcm.after_resume = true;
 
 	sc->state = SST_STATE_RUNNING;
 	sst_dbg(sc, SST_DBG_LIFE, "Resumed\n");

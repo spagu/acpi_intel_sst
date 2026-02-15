@@ -5,6 +5,41 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.64.0] - 2026-02-15
+
+### Added: Logarithmic Volume Ramp-In on Playback Start (Issue #31)
+
+Smooth fade-in from silence on every playback start, replacing the
+abrupt volume jump.  Three selectable curves (logarithmic, linear,
+s-curve) with configurable duration.  S3 resume ramp is separately
+configurable and always on by default.
+
+### Added
+
+- **Volume ramp on every `PCMTRIG_START`** (`sst_pcm.c`) — starts at
+  silence and ramps to the target volume using the selected curve.
+  Previously only activated after S3 resume.
+- **Logarithmic ramp table** (`sst_pcm.c`) — 10-entry perceptual curve
+  (~dB-linear) for natural-sounding fade-in.
+- **S-curve ramp table** (`sst_pcm.c`) — 10-entry sinusoidal ease-in-out
+  profile for smooth start and finish.
+- **`ramp_ms` sysctl** — playback start ramp duration in ms (0=off,
+  default 50, max 500).
+- **`resume_ramp_ms` sysctl** — S3 resume ramp duration in ms (always on,
+  default 50, max 500).  Independent of `ramp_ms`.
+- **`ramp_curve` sysctl** — curve selection (0=logarithmic, 1=linear,
+  2=s-curve).  Default: logarithmic.
+
+### Changed
+
+- **Ramp callback** (`sst_pcm.c`) — rewritten to use table-driven curve
+  lookup with dynamic step count derived from `ramp_ms / 10ms`.
+- **S3 resume** (`acpi_intel_sst.c`) — no longer uses a separate
+  `resume_ramp` flag; sets `after_resume` which triggers the ramp path
+  in `PCMTRIG_START` using `resume_ramp_ms`.
+
+---
+
 ## [0.63.1] - 2026-02-15
 
 ### Changed: Enable Full-Duplex Capture + Playback (Issue #26)
