@@ -1,0 +1,183 @@
+From 08a7cbaebd0355cc1bca4f39af67dcb873a35ac8 Mon Sep 17 00:00:00 2001
+From: Mona Lisa <email@sremail.pl>
+Date: Tue, 17 Feb 2026 21:11:54 +0000
+Subject: [PATCH] [NEW PORT] audio/acpi_intel_sst-kmod: Intel Smart Sound
+ Technology audio driver
+
+Intel SST (Smart Sound Technology) kernel module for FreeBSD.
+Provides analog audio playback and capture on Intel Broadwell-U
+and Haswell platforms (e.g., Dell XPS 13 9343) where audio is
+routed through the SST DSP rather than standard HDA.
+
+Features: DSP firmware loading (catpt IPC), PCM via sound(4),
+speaker protection (HPF, limiter, gain staging), parametric EQ,
+jack detection, full-duplex, S3 suspend/resume.
+
+Codec: Realtek RT286/ALC3263 over I2S/SSP.
+Firmware: IntcSST2.bin (Intel binary license, included).
+
+WWW: https://github.com/spagu/acpi_intel_sst
+---
+ audio/acpi_intel_sst-kmod/Makefile    | 40 +++++++++++++++++++
+ audio/acpi_intel_sst-kmod/distinfo    |  3 ++
+ audio/acpi_intel_sst-kmod/pkg-descr   | 14 +++++++
+ audio/acpi_intel_sst-kmod/pkg-message | 57 +++++++++++++++++++++++++++
+ audio/acpi_intel_sst-kmod/pkg-plist   |  4 ++
+ 5 files changed, 118 insertions(+)
+ create mode 100644 audio/acpi_intel_sst-kmod/Makefile
+ create mode 100644 audio/acpi_intel_sst-kmod/distinfo
+ create mode 100644 audio/acpi_intel_sst-kmod/pkg-descr
+ create mode 100644 audio/acpi_intel_sst-kmod/pkg-message
+ create mode 100644 audio/acpi_intel_sst-kmod/pkg-plist
+
+diff --git a/audio/acpi_intel_sst-kmod/Makefile b/audio/acpi_intel_sst-kmod/Makefile
+new file mode 100644
+index 000000000..437cb1991
+--- /dev/null
++++ b/audio/acpi_intel_sst-kmod/Makefile
+@@ -0,0 +1,40 @@
++PORTNAME=	acpi_intel_sst-kmod
++DISTVERSIONPREFIX=	v
++DISTVERSION=	0.64.2
++CATEGORIES=	audio
++MASTER_SITES=	GH
++
++MAINTAINER=	please@forget.me.uk
++COMMENT=	Intel Smart Sound Technology Audio Driver for FreeBSD
++WWW=		https://github.com/spagu/acpi_intel_sst
++
++LICENSE=	BSD3CLAUSE INTEL_FW
++LICENSE_COMB=	multi
++LICENSE_NAME_INTEL_FW=	Intel Binary Firmware Release License
++LICENSE_FILE_BSD3CLAUSE=	${WRKSRC}/../LICENSE
++LICENSE_FILE_INTEL_FW=	${WRKSRC}/../firmware/ubuntu/LICENSE.IntcSST2
++LICENSE_PERMS_INTEL_FW=	dist-mirror no-dist-sell pkg-mirror no-pkg-sell auto-accept
++
++ONLY_FOR_ARCHS=	amd64
++ONLY_FOR_ARCHS_REASON=	Intel SST DSP is only available on x86_64 platforms
++
++USES=		kmod uidfix
++
++USE_GITHUB=	yes
++GH_ACCOUNT=	spagu
++GH_PROJECT=	acpi_intel_sst
++
++WRKSRC_SUBDIR=	src
++
++SST_FWDIR=	/boot/firmware/intel
++
++post-install:
++	${INSTALL_MAN} ${WRKSRC}/../man/acpi_intel_sst.4 \
++		${STAGEDIR}${PREFIX}/share/man/man4/
++	${MKDIR} ${STAGEDIR}${SST_FWDIR}
++	${INSTALL_DATA} ${WRKSRC}/../firmware/ubuntu/IntcSST2.bin \
++		${STAGEDIR}${SST_FWDIR}/IntcSST2.bin
++	${INSTALL_DATA} ${WRKSRC}/../firmware/ubuntu/LICENSE.IntcSST2 \
++		${STAGEDIR}${SST_FWDIR}/LICENSE.IntcSST2
++
++.include <bsd.port.mk>
+diff --git a/audio/acpi_intel_sst-kmod/distinfo b/audio/acpi_intel_sst-kmod/distinfo
+new file mode 100644
+index 000000000..556ca8b6a
+--- /dev/null
++++ b/audio/acpi_intel_sst-kmod/distinfo
+@@ -0,0 +1,3 @@
++TIMESTAMP = 1771362548
++SHA256 (spagu-acpi_intel_sst-v0.64.2_GH0.tar.gz) = b4bd7e97b1c6f1e371c70f55ac57d9949e40f4bcd9e3dcf9f0836e0b5a26e6ff
++SIZE (spagu-acpi_intel_sst-v0.64.2_GH0.tar.gz) = 3026637
+diff --git a/audio/acpi_intel_sst-kmod/pkg-descr b/audio/acpi_intel_sst-kmod/pkg-descr
+new file mode 100644
+index 000000000..8cc114f17
+--- /dev/null
++++ b/audio/acpi_intel_sst-kmod/pkg-descr
+@@ -0,0 +1,14 @@
++Intel Smart Sound Technology (SST) audio driver for FreeBSD.
++
++Provides analog audio playback and capture on Intel Broadwell-U
++and Haswell platforms (e.g., Dell XPS 13 9343) where audio is
++routed through the SST DSP rather than standard HDA. Supports
++the Realtek RT286/ALC3263 codec over I2S/SSP.
++
++Features:
++- DSP firmware loading and IPC (catpt protocol)
++- PCM playback and recording via sound(4)
++- Speaker protection (HPF, peak limiter, gain staging)
++- Parametric EQ with real-time sysctl tuning
++- Headphone/microphone jack detection
++- Full-duplex operation and S3 suspend/resume
+diff --git a/audio/acpi_intel_sst-kmod/pkg-message b/audio/acpi_intel_sst-kmod/pkg-message
+new file mode 100644
+index 000000000..733786e16
+--- /dev/null
++++ b/audio/acpi_intel_sst-kmod/pkg-message
+@@ -0,0 +1,57 @@
++[
++{ type: install
++  message: <<EOM
++==========================================================================
++
++Intel SST Audio Driver - Post-Install Configuration
++
++1. DSDT PATCH (Dell XPS 13 9343)
++
++   The Dell BIOS disables the ADSP device unless Connected Standby is
++   active. A patched DSDT is required to force it on:
++
++       cd acpi_intel_sst/acpi
++       iasl DSDT_patched.dsl
++       cp DSDT_patched.aml /boot/acpi_dsdt.aml
++
++   Other Broadwell-U platforms may also need a DSDT patch.
++   See: https://github.com/spagu/acpi_intel_sst/tree/main/acpi
++
++2. LOADER.CONF
++
++   Add the following to /boot/loader.conf:
++
++       # Custom DSDT with ADSP enabled
++       acpi_dsdt_load="YES"
++       acpi_dsdt_name="/boot/acpi_dsdt.aml"
++
++       # Required for LPSS fabric initialization
++       hw.acpi.install_interface="Windows 2012"
++
++       # Disable GPU HDMI audio controller (conflicts with SST IRQ)
++       hint.hdac.0.disabled="1"
++
++       # Load SST driver at boot
++       acpi_intel_sst_load="YES"
++
++       # Prevent ig4 from claiming I2C0 (used by SST for codec control)
++       ig4_load="NO"
++       hint.ig4.0.disabled="1"
++       hint.ig4.1.disabled="1"
++
++3. COLD REBOOT
++
++   A full power-off reboot is required for DSDT changes to take effect.
++
++4. VERIFY
++
++       cat /dev/sndstat
++       mixer vol 80
++       play -n synth 3 sine 440
++
++   See acpi_intel_sst(4) for full documentation.
++
++==========================================================================
++EOM
++}
++]
+diff --git a/audio/acpi_intel_sst-kmod/pkg-plist b/audio/acpi_intel_sst-kmod/pkg-plist
+new file mode 100644
+index 000000000..5e32439b3
+--- /dev/null
++++ b/audio/acpi_intel_sst-kmod/pkg-plist
+@@ -0,0 +1,4 @@
++share/man/man4/acpi_intel_sst.4.gz
++@dir /boot/firmware/intel
++/boot/firmware/intel/IntcSST2.bin
++/boot/firmware/intel/LICENSE.IntcSST2
+-- 
+2.52.0
+

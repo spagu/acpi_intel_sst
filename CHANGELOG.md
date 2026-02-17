@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.64.3] - 2026-02-17
+
+### Changed
+
+- **FreeBSD port ready for submission** (`ports/acpi_intel_sst-kmod/`) —
+  dual licensing (BSD3CLAUSE + Intel firmware), firmware and license
+  installation, pkg-message with DSDT/loader.conf instructions,
+  distinfo, portlint-clean (0 fatal), stage-qa verified.
+- Added `git format-patch` for FreeBSD Bugzilla port submission.
+
 ## [0.64.2] - 2026-02-17
 
 ### Added
