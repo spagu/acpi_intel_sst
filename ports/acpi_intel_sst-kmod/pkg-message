@@ -1,0 +1,57 @@
+[
+{ type: install
+  message: <<EOM
+==========================================================================
+
+Intel SST Audio Driver - Post-Install Configuration
+
+1. DSDT PATCH (Dell XPS 13 9343)
+
+   The Dell BIOS disables the ADSP device unless Connected Standby is
+   active. A patched DSDT is required to force it on:
+
+       cd acpi_intel_sst/acpi
+       iasl DSDT_patched.dsl
+       cp DSDT_patched.aml /boot/acpi_dsdt.aml
+
+   Other Broadwell-U platforms may also need a DSDT patch.
+   See: https://github.com/spagu/acpi_intel_sst/tree/main/acpi
+
+2. LOADER.CONF
+
+   Add the following to /boot/loader.conf:
+
+       # Custom DSDT with ADSP enabled
+       acpi_dsdt_load="YES"
+       acpi_dsdt_name="/boot/acpi_dsdt.aml"
+
+       # Required for LPSS fabric initialization
+       hw.acpi.install_interface="Windows 2012"
+
+       # Disable GPU HDMI audio controller (conflicts with SST IRQ)
+       hint.hdac.0.disabled="1"
+
+       # Load SST driver at boot
+       acpi_intel_sst_load="YES"
+
+       # Prevent ig4 from claiming I2C0 (used by SST for codec control)
+       ig4_load="NO"
+       hint.ig4.0.disabled="1"
+       hint.ig4.1.disabled="1"
+
+3. COLD REBOOT
+
+   A full power-off reboot is required for DSDT changes to take effect.
+
+4. VERIFY
+
+       cat /dev/sndstat
+       mixer vol 80
+       play -n synth 3 sine 440
+
+   See acpi_intel_sst(4) for full documentation.
+
+==========================================================================
+EOM
+}
+]
