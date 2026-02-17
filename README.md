@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="FreeBSD_SST_Audio.png" alt="FreeBSD SST Audio" width="480">
+<img src="docs/FreeBSD_SST_Audio.png" alt="FreeBSD SST Audio" width="480">
 
 # Intel SST Audio Driver for FreeBSD
 
@@ -12,7 +12,7 @@
 [![Status](https://img.shields.io/badge/Audio-Working!-2ea44f?style=for-the-badge&logo=headphones&logoColor=white)](#current-status-v0640)
 
 [![Language](https://img.shields.io/badge/C-Kernel_Module-A8B9CC?style=for-the-badge&logo=c&logoColor=white)](https://github.com/spagu/acpi_intel_sst)
-[![Firmware](https://img.shields.io/badge/Firmware-IntcSST2.bin-FF6F00?style=for-the-badge&logo=intel&logoColor=white)](#2-install-firmware)
+[![Firmware](https://img.shields.io/badge/Firmware-IntcSST2.bin-FF6F00?style=for-the-badge&logo=intel&logoColor=white)](firmware)
 [![Codec](https://img.shields.io/badge/Codec-RT286%2FALC3263-00A98F?style=for-the-badge)](https://www.realtek.com/)
 [![DSP](https://img.shields.io/badge/DSP-catpt_IPC-8E24AA?style=for-the-badge)](https://github.com/torvalds/linux/tree/master/sound/soc/intel/catpt)
 
@@ -47,7 +47,7 @@ graph TD
     style F fill:#00A98F,color:#fff
 ```
 
-> See [`DIAGRAMS.md`](DIAGRAMS.md) for detailed architecture and process flow diagrams.
+> See [`docs/DIAGRAMS.md`](docs/DIAGRAMS.md) for detailed architecture and process flow diagrams.
 
 ---
 
@@ -55,7 +55,7 @@ graph TD
 
 ```bash
 # Build
-git clone https://github.com/spagu/acpi_intel_sst.git && cd acpi_intel_sst && make
+git clone https://github.com/spagu/acpi_intel_sst.git && cd acpi_intel_sst/src && make
 
 # Install firmware
 sudo mkdir -p /boot/firmware/intel
@@ -106,7 +106,7 @@ sleep 5 && kill %1
 | EQ presets (speaker protection) | :white_check_mark: |
 | Peak limiter (speaker protection) | :white_check_mark: |
 | DSP stage capability detection | :white_check_mark: |
-| Gain staging / headroom (-3dBFS) | :white_check_mark: |
+| Gain staging / headroom (-3dBFS) | :white_check_mark: ([Learn more](docs/GAIN_STAGING.md)) |
 | Dynamic pipeline topology | :white_check_mark: |
 | DSP stream stall recovery | :white_check_mark: |
 | Suspend/resume (S3) | :white_check_mark: |
@@ -135,7 +135,7 @@ sleep 5 && kill %1
 
 ```bash
 git clone https://github.com/spagu/acpi_intel_sst.git
-cd acpi_intel_sst
+cd acpi_intel_sst/src
 make
 ```
 
@@ -288,6 +288,8 @@ State is persisted across suspend/resume cycles.
 | `resume_ramp_ms` | RW | 0-500 | 50 | Volume ramp-in after S3 resume in ms. Always on by default, independent of `ramp_ms`. |
 | `ramp_curve` | RW | 0-2 | 0 | Ramp curve: 0=logarithmic (perceptual), 1=linear, 2=s-curve (ease-in-out). |
 
+> :chart_with_upwards_trend: **Deep Dive:** See [`docs/VOLUME_RAMPING.md`](docs/VOLUME_RAMPING.md) for detailed explanation and visual comparison of ramp curves.
+
 **Biquad mode:** HPF and PEQ share the single biquad stage (mutually exclusive).
 Setting `peq_freq > 0` activates PEQ mode; setting it to 0 reverts to HPF mode
 using the current `hpf_cutoff`.
@@ -295,6 +297,7 @@ using the current `hpf_cutoff`.
 **Gain budget:** When PEQ has positive `peq_gain`, the volume ceiling is
 automatically reduced by that amount to prevent clipping. The 3dB headroom
 policy (from `SST_HEADROOM_DB`) is enforced on top.
+> :level_slider: **Deep Dive:** See [`docs/GAIN_STAGING.md`](docs/GAIN_STAGING.md) for audiophile-grade details on Headroom and Gain Staging.
 
 **Limiter presets:**
 
@@ -414,19 +417,19 @@ These devices use the same Intel SST DSP and may work (untested):
 
 | File | Purpose |
 |:-----|:--------|
-| [`acpi_intel_sst.c`](acpi_intel_sst.c) | Main driver: ACPI/PCI probe, attach, power, ISR |
-| [`sst_power.c`](sst_power.c) | DSP power management (D0/D3, VDRTCTL, clock gating) |
-| [`sst_pch.c`](sst_pch.c) | PCH/Wildcat Point configuration (IOBP sideband, ADSP enable) |
-| [`sst_sram.c`](sst_sram.c) | SRAM power gating (IRAM/DRAM bank control) |
-| [`sst_firmware.c`](sst_firmware.c) | Firmware load, parse ($SST format), DSP boot |
-| [`sst_ipc.c`](sst_ipc.c) | Host-DSP IPC messaging (catpt protocol) |
-| [`sst_codec.c`](sst_codec.c) | RT286 codec control over I2C (speaker, headphone, microphone) |
-| [`sst_pcm.c`](sst_pcm.c) | sound(4) PCM integration, playback + capture, mixer |
-| [`sst_ssp.c`](sst_ssp.c) | I2S/SSP port configuration (ref-counted for full-duplex) |
-| [`sst_dma.c`](sst_dma.c) | DMA controller (DesignWare DW-DMAC, 8 channels) |
-| [`sst_jack.c`](sst_jack.c) | Headphone/microphone jack detection (GPIO polling, debounce) |
-| [`sst_topology.c`](sst_topology.c) | Audio pipeline configuration (playback + capture pipelines) |
-| [`sst_regs.h`](sst_regs.h) | Hardware register definitions (SHIM, VDRTCTL, SSP, DMA) |
+| [`src/acpi_intel_sst.c`](src/acpi_intel_sst.c) | Main driver: ACPI/PCI probe, attach, power, ISR |
+| [`src/sst_power.c`](src/sst_power.c) | DSP power management (D0/D3, VDRTCTL, clock gating) |
+| [`src/sst_pch.c`](src/sst_pch.c) | PCH/Wildcat Point configuration (IOBP sideband, ADSP enable) |
+| [`src/sst_sram.c`](src/sst_sram.c) | SRAM power gating (IRAM/DRAM bank control) |
+| [`src/sst_firmware.c`](src/sst_firmware.c) | Firmware load, parse ($SST format), DSP boot |
+| [`src/sst_ipc.c`](src/sst_ipc.c) | Host-DSP IPC messaging (catpt protocol) |
+| [`src/sst_codec.c`](src/sst_codec.c) | RT286 codec control over I2C (speaker, headphone, microphone) |
+| [`src/sst_pcm.c`](src/sst_pcm.c) | sound(4) PCM integration, playback + capture, mixer |
+| [`src/sst_ssp.c`](src/sst_ssp.c) | I2S/SSP port configuration (ref-counted for full-duplex) |
+| [`src/sst_dma.c`](src/sst_dma.c) | DMA controller (DesignWare DW-DMAC, 8 channels) |
+| [`src/sst_jack.c`](src/sst_jack.c) | Headphone/microphone jack detection (GPIO polling, debounce) |
+| [`src/sst_topology.c`](src/sst_topology.c) | Audio pipeline configuration (playback + capture pipelines) |
+| [`src/sst_regs.h`](src/sst_regs.h) | Hardware register definitions (SHIM, VDRTCTL, SSP, DMA) |
 
 ---
 
@@ -442,15 +445,33 @@ These devices use the same Intel SST DSP and may work (untested):
 
 | | File | Description |
 |:--|:-----|:------------|
-| :book: | [STATUS.md](STATUS.md) | Current driver status, known issues, next steps |
+| :book: | [docs/STATUS.md](docs/STATUS.md) | Current driver status, known issues, next steps |
 | :scroll: | [CHANGELOG.md](CHANGELOG.md) | Detailed version history (v0.1.0 - v0.64.0) |
 | :handshake: | [CONTRIBUTING.md](CONTRIBUTING.md) | How to contribute |
 | :wrench: | [acpi/README.md](acpi/README.md) | DSDT patch instructions for Dell XPS 13 9343 |
-| :bar_chart: | [DIAGRAMS.md](DIAGRAMS.md) | Architecture & process flow diagrams (Mermaid) |
+| :bar_chart: | [docs/DIAGRAMS.md](docs/DIAGRAMS.md) | Architecture & process flow diagrams (Mermaid) |
 | :microscope: | [docs/RESEARCH_FINDINGS.md](docs/RESEARCH_FINDINGS.md) | BAR0 investigation, SRAM power gating, IOBP sideband, catpt reference |
 
 ---
 
+## Bug Reporting
+ 
+If you encounter issues, please run the included debug script and attach the generated report to your GitHub issue.
+ 
+```bash
+# Run the report generator (requires root)
+sudo ./scripts/sst_report.sh
+```
+ 
+This will create a `sst_report_<date>.tar.gz` file in `/tmp` containing:
+- Kernel logs (`dmesg`)
+- Audio configuration (`sndstat`, `mixer`)
+- System info (`pciconf`, `devinfo`, `kenv`)
+- ACPI tables (`acpidump`)
+- Driver telemetry (`sysctl`)
+ 
+---
+ 
 ## References
 
 - [Linux catpt driver](https://github.com/torvalds/linux/tree/master/sound/soc/intel/catpt) - reference implementation
