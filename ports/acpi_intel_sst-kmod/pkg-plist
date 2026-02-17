@@ -1,0 +1,4 @@
+kld/acpi_intel_sst.ko
+share/man/man4/acpi_intel_sst.4.gz
+@dir /boot/firmware/intel
+/boot/firmware/intel/IntcSST2.bin
