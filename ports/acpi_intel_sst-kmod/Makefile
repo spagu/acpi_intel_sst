@@ -4,7 +4,7 @@ DISTVERSION=	0.64.2
 CATEGORIES=	audio
 MASTER_SITES=	GH
 
-MAINTAINER=	spagu@example.com
+MAINTAINER=	please@forget.me.uk
 COMMENT=	Intel Smart Sound Technology Audio Driver for FreeBSD
 WWW=		https://github.com/spagu/acpi_intel_sst
 
