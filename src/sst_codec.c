@@ -427,41 +427,6 @@ sst_codec_index_write(struct sst_softc *sc, uint32_t index, uint32_t val)
 	return (sst_codec_write(sc, RT286_PROC_COEF_SET, val));
 }
 
-/*
- * sst_codec_index_read - Read an indexed register
- */
-static int
-sst_codec_index_read(struct sst_softc *sc, uint32_t index, uint32_t *val)
-{
-	int error;
-
-	error = sst_codec_write(sc, RT286_COEF_INDEX, index);
-	if (error)
-		return (error);
-	return (sst_codec_read(sc, RT286_PROC_COEF_GET, val));
-}
-
-/*
- * sst_codec_index_update_bits - Read-modify-write an indexed register
- */
-static int
-sst_codec_index_update_bits(struct sst_softc *sc, uint32_t index,
-    uint32_t mask, uint32_t val)
-{
-	uint32_t old, new;
-	int error;
-
-	error = sst_codec_index_read(sc, index, &old);
-	if (error)
-		return (error);
-
-	new = (old & ~mask) | (val & mask);
-	if (new == old)
-		return (0);
-
-	return (sst_codec_index_write(sc, index, new));
-}
-
 /* ================================================================
  * RT286 Initialization Sequence
  *
