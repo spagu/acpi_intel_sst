@@ -1,11 +1,14 @@
-Intel Smart Sound Technology (SST) Audio Driver for FreeBSD.
+Intel Smart Sound Technology (SST) audio driver for FreeBSD.
 
-This driver supports Intel Broadwell-U/Haswell platforms (e.g., Dell XPS 13 9343)
-providing support for the SST DSP and connected codecs (RT286/ALC3263) over I2S.
-It replaces the standard HDA driver for audio playback and capture on these devices.
+Provides analog audio playback and capture on Intel Broadwell-U
+and Haswell platforms (e.g., Dell XPS 13 9343) where audio is
+routed through the SST DSP rather than standard HDA. Supports
+the Realtek RT286/ALC3263 codec over I2S/SSP.
 
 Features:
-- Full DSP initialization and firmware loading
+- DSP firmware loading and IPC (catpt protocol)
 - PCM playback and recording via sound(4)
-- Headphone/Mic jack detection
-- Volume control and EQ preset support
+- Speaker protection (HPF, peak limiter, gain staging)
+- Parametric EQ with real-time sysctl tuning
+- Headphone/microphone jack detection
+- Full-duplex operation and S3 suspend/resume

@@ -1,4 +1,5 @@
 PORTNAME=	acpi_intel_sst-kmod
+DISTVERSIONPREFIX=	v
 DISTVERSION=	0.64.2
 CATEGORIES=	audio
 MASTER_SITES=	GH
@@ -24,8 +25,6 @@ GH_ACCOUNT=	spagu
 GH_PROJECT=	acpi_intel_sst
 
 WRKSRC_SUBDIR=	src
-
-MAN4=		acpi_intel_sst.4
 
 SST_FWDIR=	/boot/firmware/intel
 
