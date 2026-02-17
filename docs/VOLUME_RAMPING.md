@@ -1,101 +1,112 @@
 
-# :control_knobs: Volume Ramping (Soft Start)
+# Volume Ramping: Transient Response & Psychoacoustics
 
 <div align="center">
   <img src="transient_response.png" alt="Transient Response Comparison" width="600">
 </div>
 
-## What is Volume Ramping?
+## Abstract
 
-Volume ramping (or "soft start") is an essential audio pipeline feature designed to enhance the listening experience by **eliminating transient noise** and **protecting hardware**.
+In high-fidelity audio reproduction, signal integrity is paramount not just during steady-state playback, but also during state transitions. **Volume Ramping** (often called "Soft Start") is a critical DSP technique implemented in the `acpi_intel_sst` driver to eliminate the broadband noise artifacts—commonly heard as "pops" and "clicks"—that occur when audio hardware transitions from a low-power state to an active state.
 
-When audio playback initializes—or the system wakes from sleep—DACs and amplifiers can produce instant DC offsets or high-frequency transients. Without mitigation, this manifests as:
-1.  **"Pops" and "Clicks"**: Audible digital artifacts as the hardware stabilizes.
-2.  **Sudden Blasts**: Instantaneous 0-to-100% volume jumps that can startle the listener or damage sensitive tweeters.
-
-**The Solution:** The `acpi_intel_sst` driver implements a hardware-timed envelope generator. Instead of jumping to the target volume, the DSP smoothly interpolates gain from $-\infty$ dB to the target level over a configurable duration (default: 50ms).
+This document details the technical implementation of volume ramping, the psychoacoustic principles behind our curve selection, and how to tune these parameters for your specific listening environment.
 
 ---
 
-## :headphones: Audiophile Deep Dive
+## 1. The Physics of Transients
 
-For the critical listener, volume ramping is more than just "anti-pop"—it's about **signal integrity during state transitions**.
+When an audio stream is initialized, the entire hardware chain—from the DMA engine to the I2S interface, DAC, and analog amplifier—must wake up and synchronize.
 
-### Why Ramping Curves Matter
+### The DC Offset Problem
+Analog amplifiers often suffer from "DC offset" during power-on. Even if the digital signal is absolute zero (silence), the physical act of energizing the circuit can send a voltage spike to the speakers.
 
-The human ear perceives loudness **logarithmically**, not linearly. A linear voltage increase (`0.1V -> 0.2V -> 0.3V`) does *not* sound like a smooth volume swell; it sounds like a sudden jump followed by a slow crawl.
+Mathematically, this instant rise in voltage resembles a **Step Function**. In the frequency domain (via Fourier Transform), a perfect step function contains infinite frequency components. This is why a sudden start sounds like a sharp "click" or "pop"—it is literally a burst of broad-spectrum noise.
 
-To achieve a **perceptually smooth** fade-in, the gain must increase exponentially (linear in Decibels).
+### The Digital Envelope Solution
+To mitigate this, the `acpi_intel_sst` driver refuses to send raw PCM data to a newly woken DAC. Instead, it applies a **Digital Amplitude Envelope** to the signal.
 
-<img src="volume_ramp_curves.png" alt="Volume Ramp Curves" width="600">
-
-### The Curves
-
-1.  **Red Curve (Logarithmic / dB-Linear)** :star: **Audiophile Choice**
-    *   **Physics**: Gain increases exponentially ($y = x^2$ or similar).
-    *   **Perception**: Sounds perfectly linear to the human ear.
-    *   **Benefit**: The "fade-in" feels natural and transparent. It spends less time in the inaudible noise floor and more time in the audible range.
-
-2.  **Blue Curve (Linear)**
-    *   **Physics**: Constant voltage change ($y = x$).
-    *   **Perception**: Sounds "rushed". The volume seems to jump to 80% loudness almost instantly, then changes very little for the rest of the ramp.
-    *   **Use Case**: Diagnostic testing or old-school 8-bit game audio simulation.
-
-3.  **Green Curve (S-Curve / Sigmoid)**
-    *   **Physics**: Ease-in, ease-out ($y = 1 / (1 + e^{-x})$).
-    *   **Perception**: A gentle "mechanical" ramp. Very slow start, fast middle, smooth landing.
-    *   **Use Case**: System UI sounds, notifications (avoids "clicky" attacks on short samples).
+By multiplying the source signal by a coefficient that rises from $0.0$ to $1.0$ over a fixed duration (e.g., $50ms$), we smooth out the step function. The sharp vertical edge becomes a gentle slope, shifting the energy from high-frequency transients to sub-audible low frequencies that are safely filtered out by the hardware.
 
 ---
 
-## :wrench: Configuration
+## 2. Psychoacoustics: Linearity is not Linear
 
-Customize the envelope behavior via `sysctl`. Changes take effect immediately on the next stream start.
+A naive implementation of volume ramping would increase the voltage linearly over time. However, the human ear is a logarithmic instrument. We perceive loudness according to the **Weber-Fechner law**—equal ratios of intensity result in equal differences in sensation.
 
-### 1. Ramp Duration (`ramp_ms`)
-Controls the envelope attack time for standard playback.
+<div align="center">
+  <img src="volume_ramp_curves.png" alt="Volume Ramp Curves" width="600">
+</div>
 
-*   `sysctl dev.acpi_intel_sst.0.ramp_ms` (0-500 ms)
-    *   **0 ms**: **Purist Mode / Bit-Perfect**. Signals start instantly. Necessary for low-latency pro-audio work or system alerts, but risks pops.
-    *   **50 ms** (Default): **Transparent**. Fast enough to feel "instant" (>20Hz cycle), slow enough to suppress all DC offset pops.
-    *   **200+ ms**: **Cinematic**. Creates a noticeable "fade-in" effect.
+### Curve Topologies
 
-### 2. Resume Duration (`resume_ramp_ms`)
-Separate control for S3 sleep wake-up. Hardware often requires longer stabilization time after power-gating.
+The driver offers three distinct envelope shapes (`ramp_curve`), each with specific characteristics:
 
-*   `sysctl dev.acpi_intel_sst.0.resume_ramp_ms` (Default: 50 ms)
-    *   *Tip:* If you hear a "thump" when opening your laptop lid, try increasing this to **100-200ms**.
+#### Type 0: Logarithmic (The "Audiophile" Curve)
+*   **Characteristic:** Exponential voltage increase ($V \propto e^t$).
+*   **Acoustic Result:** To the human ear, this sounds like a perfectly **linear** fade-in. The volume appears to rise at a constant rate from silence to unity gain.
+*   **Why it's preferred:** It rushes through the low-voltage range (where the signal competes with the noise floor) and offers fine control in the audible range. This provides the most "transparent" experience, vanishing into the background.
 
-### 3. Curve Shape (`ramp_curve`)
-Selects the interpolation algorithm.
+#### Type 1: Linear (The "Diagnostic" Curve)
+*   **Characteristic:** Constant voltage increase ($V \propto t$).
+*   **Acoustic Result:** The sound appears to jump to ~80% volume almost instantly, then creep slowly to 100%.
+*   **Use Case:** Debugging hardware gain linearity. generally undesirable for listening.
 
-*   `sysctl dev.acpi_intel_sst.0.ramp_curve`
-    *   `0`: **Logarithmic** (Recommended for Music/Hi-Fi)
-    *   `1`: **Linear**
-    *   `2`: **S-Curve**
+#### Type 2: S-Curve (The "Cinematic" Curve)
+*   **Characteristic:** Sigmoid function ($V \propto \frac{1}{1+e^{-t}}$).
+*   **Acoustic Result:** A "soft mechanical" feel. It starts very slowly, accelerates through the middle, and gently decelerates as it hits unity.
+*   **Use Case:** Ideal for system notifications and UI sounds where a gentle, organic attack is desired.
 
 ---
 
-### :microscope: Technical Implementation
+## 3. DSP Implementation Details
 
-The ramping logic is implemented in the `sst_pcm` driver layer, utilizing the `callout(9)` high-resolution kernel timer.
+The ramping mechanism operates in the `sst_pcm` driver layer, utilizing high-resolution kernel timers to feed the DSP.
+
+*   **Precision:** 32-bit Fixed Point (Q1.31 format).
+*   **Resolution:** 10ms update ticks.
+*   **Mechanism:** IPC (Inter-Processor Communication).
+
+At every tick of the ramp timer, the driver calculates the target gain coefficient and sends a `SET_VOLUME` command to the DSP firmware. The DSP then applies this gain to the mix *before* the I2S output stage. This ensures that even if the DAC downstream has non-linear/noisy power-up behavior, the digital signal feeding it remains strictly controlled.
 
 ```c
-/* Logarithmic ramp table (perceptual linearization) */
+/* 
+ * Logarithmic ramp lookup table (approximated)
+ * 10 steps representing the decibel scale mapped to Q1.31 linear gain.
+ */
 static const int sst_ramp_log[] = {
-     10,   /* Step 1: -40 dB (start barely audible) */
-     32,   /* Step 2: -30 dB */
-     80,   /* Step 3: -22 dB */
+     10,   /* -40 dB : Signal is effectively ensuring the DAC is "warm" */
+     32,   /* -30 dB : Entering audible floor */
+     80,   /* -22 dB : Low ambient level */
     ...
-    1000,  /* Step 10: 0 dB  (Unity) */
+    1000,  /*   0 dB : Unity Gain (Bit-Perfect) */
 };
 ```
 
-When a stream opens:
-1.  Target volume `V_target` is cached.
-2.  Hardware volume is set to `0` (Mute).
-3.  A timer fires every `10ms`.
-4.  Each tick, the driver calculates: $Gain_{current} = V_{target} \times Table[step]$.
-5.  The new Q1.31 gain coefficient is sent to the DSP via IPC `SET_VOLUME`.
+---
 
-This ensures the ramp happens **digitally** before the DAC, guaranteeing a pop-free output even if the analog amplifier has a noisy power-on characteristic.
+## 4. Tuning Your Reference System
+
+You can adjust the ramping parameters via `sysctl` to match your equipment's characteristics.
+
+### For Solid State & Active Monitors (Default)
+Most modern gear requires only brief stabilization.
+*   `ramp_ms`: **50**
+*   `resume_ramp_ms`: **50**
+*   `ramp_curve`: **0 (Logarithmic)**
+
+### For Tube Amplifiers & High-Voltage Gear
+High-impedance equipment may take longer to stabilize DC offsets after sleep.
+*   `ramp_ms`: **50**
+*   `resume_ramp_ms`: **200 - 400** (Allow nearly half a second for wake-up)
+*   `ramp_curve`: **0 (Logarithmic)**
+
+### For Low-Latency / Bit-Perfect Purists
+If you demand sample-accurate playback start (e.g., audio editing) and trust your hardware's muting relays:
+*   `ramp_ms`: **0** (Disabled)
+*   `resume_ramp_ms`: **0**
+
+---
+
+## Summary
+
+Volume ramping is a subtle but essential feature of the `acpi_intel_sst` architecture. By respecting psychoacoustic principles and hardware physics, it ensures that your listening experience remains immersive and free of digital artifacts, protecting both your loudspeakers and your peace of mind.
