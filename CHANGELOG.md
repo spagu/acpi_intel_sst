@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.64.1] - 2026-02-17
+
+### Added
+
+- **Sample rate documentation** (`docs/SAMPLE_RATE.md`) — comprehensive
+  explanation of the fixed 48 kHz I2S pipeline: SSP clock divider math,
+  DSP topology widget configuration, biquad coefficient design rate,
+  FreeBSD vchan resampling, bit-perfect 48 kHz playback, 44.1 kHz content
+  handling, and hardware limitations for alternative rates (closes #36).
+
+### Fixed
+
+- **Removed unused codec functions** (`sst_codec.c`) — removed dead
+  `sst_codec_index_update_bits()` and `sst_codec_index_read()` functions
+  that caused `-Wunused-function` build warning.
+
 ## [0.64.0] - 2026-02-15
 
 ### Added: Logarithmic Volume Ramp-In on Playback Start (Issue #31)
