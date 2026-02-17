@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.64.2] - 2026-02-17
+
+### Added
+
+- **FreeBSD manual page** (`man/acpi_intel_sst.4`) — proper mdoc(7)
+  man page covering supported hardware, DSP signal path, all sysctl
+  parameters, loader tunables, firmware requirements, DSDT patch,
+  sample rate behavior, jack detection, suspend/resume, examples,
+  diagnostics, and known caveats (closes #37).
+
 ## [0.64.1] - 2026-02-17
 
 ### Added

@@ -1,0 +1,428 @@
+.\"
+.\" SPDX-License-Identifier: BSD-3-Clause
+.\"
+.\" Copyright (c) 2026 The acpi_intel_sst Authors
+.\" All rights reserved.
+.\"
+.\" Redistribution and use in source and binary forms, with or without
+.\" modification, are permitted provided that the following conditions
+.\" are met:
+.\" 1. Redistributions of source code must retain the above copyright
+.\"    notice, this list of conditions and the following disclaimer.
+.\" 2. Redistributions in binary form must reproduce the above copyright
+.\"    notice, this list of conditions and the following disclaimer in the
+.\"    documentation and/or other materials provided with the distribution.
+.\" 3. Neither the name of the author nor the names of contributors may
+.\"    be used to endorse or promote products derived from this software
+.\"    without specific prior written permission.
+.\"
+.\" THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
+.\" ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+.\" IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+.\" ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
+.\" FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+.\" DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+.\" OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+.\" HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+.\" LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+.\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+.\" SUCH DAMAGE.
+.\"
+.Dd February 17, 2026
+.Dt ACPI_INTEL_SST 4
+.Os
+.Sh NAME
+.Nm acpi_intel_sst
+.Nd "Intel Smart Sound Technology audio driver"
+.Sh SYNOPSIS
+To load the driver as a module at boot time, place the following line in
+.Xr loader.conf 5 :
+.Bd -literal -offset indent
+acpi_intel_sst_load="YES"
+.Ed
+.Pp
+Or load it manually:
+.Bd -literal -offset indent
+kldload acpi_intel_sst
+.Ed
+.Sh DESCRIPTION
+The
+.Nm
+driver provides analog audio playback and capture on Intel Broadwell-U and
+Haswell platforms where audio is routed through the Intel SST (Smart Sound
+Technology) DSP rather than standard HDA.
+On these machines the built-in
+.Xr snd_hda 4
+driver only handles HDMI/DisplayPort audio; analog speakers, headphones,
+and microphones require this driver.
+.Pp
+The driver implements a complete DSP firmware loader, IPC framework using
+Intel's catpt protocol, and codec control for the Realtek RT286/ALC3263
+codec over I2C.
+It registers with the
+.Xr sound 4
+framework to provide standard
+.Pa /dev/dsp
+devices for playback and capture.
+.Pp
+The audio signal path through the DSP is:
+.Bd -literal -offset indent
+Playback: Host DMA -> PCM -> [HPF] -> Gain -> [Limiter] -> SSP0 -> Codec
+Capture:  Codec -> SSP0 -> Gain -> PCM -> Host DMA
+.Ed
+.Pp
+The high-pass filter (HPF) and peak limiter are speaker-protection stages
+that are enabled only when the DSP firmware advertises biquad and limiter
+capabilities, respectively.
+When all DSP effects are bypassed (flat EQ, limiter off), the gain stage
+still applies a \-3\ dB headroom margin to prevent inter-sample peak
+clipping at the DAC.
+.Ss Supported Hardware
+The driver matches the following device identifiers:
+.Bl -column "ACPI ID" "PCI ID" "Platform" -offset indent
+.It Sy "ACPI ID" Ta Sy "PCI ID" Ta Sy "Platform"
+.It Li INT3438 Ta Li 8086:9CB6 Ta Intel Broadwell-U
+.It Li INT33C8 Ta Li 8086:9C76 Ta Intel Haswell (untested)
+.El
+.Pp
+Tested on the Dell XPS 13 9343 with Realtek RT286/ALC3263 codec.
+Other Broadwell-U laptops with SST audio (HP Spectre x360, Lenovo ThinkPad
+X250, Asus Zenbook UX303, etc.) may work but are untested.
+.Ss Firmware
+The driver requires the Intel SST firmware file
+.Pa IntcSST2.bin
+installed at
+.Pa /boot/firmware/intel/IntcSST2.bin .
+This firmware is loaded into DSP SRAM at attach time and reloaded on
+every resume from S3 suspend.
+The firmware can be extracted from the Debian
+.Pa firmware-intel-sound
+package.
+.Ss DSDT Patch
+On the Dell XPS 13 9343, the BIOS disables the ADSP device unless Connected
+Standby is active.
+A DSDT patch is required to force the device on.
+See the
+.Pa acpi/README.md
+file in the source distribution for instructions.
+.Ss Sample Rate
+The I2S link between the DSP and codec operates at a fixed rate of 48000\ Hz.
+This rate is determined by the SSP clock divider hardware
+(24\ MHz / 10 = 2.4\ MHz BCLK, yielding 48\ kHz at 2 channels x 25 bits)
+and cannot be changed at runtime.
+All DSP pipeline widgets and biquad filter coefficients are designed for
+48\ kHz.
+.Pp
+The PCM layer advertises rates from 8000 to 192000\ Hz to
+.Xr sound 4 .
+Content at rates other than 48000\ Hz (e.g., 44100\ Hz CD audio) is
+resampled by the
+.Xr sound 4
+vchan layer before reaching the driver.
+Native 44100\ Hz support is not feasible on this hardware because the
+24\ MHz master clock cannot produce an integer divider for 44100\ Hz.
+.Ss Audio Formats
+Supported PCM formats are signed 16-bit, 24-bit, and 32-bit little-endian
+stereo (S16_LE, S24_LE, S32_LE).
+The default format is S16_LE, 2-channel, 48000\ Hz.
+.Ss Jack Detection
+The driver polls the RT286 codec for headphone and microphone jack state
+every 250\ ms.
+A debounce filter requires 3 consecutive stable readings (750\ ms total)
+before accepting a state change.
+When a headphone is inserted, the driver automatically routes audio from
+speakers to headphones.
+Jack state and statistics are available via
+.Xr sysctl 8 .
+.Ss Suspend and Resume
+Full S3 suspend/resume is supported.
+On suspend, all streams are torn down, the codec is powered off, and the
+DSP enters D3.
+On resume, the DSP is powered on, firmware is reloaded from a cached copy,
+pipelines are rebuilt, the codec is reinitialized, and stored mixer values
+are restored.
+The first playback after resume uses a configurable volume ramp
+.Pq Va resume_ramp_ms
+to prevent audible pops.
+.Ss Module Dependencies
+.Bl -tag -width "firmware" -compact
+.It Li acpi
+ACPI subsystem for device enumeration
+.It Li pci
+PCI bus access for BAR mapping
+.It Li firmware
+.Xr firmware 9
+for loading
+.Pa IntcSST2.bin
+.El
+.Sh SYSCTL VARIABLES
+All runtime parameters are under the
+.Va dev.acpi_intel_sst.%d
+.Xr sysctl 8
+tree.
+DSP parameters take effect immediately on active streams.
+State is preserved across suspend/resume cycles.
+.Ss Debug
+.Bl -tag -width indent
+.It Va dev.acpi_intel_sst.%d.debug
+Debug verbosity level (read-write, default 1).
+.Pp
+.Bl -tag -width "3" -compact
+.It Li 0
+Quiet: errors and attach/detach only.
+.It Li 1
+Lifecycle: firmware load, stream allocation.
+.It Li 2
+Operational: IPC commands, volume, EQ changes.
+.It Li 3
+Trace: polls, register dumps, timing details.
+.El
+.El
+.Ss DSP Audio Parameters
+.Bl -tag -width indent
+.It Va dev.acpi_intel_sst.%d.eq_preset
+EQ preset shortcut (read-write, range 0\(en2, default 1).
+Sets
+.Va hpf_cutoff
+and reverts to HPF mode.
+.Pp
+.Bl -tag -width "2" -compact
+.It Li 0
+Flat bypass (no filtering).
+.It Li 1
+Stock speaker protection (HPF at 150\ Hz).
+.It Li 2
+Modified speaker (HPF at 100\ Hz).
+.El
+.It Va dev.acpi_intel_sst.%d.hpf_cutoff
+High-pass filter cutoff frequency in Hz (read-write, range 0 or 50\(en500,
+default 150).
+Set to 0 for flat bypass.
+Writing this value overrides
+.Va eq_preset .
+.It Va dev.acpi_intel_sst.%d.limiter_threshold
+Peak limiter threshold preset index (read-write, range 0\(en8, default 5).
+0 disables the limiter.
+Preset values:
+.Pp
+.Bl -column "Index" "Threshold" "Attack" "Release" -offset indent -compact
+.It Sy Index Ta Sy Threshold Ta Sy Attack Ta Sy Release
+.It 0 Ta bypass Ta \(en Ta \(en
+.It 1 Ta \-24\ dBFS Ta 1\ ms Ta 50\ ms
+.It 2 Ta \-18\ dBFS Ta 1\ ms Ta 75\ ms
+.It 3 Ta \-12\ dBFS Ta 1\ ms Ta 100\ ms
+.It 4 Ta \-9\ dBFS Ta 1\ ms Ta 115\ ms
+.It 5 Ta \-6\ dBFS Ta 1\ ms Ta 135\ ms
+.It 6 Ta \-3\ dBFS Ta 1\ ms Ta 160\ ms
+.It 7 Ta \-1\ dBFS Ta 1\ ms Ta 180\ ms
+.It 8 Ta 0\ dBFS Ta 1\ ms Ta 200\ ms
+.El
+.It Va dev.acpi_intel_sst.%d.limiter_release
+Limiter release time override in microseconds (read-write,
+range 0 or 10000\(en500000, default 0).
+0 uses the preset default from the table above.
+.It Va dev.acpi_intel_sst.%d.peq_freq
+Parametric EQ center frequency in Hz (read-write, range 0 or 200\(en16000,
+default 0).
+0 disables PEQ and reverts to HPF mode.
+Setting a value greater than 0 activates PEQ mode.
+HPF and PEQ share the single biquad stage and are mutually exclusive.
+.It Va dev.acpi_intel_sst.%d.peq_gain
+PEQ boost/cut in dB (read-write, range \-12 to +12, default 0).
+Positive values automatically reduce the volume ceiling by the same amount
+to prevent clipping (gain budget).
+.It Va dev.acpi_intel_sst.%d.peq_q
+PEQ Q factor multiplied by 100 (read-write, range 30\(en1000, default 71).
+For example, 71 = Q\ 0.71, 141 = Q\ 1.41, 1000 = Q\ 10.0.
+.El
+.Ss Volume Ramp
+.Bl -tag -width indent
+.It Va dev.acpi_intel_sst.%d.ramp_ms
+Volume ramp-in duration on playback start in milliseconds (read-write,
+range 0\(en500, default 50).
+0 disables the ramp (immediate volume).
+.It Va dev.acpi_intel_sst.%d.resume_ramp_ms
+Volume ramp-in duration after S3 resume in milliseconds (read-write,
+range 0\(en500, default 50).
+Independent of
+.Va ramp_ms
+and always active by default.
+.It Va dev.acpi_intel_sst.%d.ramp_curve
+Ramp curve shape (read-write, range 0\(en2, default 0).
+.Pp
+.Bl -tag -width "2" -compact
+.It Li 0
+Logarithmic: perceptually linear fade-in.
+.It Li 1
+Linear: constant voltage increase.
+.It Li 2
+S-curve: ease-in-out.
+.El
+.El
+.Ss Telemetry
+.Bl -tag -width indent
+.It Va dev.acpi_intel_sst.%d.telemetry.peak_left
+Raw Q1.31 peak level, left channel (read-only).
+.It Va dev.acpi_intel_sst.%d.telemetry.peak_right
+Raw Q1.31 peak level, right channel (read-only).
+.It Va dev.acpi_intel_sst.%d.telemetry.peak_db_left
+Peak level in dB, left channel (read-only, string, e.g.,
+.Dq Li "\-3.2 dB" ) .
+.It Va dev.acpi_intel_sst.%d.telemetry.peak_db_right
+Peak level in dB, right channel (read-only, string).
+.It Va dev.acpi_intel_sst.%d.telemetry.clip_count
+Cumulative clipping events (read-only).
+.It Va dev.acpi_intel_sst.%d.telemetry.clip_reset
+Write 1 to clear the clip counter (write-only).
+.It Va dev.acpi_intel_sst.%d.telemetry.limiter_active
+Whether the DSP limiter is currently engaging (read-only, 0 or 1).
+.El
+.Ss Jack Detection
+.Bl -tag -width indent
+.It Va dev.acpi_intel_sst.%d.jack.headphone
+Headphone jack state (read-only, 0 = removed, 1 = inserted).
+.It Va dev.acpi_intel_sst.%d.jack.microphone
+Microphone jack state (read-only, 0 = removed, 1 = inserted).
+.It Va dev.acpi_intel_sst.%d.jack.enabled
+Enable or disable jack detection polling (read-write).
+.It Va dev.acpi_intel_sst.%d.jack.hp_insertions
+Cumulative headphone insertion count (read-only).
+.It Va dev.acpi_intel_sst.%d.jack.mic_insertions
+Cumulative microphone insertion count (read-only).
+.It Va dev.acpi_intel_sst.%d.jack.poll_count
+Jack polling cycle count (read-only).
+.El
+.Sh LOADER TUNABLES
+The following variables are available as boot-time tunables via
+.Xr device.hints 5 :
+.Bl -tag -width indent
+.It Va hint.acpi_intel_sst.%d.debug
+Set the initial debug verbosity level (0\(en3).
+Same values as the runtime
+.Va debug
+sysctl.
+Example in
+.Pa /boot/device.hints :
+.Bd -literal -offset indent
+hint.acpi_intel_sst.0.debug="3"
+.Ed
+.El
+.Pp
+The following
+.Xr loader.conf 5
+settings are typically required on Dell XPS 13 9343:
+.Bd -literal -offset indent
+acpi_dsdt_load="YES"
+acpi_dsdt_name="/boot/acpi_dsdt.aml"
+hw.acpi.install_interface="Windows 2012"
+hint.hdac.0.disabled="1"
+acpi_intel_sst_load="YES"
+ig4_load="NO"
+hint.ig4.0.disabled="1"
+hint.ig4.1.disabled="1"
+.Ed
+.Pp
+.Va hint.hdac.0.disabled
+prevents the GPU HDMI audio controller from conflicting with the SST IRQ.
+.Va hint.ig4.*.disabled
+prevents the
+.Xr ig4 4
+I2C driver from claiming the I2C bus used by the SST driver for codec control.
+.Sh FILES
+.Bl -tag -width indent
+.It Pa /boot/firmware/intel/IntcSST2.bin
+Intel SST DSP firmware (required).
+.It Pa /boot/acpi_dsdt.aml
+Patched DSDT with ADSP device enabled (required on Dell XPS 13 9343).
+.It Pa /dev/dsp0.0
+PCM playback device.
+.It Pa /dev/dsp0.1
+PCM capture device (microphone).
+.El
+.Sh EXAMPLES
+Basic playback and capture:
+.Bd -literal -offset indent
+# Set volume and play a test tone
+mixer vol 80
+play -n synth 3 sine 440
+
+# Record 5 seconds from microphone
+mixer mic 80
+cat /dev/dsp0.1 > /tmp/test.raw &
+sleep 5 && kill %1
+.Ed
+.Pp
+Configure speaker protection:
+.Bd -literal -offset indent
+# Stock speaker preset (HPF 150 Hz + limiter at -6 dBFS)
+sysctl dev.acpi_intel_sst.0.eq_preset=1
+
+# Flat bypass (transparent, no DSP processing)
+sysctl dev.acpi_intel_sst.0.eq_preset=0
+sysctl dev.acpi_intel_sst.0.limiter_threshold=0
+.Ed
+.Pp
+Parametric EQ boost at 1\ kHz:
+.Bd -literal -offset indent
+sysctl dev.acpi_intel_sst.0.peq_freq=1000
+sysctl dev.acpi_intel_sst.0.peq_gain=3
+sysctl dev.acpi_intel_sst.0.peq_q=141
+.Ed
+.Pp
+Monitor DSP telemetry:
+.Bd -literal -offset indent
+sysctl dev.acpi_intel_sst.0.telemetry.peak_db_left
+sysctl dev.acpi_intel_sst.0.telemetry.clip_count
+sysctl dev.acpi_intel_sst.0.telemetry.limiter_active
+.Ed
+.Sh DIAGNOSTICS
+The driver produces the following notable diagnostic messages:
+.Bl -diag
+.It "SST firmware loaded successfully (%u bytes)"
+The DSP firmware was parsed and written to SRAM.
+.It "SET_DEVICE_FORMATS failed: %d (non-fatal)"
+The SSP clock configuration IPC command failed.
+Audio may still work if the firmware has default settings.
+.It "DSP boot timeout"
+The DSP firmware did not signal readiness within the expected time.
+Verify that the correct firmware file is installed.
+.El
+.Sh SEE ALSO
+.Xr snd_hda 4 ,
+.Xr sound 4 ,
+.Xr device.hints 5 ,
+.Xr loader.conf 5 ,
+.Xr sysctl 8
+.Sh HISTORY
+The
+.Nm
+driver first appeared as an out-of-tree module for
+.Fx 15.0 .
+It is based on the Linux catpt driver by Cezary Rojewski.
+.Sh AUTHORS
+The
+.Nm
+driver and this manual page were written by
+.An The acpi_intel_sst contributors .
+.Sh CAVEATS
+The I2S/SSP link operates at a fixed 48000\ Hz sample rate.
+Content at other rates (notably 44100\ Hz) is resampled by the
+.Xr sound 4
+vchan layer, not by the driver or DSP.
+Bit-perfect playback is only possible with 48000\ Hz source material.
+.Pp
+Only the Dell XPS 13 9343 has been tested.
+Other Broadwell-U and Haswell platforms may require additional codec
+or platform-specific support.
+.Pp
+The HPF and PEQ share a single biquad filter stage in the DSP and are
+mutually exclusive.
+Activating PEQ
+.Pq Va peq_freq No > 0
+disables the HPF; setting
+.Va peq_freq
+to 0 re-enables the HPF.
+.Sh BUGS
+The Haswell platform
+.Pq Li INT33C8
+is recognized but has not been tested.
