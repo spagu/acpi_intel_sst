@@ -248,6 +248,8 @@ All runtime parameters are exposed via `sysctl` under `dev.acpi_intel_sst.0.*`.
 DSP parameters take effect immediately on active streams without pipeline restart.
 State is persisted across suspend/resume cycles.
 
+> :control_knobs: **Deep Dive:** See [`docs/CONFIGURATION.md`](docs/CONFIGURATION.md) for the complete configuration reference including boot-time options, compile-time constants, audio profiles (transparent, speaker protection, headphone), and parameter interaction details.
+
 ### Debug
 
 | Sysctl | RW | Range | Default | Description |
@@ -451,6 +453,7 @@ These devices use the same Intel SST DSP and may work (untested):
 | :wrench: | [acpi/README.md](acpi/README.md) | DSDT patch instructions for Dell XPS 13 9343 |
 | :bar_chart: | [docs/DIAGRAMS.md](docs/DIAGRAMS.md) | Architecture & process flow diagrams (Mermaid) |
 | :microscope: | [docs/RESEARCH_FINDINGS.md](docs/RESEARCH_FINDINGS.md) | BAR0 investigation, SRAM power gating, IOBP sideband, catpt reference |
+| :control_knobs: | [docs/CONFIGURATION.md](docs/CONFIGURATION.md) | Complete configuration reference: all sysctls, boot options, audio profiles (transparent, speaker, headphone) |
 
 ---
 
