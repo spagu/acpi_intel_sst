@@ -48,10 +48,6 @@ dmesg.txt
 core
 node.core
 
-# Firmware files (may be added locally for testing)
-*.fw
-firmware/
-
 # Test output
 tests/*.log
 tests/*.out

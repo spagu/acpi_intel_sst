@@ -1,5 +1,28 @@
 # Troubleshooting
 
+## Debugging
+ 
+### Generating a Debug Report
+ 
+The easiest way to gather all necessary information for troubleshooting is to use the included report script:
+ 
+```bash
+sudo ./scripts/sst_report.sh
+```
+ 
+This generates a timestamped tarball in `/tmp` containing:
+*   Kernel logs (`dmesg`)
+*   Audio state (`sndstat`, `mixer`)
+*   System hardware info (`pciconf`, `devinfo`, `sysctl`)
+*   ACPI tables
+*   Driver telemetry
+ 
+Attach this file when opening an issue on GitHub.
+ 
+### Manual Debugging
+ 
+#### 1. Enable Verbose Logging
+
 ## DSP Stream Stall During Volume Adjustment
 
 ### Symptom

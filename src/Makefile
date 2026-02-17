@@ -47,8 +47,8 @@ reload:
 
 test:
 	@echo "Running test suite..."
-	@chmod +x tests/test_module.sh
-	@tests/test_module.sh
+	@chmod +x ../tests/test_module.sh
+	@../tests/test_module.sh
 
 install:
 	@echo "Installing $(KMOD).ko to $(KMODDIR)..."
