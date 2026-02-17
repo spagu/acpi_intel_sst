@@ -78,7 +78,7 @@ sleep 5 && kill %1
 
 ---
 
-## Current Status (v0.64.2)
+## Current Status (v0.64.3)
 
 <table>
 <tr><td>
@@ -448,7 +448,7 @@ These devices use the same Intel SST DSP and may work (untested):
 | | File | Description |
 |:--|:-----|:------------|
 | :book: | [docs/STATUS.md](docs/STATUS.md) | Current driver status, known issues, next steps |
-| :scroll: | [CHANGELOG.md](CHANGELOG.md) | Detailed version history (v0.1.0 - v0.64.2) |
+| :scroll: | [CHANGELOG.md](CHANGELOG.md) | Detailed version history (v0.1.0 - v0.64.3) |
 | :handshake: | [CONTRIBUTING.md](CONTRIBUTING.md) | How to contribute |
 | :wrench: | [acpi/README.md](acpi/README.md) | DSDT patch instructions for Dell XPS 13 9343 |
 | :bar_chart: | [docs/DIAGRAMS.md](docs/DIAGRAMS.md) | Architecture & process flow diagrams (Mermaid) |
