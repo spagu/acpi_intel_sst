@@ -1,4 +1,4 @@
-PORTNAME=	acpi_intel_sst
+PORTNAME=	acpi_intel_sst-kmod
 DISTVERSION=	0.64.0
 CATEGORIES=	audio
 MASTER_SITES=	GH
