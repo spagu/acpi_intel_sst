@@ -1,4 +1,9 @@
 #!/bin/sh
+#-
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# Copyright (c) 2026 FreeBSD Foundation
+# All rights reserved.
 #
 # sst_report.sh - Generate comprehensive debug report for Intel SST Audio Driver
 #
