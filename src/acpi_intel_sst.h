@@ -189,6 +189,7 @@ void	sst_reset(struct sst_softc *sc);
 void	sst_init(struct sst_softc *sc);
 void	sst_acpi_power_up(struct sst_softc *sc);
 int	sst_wpt_power_up(struct sst_softc *sc);
+void	sst_wpt_power_down(struct sst_softc *sc);
 
 /* sst_pch.c */
 void	sst_dump_pci_config(struct sst_softc *sc);

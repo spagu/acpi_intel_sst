@@ -185,7 +185,7 @@ sst_acpi_power_up(struct sst_softc *sc)
  * 10. D3hot + udelay 50
  * 11. Re-enable DCLCGE + udelay 50
  */
-static void
+void
 sst_wpt_power_down(struct sst_softc *sc)
 {
 	uint32_t vdrtctl0, vdrtctl2, pmcs, mask, val;

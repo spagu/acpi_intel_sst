@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.64.4] - 2026-06-15
+
+### Fixed
+
+- **Fix resume/suspend kernel panic in PCI mode**: Checked `sc->handle != NULL` before calling `acpi_pwr_switch_consumer`. Invoke `sst_wpt_power_down()` and `sst_wpt_power_up()` as fallbacks for PCI mode.
+- **Fix missing interrupt registration in PCI attach**: Added `bus_setup_intr` call to `sst_pci_attach` to register `sst_intr` for PCI mode, resolving command timeouts and stalling IPC.
+- **Fix hardcoded physical BAR0 address in SRAM direct enable**: Replaced `SST_PCI_BAR0_PHYS` with dynamic address lookup using `rman_get_start(sc->mem_res)` in `sst_enable_sram_direct` to avoid memory corruption and page faults on non-development systems.
+
 ## [0.64.3] - 2026-02-17
 
 ### Changed
