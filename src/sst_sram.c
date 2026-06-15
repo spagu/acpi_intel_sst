@@ -242,19 +242,29 @@ sst_check_sram_immediate(const char *checkpoint)
 int
 sst_enable_sram_direct(device_t dev)
 {
+	struct sst_softc *sc;
 	void *bar0_va;
 	volatile uint32_t *ctrl_reg;
 	volatile uint32_t *sram_base;
 	uint32_t ctrl, test_val;
+	vm_paddr_t phys_addr;
 	const uint32_t clear_val = 0x84800400;
 	const uint32_t set_val = 0x8480041f;
 
 	device_printf(dev, "=== SRAM Check & Enable ===\n");
 
+	sc = device_get_softc(dev);
+	if (sc == NULL || sc->mem_res == NULL) {
+		device_printf(dev, "  Failed to enable SRAM: BAR0 resource not allocated\n");
+		return (ENXIO);
+	}
+
+	phys_addr = rman_get_start(sc->mem_res);
+
 	/* Map with UNCACHED attribute - atomic 32-bit writes work correctly */
-	bar0_va = pmap_mapdev_attr(SST_PCI_BAR0_PHYS, 0x100000, VM_MEMATTR_UNCACHEABLE);
+	bar0_va = pmap_mapdev_attr(phys_addr, 0x100000, VM_MEMATTR_UNCACHEABLE);
 	if (bar0_va == NULL) {
-		device_printf(dev, "  Failed to map BAR0 at 0x%x\n", SST_PCI_BAR0_PHYS);
+		device_printf(dev, "  Failed to map BAR0 at 0x%lx\n", (unsigned long)phys_addr);
 		return (ENOMEM);
 	}
 

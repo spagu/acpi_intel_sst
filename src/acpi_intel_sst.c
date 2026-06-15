@@ -1239,6 +1239,13 @@ sst_pci_attach(device_t dev)
 		/* Don't fail yet, maybe we can run without IRQ for init test */
 	} else {
 		sst_dbg(sc, SST_DBG_LIFE, "IRQ assigned\n");
+		error = bus_setup_intr(dev, sc->irq_res,
+		    INTR_TYPE_AV | INTR_MPSAFE,
+		    NULL, sst_intr, sc, &sc->irq_cookie);
+		if (error) {
+			device_printf(dev, "Failed to setup IRQ: %d\n", error);
+			sc->irq_cookie = NULL;
+		}
 	}
 
 	if (bar0_ok) {
@@ -1530,7 +1537,10 @@ sst_acpi_suspend(device_t dev)
 
 	/* 6. Reset DSP and power off */
 	sst_reset(sc);
-	acpi_pwr_switch_consumer(sc->handle, ACPI_STATE_D3);
+	if (sc->handle != NULL)
+		acpi_pwr_switch_consumer(sc->handle, ACPI_STATE_D3);
+	else
+		sst_wpt_power_down(sc);
 	sc->state = SST_STATE_SUSPENDED;
 
 	sst_dbg(sc, SST_DBG_LIFE, "Suspended\n");
@@ -1546,8 +1556,12 @@ sst_acpi_resume(device_t dev)
 	sst_dbg(sc, SST_DBG_LIFE, "Resuming...\n");
 
 	/* 1. Power to D0 */
-	acpi_pwr_switch_consumer(sc->handle, ACPI_STATE_D0);
-	DELAY(10000);
+	if (sc->handle != NULL) {
+		acpi_pwr_switch_consumer(sc->handle, ACPI_STATE_D0);
+		DELAY(10000);
+	} else {
+		sst_wpt_power_up(sc);
+	}
 
 	/* 2. Init SHIM (mask interrupts, reset DSP) */
 	sst_init(sc);
