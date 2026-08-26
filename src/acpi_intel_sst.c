@@ -59,6 +59,14 @@ static int sst_pci_probe(device_t dev);
 static int sst_pci_attach(device_t dev);
 static int sst_pci_detach(device_t dev);
 static void sst_intr(void *arg);
+
+/*
+ * Set once the ACPI front-end has claimed the DSP.  The PCI front-end
+ * uses it to avoid attaching a second driver instance to the same
+ * hardware after PCICD is cleared.  Written only from attach/detach,
+ * which the newbus topology lock already serializes.
+ */
+static device_t sst_acpi_instance;
 /* Supported ACPI IDs */
 static char *sst_ids[] = {
 	SST_ACPI_ID_BDW,
@@ -220,10 +228,6 @@ sst_acpi_probe(device_t dev)
 static int
 sst_pci_probe(device_t dev)
 {
-	devclass_t dc;
-	device_t other;
-	int unit;
-
 	if (pci_get_vendor(dev) != PCI_VENDOR_INTEL ||
 	    pci_get_device(dev) != PCI_DEVICE_SST_BDW)
 		return (ENXIO);
@@ -232,22 +236,14 @@ sst_pci_probe(device_t dev)
 	 * The same DSP can appear twice: once through ACPI (INT3438)
 	 * and, after the driver clears PCICD, once on the PCI bus.
 	 * Attaching both would give two softcs fighting over the same
-	 * SHIM and BARs, so refuse the PCI instance when an ACPI one
-	 * is already attached.
+	 * SHIM and BARs, so refuse the PCI instance when the ACPI one
+	 * already claimed the hardware.
 	 */
-	dc = devclass_find("acpi_intel_sst");
-	if (dc != NULL) {
-		for (unit = 0; unit <= devclass_get_maxunit(dc); unit++) {
-			other = devclass_get_device(dc, unit);
-			if (other != NULL && other != dev &&
-			    device_is_attached(other)) {
-				device_printf(dev,
-				    "already driven via %s, skipping PCI"
-				    " instance\n",
-				    device_get_nameunit(other));
-				return (ENXIO);
-			}
-		}
+	if (sst_acpi_instance != NULL) {
+		device_printf(dev,
+		    "already driven via %s, skipping PCI instance\n",
+		    device_get_nameunit(sst_acpi_instance));
+		return (ENXIO);
 	}
 
 	device_set_desc(dev, "Intel Broadwell-U Audio DSP (PCI Mode)");
@@ -1175,6 +1171,7 @@ dsp_init:
 	}
 
 	sc->attached = true;
+	sst_acpi_instance = dev;
 	/*
 	 * ATTACHED means "device claimed"; RUNNING additionally means
 	 * the DSP booted and streams can be started.  Suspend/resume
@@ -1550,6 +1547,9 @@ sst_acpi_detach(device_t dev)
 	struct sst_softc *sc = device_get_softc(dev);
 
 	sst_detach_common(dev);
+
+	if (sst_acpi_instance == dev)
+		sst_acpi_instance = NULL;
 
 	if (sc->handle != NULL)
 		acpi_pwr_switch_consumer(sc->handle, ACPI_STATE_D3);
