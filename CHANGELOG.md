@@ -136,6 +136,14 @@ two behaviours changed on purpose (see Changed).
 - CI builds the module on 15.1-RELEASE and a 16.0-CURRENT snapshot;
   previously nothing in the pipeline ever compiled the driver.
 
+### Added
+
+- `tests/unit/` — host-side regression tests (14 checks) for the
+  firmware image bounds predicates, including cases proving the old
+  wrapping formulas accepted the malicious sizes the new ones reject.
+  Run with `make -C tests/unit test`; CI also checks that the mirrored
+  predicates still match `src/sst_firmware.c`.
+
 ## [0.64.4] - 2026-06-15
 
 ### Fixed

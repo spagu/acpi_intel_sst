@@ -52,6 +52,9 @@ node.core
 tests/*.log
 tests/*.out
 
+# Host-side unit test build artifacts (tests/unit/Makefile)
+tests/unit/test_fw_bounds
+
 # Distribution archives
 *.tar.gz
 *.tar.xz

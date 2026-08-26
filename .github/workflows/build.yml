@@ -143,3 +143,30 @@ jobs:
           name: acpi_intel_sst-${{ matrix.osversion }}
           path: src/acpi_intel_sst.ko
           if-no-files-found: warn
+
+  unit-tests:
+    name: Host-side Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Build and run firmware parser bounds tests
+        run: make -C tests/unit test
+
+      - name: Verify predicate mirror is in sync with the driver
+        run: |
+          # These predicates are duplicated in tests/unit for host-side
+          # testing; fail loudly if the driver copy changes.
+          set -e
+          for expr in \
+            'blk->ram_offset > max_size' \
+            'blk->size > total_size - offset' \
+            'SST_MBOX_SIZE_IN <= SST_DRAM_SIZE - fw_ready.outbox_offset'; do
+            grep -qF "$expr" src/sst_firmware.c || {
+              echo "::error::predicate '$expr' no longer present in src/sst_firmware.c -"\
+                   "update tests/unit/sst_fw_predicates.h to match"
+              exit 1
+            }
+          done
+          echo "predicate mirror in sync"
