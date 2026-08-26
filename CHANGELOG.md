@@ -133,8 +133,10 @@ two behaviours changed on purpose (see Changed).
   from stable/14), `bus_attach_children()` and `DEVICE_UNIT_ANY`.
 - On 16-CURRENT `/dev/dsp*` is created with group `audio` (gid 43) —
   documented in README, man page and pkg-message.
-- CI builds the module on 15.1-RELEASE and a 16.0-CURRENT snapshot;
-  previously nothing in the pipeline ever compiled the driver.
+- CI builds the module on 15.0-RELEASE and 15.1-RELEASE; previously
+  nothing in the pipeline ever compiled the driver.  16-CURRENT has no
+  VM image available to the CI action, so it stays covered by the KPI
+  review in `audit/compat/` until one exists.
 
 ### Added
 

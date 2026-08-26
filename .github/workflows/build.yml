@@ -104,11 +104,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # vmactions/freebsd-vm only ships images up to the latest
+        # release (12.4 - 15.1 today); there is no 16-CURRENT image, so
+        # main is covered by the KPI review in audit/compat, not here.
         include:
+          - osversion: "15.0"     # oldest supported release
+            release: "15.0"
           - osversion: "15.1"     # current production release
             release: "15.1"
-          - osversion: "16.0-CURRENT"
-            release: "16.0-CURRENT"
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
@@ -116,7 +119,9 @@ jobs:
         uses: actions/checkout@v7
 
       - name: Build kernel module in a FreeBSD VM
-        uses: vmactions/freebsd-vm@v1
+        # Pinned to a full commit SHA: third-party actions can move a
+        # tag under us, and this one runs arbitrary code in our runner.
+        uses: vmactions/freebsd-vm@f0552d3b69211736abd97f02ff3d4674c56b73b1 # v1
         with:
           release: ${{ matrix.release }}
           usesh: true
@@ -128,9 +133,11 @@ jobs:
             if [ ! -d /usr/src/sys ]; then
               echo "Fetching kernel sources for $(uname -r)"
               git clone --depth 1 \
-                -b $(uname -r | sed 's/-RELEASE.*/-RELEASE/;s/^\([0-9]*\)\..*CURRENT/main/' ) \
+                -b "releng/${{ matrix.release }}" \
                 https://git.FreeBSD.org/src.git /usr/src || \
-              git clone --depth 1 https://git.FreeBSD.org/src.git /usr/src
+              git clone --depth 1 \
+                -b "stable/15" \
+                https://git.FreeBSD.org/src.git /usr/src
             fi
             uname -a
             make -C src clean || true
