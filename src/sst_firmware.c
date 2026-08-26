@@ -441,6 +441,13 @@ sst_fw_init(struct sst_softc *sc)
 	sc->fw.entry_point = 0;
 	sc->fw.modules = 0;
 	sc->fw.state = SST_FW_STATE_NONE;
+
+	/*
+	 * Drop per-module state: a different image loaded afterwards
+	 * would otherwise inherit stale entry points and persistent
+	 * sizes for modules it does not even contain.
+	 */
+	memset(sc->fw.mod, 0, sizeof(sc->fw.mod));
 	sc->fw.dram_alloc_next = 0;
 
 	/* Assume all stages supported until probed otherwise */
@@ -771,7 +778,13 @@ sst_fw_boot(struct sst_softc *sc)
 					    ipcd, isrx);
 				}
 
-				DELAY(poll_ms * 1000);
+				/*
+				 * Boot runs from attach/resume, both
+				 * sleepable: yield instead of burning
+				 * a CPU for up to SST_BOOT_TIMEOUT_MS.
+				 */
+				pause_sbt("sstfwb", SBT_1MS * poll_ms, 0,
+				    C_HARDCLOCK);
 				elapsed += poll_ms;
 			}
 

@@ -186,8 +186,8 @@ int	sst_dsp_reset(struct sst_softc *sc, bool reset);
 void	sst_dsp_set_regs_defaults(struct sst_softc *sc);
 
 /* sst_power.c */
-void	sst_reset(struct sst_softc *sc);
-void	sst_init(struct sst_softc *sc);
+int	sst_reset(struct sst_softc *sc);
+int	sst_init(struct sst_softc *sc);
 void	sst_acpi_power_up(struct sst_softc *sc);
 int	sst_wpt_power_up(struct sst_softc *sc);
 void	sst_wpt_power_down(struct sst_softc *sc);

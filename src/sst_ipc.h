@@ -377,6 +377,7 @@ struct sst_ipc {
 	struct cv		wait_cv;	/* Wait condition */
 	enum sst_ipc_state	state;		/* Current state */
 	bool			ready;		/* DSP ready flag */
+	bool			stuck_busy;	/* Timed-out cmd left BUSY set */
 
 	/* Current message */
 	struct sst_ipc_msg	msg;

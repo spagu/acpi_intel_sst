@@ -420,105 +420,6 @@ sst_try_enable_hda(struct sst_softc *sc)
 }
 
 /* ================================================================
- * ADSP Enablement via RCBA
- *
- * When ADSD (bit 0 of FD register) is set, the ADSP function is
- * disabled at the PCH level. This means BAR0 (DSP MMIO) is gated
- * off and returns 0xFFFFFFFF, even though BAR1 (PCI config mirror)
- * may still be accessible via the LPSS private config space.
- *
- * This function clears ADSD to re-enable the ADSP hardware,
- * which should make BAR0 accessible.
- * ================================================================ */
-
-int __unused
-sst_try_enable_adsp(struct sst_softc *sc)
-{
-	uint32_t rcba_reg, rcba_base, fd, fd_new, fd_verify;
-	bus_space_tag_t mem_tag;
-	bus_space_handle_t rcba_handle;
-	int error;
-
-	sst_dbg(sc, SST_DBG_LIFE, "=== ADSP Enablement ===\n");
-
-	/* Read RCBA from LPC bridge */
-	rcba_reg = pci_cfgregread(0, PCH_LPC_BUS, PCH_LPC_DEV,
-	    PCH_LPC_FUNC, PCH_LPC_RCBA_REG, 4);
-	rcba_base = rcba_reg & PCH_RCBA_MASK;
-
-	if (rcba_base == 0 || rcba_base == PCH_RCBA_MASK ||
-	    !(rcba_reg & PCH_RCBA_ENABLE)) {
-		device_printf(sc->dev, "  RCBA not available\n");
-		return (ENXIO);
-	}
-
-	/* Map RCBA region */
-	mem_tag = X86_BUS_SPACE_MEM;
-	error = bus_space_map(mem_tag, rcba_base, PCH_RCBA_SIZE, 0,
-	    &rcba_handle);
-	if (error != 0) {
-		device_printf(sc->dev, "  Failed to map RCBA: %d\n", error);
-		return (error);
-	}
-
-	/* Read FD register */
-	fd = bus_space_read_4(mem_tag, rcba_handle, PCH_RCBA_FD);
-	sst_dbg(sc, SST_DBG_OPS, "  FD before: 0x%08x (ADSD=%d, HDAD=%d)\n",
-	    fd, (fd & PCH_FD_ADSD) ? 1 : 0, (fd & PCH_FD_HDAD) ? 1 : 0);
-
-	if (!(fd & PCH_FD_ADSD)) {
-		sst_dbg(sc, SST_DBG_LIFE, "  ADSP already enabled\n");
-		bus_space_unmap(mem_tag, rcba_handle, PCH_RCBA_SIZE);
-		return (0);
-	}
-
-	/* Clear ADSD to enable ADSP, also set HDAD to disable HDA
-	 * (only one of HDA/ADSP should be active) */
-	fd_new = fd & ~PCH_FD_ADSD;	/* Enable ADSP */
-	fd_new |= PCH_FD_HDAD;		/* Disable HDA (mutual exclusion) */
-
-	sst_dbg(sc, SST_DBG_OPS, "  Writing FD: 0x%08x -> 0x%08x\n",
-	    fd, fd_new);
-	sst_dbg(sc, SST_DBG_OPS, "  (Clearing ADSD to enable ADSP, setting HDAD)\n");
-
-	bus_space_write_4(mem_tag, rcba_handle, PCH_RCBA_FD, fd_new);
-	DELAY(100000);	/* 100ms settle */
-
-	/* Verify write took effect */
-	fd_verify = bus_space_read_4(mem_tag, rcba_handle, PCH_RCBA_FD);
-	sst_dbg(sc, SST_DBG_OPS, "  FD after:  0x%08x (ADSD=%d, HDAD=%d)\n",
-	    fd_verify,
-	    (fd_verify & PCH_FD_ADSD) ? 1 : 0,
-	    (fd_verify & PCH_FD_HDAD) ? 1 : 0);
-
-	if (fd_verify & PCH_FD_ADSD) {
-		sst_dbg(sc, SST_DBG_OPS,
-		    "  ADSD write REJECTED by hardware\n");
-		/* Try just clearing ADSD without touching HDAD */
-		fd_new = fd & ~PCH_FD_ADSD;
-		sst_dbg(sc, SST_DBG_OPS,
-		    "  Retry: writing FD 0x%08x (only clear ADSD)\n", fd_new);
-		bus_space_write_4(mem_tag, rcba_handle, PCH_RCBA_FD, fd_new);
-		DELAY(100000);
-		fd_verify = bus_space_read_4(mem_tag, rcba_handle, PCH_RCBA_FD);
-		sst_dbg(sc, SST_DBG_OPS, "  FD retry:  0x%08x (ADSD=%d)\n",
-		    fd_verify, (fd_verify & PCH_FD_ADSD) ? 1 : 0);
-	}
-
-	if (!(fd_verify & PCH_FD_ADSD)) {
-		sst_dbg(sc, SST_DBG_LIFE, "  *** ADSP ENABLED! ***\n");
-		sst_dbg(sc, SST_DBG_LIFE, "  Waiting for hardware to stabilize...\n");
-		DELAY(200000);	/* 200ms for hardware to come up */
-	} else {
-		device_printf(sc->dev, "  ADSD is write-locked, cannot enable ADSP via FD\n");
-	}
-
-	bus_space_unmap(mem_tag, rcba_handle, PCH_RCBA_SIZE);
-
-	return ((fd_verify & PCH_FD_ADSD) ? EPERM : 0);
-}
-
-/* ================================================================
  * I2C Codec Probe
  *
  * The I2C1 controller at 0xFE105000 is a DesignWare I2C that talks
@@ -1041,10 +942,10 @@ sst_dump_pch_state(struct sst_softc *sc)
 			sst_dbg(sc, SST_DBG_TRACE,
 			    "  Direct BAR0[0]=0x%08x [4]=0x%08x\n", v0, v4);
 
-			/* Try SHIM offset */
-			if (0xC0000 < 0x1000) {
-				/* Can't reach SHIM with 4K map */
-			}
+			/*
+			 * SHIM is at BAR0 + 0xFB000, well past this 4K
+			 * probe map; it is mapped separately below.
+			 */
 			bus_space_unmap(mem_tag, bar0_handle, 0x1000);
 		} else {
 			sst_dbg(sc, SST_DBG_TRACE,

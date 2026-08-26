@@ -142,17 +142,20 @@
 #define SST_SHIM_HMDC		0xE8	/* Host Memory DMA Control */
 
 /*
- * Additional PCI Extended Config registers (via BAR1)
- * Based on Linux catpt driver registers.h
+ * NOTE: there are no separate BAR1/PCI-config IPC registers on this
+ * hardware.  A prior version of this header defined
+ * SST_PCI_CS1/IMC/IMD/IPCC/IPCD_REG at 0x00/0xE0-0xEC, claiming they
+ * were "Based on Linux catpt driver" -- that was wrong: in catpt the
+ * IPC mask/command/data registers are SHIM registers at offsets
+ * 0x28/0x30/0x38/0x40 (SST_SHIM_IMRX/IMRD/IPCX/IPCD below), and
+ * 0xE0-0xEC on BAR1 collided with SST_SHIM_LTRC/HMDC.  Use
+ * SST_SHIM_IMRX/IMRD/IPCX/IPCD via sst_shim_read()/sst_shim_write()
+ * instead.
  */
-#define SST_PCI_CS1		0x00	/* PCI Config Space 1 (mirrors VID/DID) */
-#define SST_PCI_IMC		0xE4	/* Interrupt Mask Clear */
-#define SST_PCI_IMD		0xEC	/* Interrupt Mask Set */
-#define SST_PCI_IPCC		0xE0	/* IPC Clear */
-#define SST_PCI_IPCD_REG	0xE8	/* IPC Set (note: conflicts with HMDC) */
 
 /*
- * IMC/IMD bits (via BAR1)
+ * IPC status bits, as read from SST_SHIM_ISRX/IMRX (SHIM registers,
+ * NOT a BAR1/PCI register -- see note above).
  */
 #define SST_IMC_IPCCD		(1 << 0)	/* IPC Completion Done */
 #define SST_IMC_IPCDB		(1 << 1)	/* IPC Doorbell */

@@ -20,6 +20,9 @@ SRCS+=  device_if.h bus_if.h acpi_if.h channel_if.h mixer_if.h
 SRCS+=  opt_acpi.h opt_snd.h
 
 # Version from VERSION file (single source of truth)
+.if !exists(${.CURDIR}/VERSION)
+.error VERSION file missing in ${.CURDIR} - cannot set SST_DRV_VERSION
+.endif
 SST_VERSION!=	cat ${.CURDIR}/VERSION
 SST_VER_MAJOR!=	echo ${SST_VERSION} | cut -d. -f1
 SST_VER_MINOR!=	echo ${SST_VERSION} | cut -d. -f2
@@ -38,8 +41,8 @@ KMODDIR?= /boot/modules
 
 .include <bsd.kmod.mk>
 
-# Custom targets (load/unload provided by bsd.kmod.mk)
-.PHONY: reload test install help
+# Custom targets (load/unload/install provided by bsd.kmod.mk)
+.PHONY: reload test help
 
 reload:
 	-kldunload $(KMOD)
@@ -50,10 +53,10 @@ test:
 	@chmod +x ../tests/test_module.sh
 	@../tests/test_module.sh
 
-install:
-	@echo "Installing $(KMOD).ko to $(KMODDIR)..."
-	install -m 555 $(KMOD).ko $(KMODDIR)/
-	@echo "Done. Add 'acpi_intel_sst_load=\"YES\"' to /boot/loader.conf to load at boot."
+# Note: 'install' itself comes from bsd.kmod.mk (it also runs kldxref).
+afterinstall:
+	@echo "Installed $(KMOD).ko in $(KMODDIR)."
+	@echo "Add 'acpi_intel_sst_load=\"YES\"' to /boot/loader.conf to load at boot."
 
 help:
 	@echo "Intel SST Audio Driver for FreeBSD"
@@ -65,7 +68,7 @@ help:
 	@echo "  make unload   - Unload the module (from bsd.kmod.mk)"
 	@echo "  make reload   - Unload and reload the module"
 	@echo "  make test     - Run test suite (requires root)"
-	@echo "  make install  - Install to $(KMODDIR)"
+	@echo "  make install  - Install to $(KMODDIR) (bsd.kmod.mk)"
 	@echo "  make help     - Show this help"
 	@echo ""
 	@echo "Debug build:"

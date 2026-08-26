@@ -1545,7 +1545,10 @@ sst_limiter_release_sysctl(SYSCTL_HANDLER_ARGS)
 	struct sst_softc *sc = arg1;
 	int val, error;
 
+	mtx_lock(&sc->sc_mtx);
 	val = (int)sc->pcm.limiter_release;
+	mtx_unlock(&sc->sc_mtx);
+
 	error = sysctl_handle_int(oidp, &val, 0, req);
 	if (error || req->newptr == NULL)
 		return (error);
@@ -1553,7 +1556,15 @@ sst_limiter_release_sysctl(SYSCTL_HANDLER_ARGS)
 	if (val != 0 && (val < 10000 || val > 500000))
 		return (EINVAL);
 
+	/*
+	 * Drop sc_mtx before applying: sst_topology_apply_limiter() sleeps
+	 * via sst_ipc_set_limiter() and must not be called with the lock
+	 * held.
+	 */
+	mtx_lock(&sc->sc_mtx);
 	sc->pcm.limiter_release = (uint32_t)val;
+	mtx_unlock(&sc->sc_mtx);
+
 	sst_topology_apply_limiter(sc);
 
 	return (0);
@@ -1569,7 +1580,10 @@ sst_peq_freq_sysctl(SYSCTL_HANDLER_ARGS)
 	struct sst_softc *sc = arg1;
 	int val, error;
 
+	mtx_lock(&sc->sc_mtx);
 	val = (int)sc->pcm.peq_freq;
+	mtx_unlock(&sc->sc_mtx);
+
 	error = sysctl_handle_int(oidp, &val, 0, req);
 	if (error || req->newptr == NULL)
 		return (error);
@@ -1577,6 +1591,12 @@ sst_peq_freq_sysctl(SYSCTL_HANDLER_ARGS)
 	if (val != 0 && (val < 200 || val > 16000))
 		return (EINVAL);
 
+	/*
+	 * Update the group under sc_mtx, then drop it before applying:
+	 * sst_topology_apply_biquad() sleeps via sst_ipc_set_biquad() and
+	 * must not be called with sc_mtx held.
+	 */
+	mtx_lock(&sc->sc_mtx);
 	sc->pcm.peq_freq = (uint16_t)val;
 
 	if (val > 0) {
@@ -1587,6 +1607,7 @@ sst_peq_freq_sysctl(SYSCTL_HANDLER_ARGS)
 	} else {
 		sc->pcm.biquad_mode = SST_BIQUAD_MODE_HPF;
 	}
+	mtx_unlock(&sc->sc_mtx);
 
 	sst_topology_apply_biquad(sc);
 
@@ -1602,8 +1623,12 @@ sst_peq_gain_sysctl(SYSCTL_HANDLER_ARGS)
 {
 	struct sst_softc *sc = arg1;
 	int val, error;
+	bool peq_active;
 
+	mtx_lock(&sc->sc_mtx);
 	val = sc->pcm.peq_gain;
+	mtx_unlock(&sc->sc_mtx);
+
 	error = sysctl_handle_int(oidp, &val, 0, req);
 	if (error || req->newptr == NULL)
 		return (error);
@@ -1611,11 +1636,19 @@ sst_peq_gain_sysctl(SYSCTL_HANDLER_ARGS)
 	if (val < -12 || val > 12)
 		return (EINVAL);
 
+	/*
+	 * Update and re-read the "is PEQ active" state as one group under
+	 * sc_mtx, then drop the lock before applying: apply_biquad() sleeps
+	 * via sst_ipc_set_biquad() and must not be called with sc_mtx held.
+	 */
+	mtx_lock(&sc->sc_mtx);
 	sc->pcm.peq_gain = val;
+	peq_active = (sc->pcm.biquad_mode == SST_BIQUAD_MODE_PEQ &&
+	    sc->pcm.peq_freq > 0);
+	mtx_unlock(&sc->sc_mtx);
 
 	/* Only recompute if PEQ is active */
-	if (sc->pcm.biquad_mode == SST_BIQUAD_MODE_PEQ &&
-	    sc->pcm.peq_freq > 0)
+	if (peq_active)
 		sst_topology_apply_biquad(sc);
 
 	return (0);
@@ -1630,8 +1663,12 @@ sst_peq_q_sysctl(SYSCTL_HANDLER_ARGS)
 {
 	struct sst_softc *sc = arg1;
 	int val, error;
+	bool peq_active;
 
+	mtx_lock(&sc->sc_mtx);
 	val = sc->pcm.peq_q;
+	mtx_unlock(&sc->sc_mtx);
+
 	error = sysctl_handle_int(oidp, &val, 0, req);
 	if (error || req->newptr == NULL)
 		return (error);
@@ -1639,11 +1676,19 @@ sst_peq_q_sysctl(SYSCTL_HANDLER_ARGS)
 	if (val < 30 || val > 1000)
 		return (EINVAL);
 
+	/*
+	 * Update and re-read the "is PEQ active" state as one group under
+	 * sc_mtx, then drop the lock before applying: apply_biquad() sleeps
+	 * via sst_ipc_set_biquad() and must not be called with sc_mtx held.
+	 */
+	mtx_lock(&sc->sc_mtx);
 	sc->pcm.peq_q = val;
+	peq_active = (sc->pcm.biquad_mode == SST_BIQUAD_MODE_PEQ &&
+	    sc->pcm.peq_freq > 0);
+	mtx_unlock(&sc->sc_mtx);
 
 	/* Only recompute if PEQ is active */
-	if (sc->pcm.biquad_mode == SST_BIQUAD_MODE_PEQ &&
-	    sc->pcm.peq_freq > 0)
+	if (peq_active)
 		sst_topology_apply_biquad(sc);
 
 	return (0);
@@ -1696,6 +1741,32 @@ sst_q131_to_db_x10(uint32_t val)
 }
 
 /*
+ * Validate a DSP-supplied register offset before it is used as a raw
+ * BAR0 offset for bus_read_4().
+ *
+ * These offsets arrive in an ALLOC_STREAM IPC reply; a malformed or
+ * stale/late reply (see the IPC late-reply-race finding) must not be
+ * able to drive an out-of-bounds MMIO read from this user-triggerable
+ * sysctl (telemetry) path.  Require 4-byte alignment and that the
+ * 32-bit access stays within the BAR0 resource.  Callers must treat an
+ * invalid address as "no telemetry available" rather than a hard error.
+ */
+static bool
+sst_regaddr_valid(struct sst_softc *sc, uint32_t regaddr)
+{
+	bus_size_t size;
+
+	if (regaddr == 0 || (regaddr & 0x3) != 0)
+		return (false);
+
+	size = rman_get_size(sc->mem_res);
+	if (size < 4 || regaddr > size - 4)
+		return (false);
+
+	return (true);
+}
+
+/*
  * On-demand telemetry refresh: read peak meters and volume from DSP.
  *
  * Called from sysctl handlers when user queries telemetry nodes.
@@ -1719,7 +1790,7 @@ sst_telemetry_refresh(struct sst_softc *sc)
 	for (i = 0; i < SST_PCM_MAX_PLAY; i++) {
 		if (sc->pcm.play[i].stream_allocated &&
 		    sc->pcm.play[i].state == SST_PCM_STATE_RUNNING &&
-		    sc->pcm.play[i].peak_meter_regaddr[0] != 0) {
+		    sst_regaddr_valid(sc, sc->pcm.play[i].peak_meter_regaddr[0])) {
 			ch = &sc->pcm.play[i];
 			break;
 		}
@@ -1728,7 +1799,7 @@ sst_telemetry_refresh(struct sst_softc *sc)
 		for (i = 0; i < SST_PCM_MAX_REC; i++) {
 			if (sc->pcm.rec[i].stream_allocated &&
 			    sc->pcm.rec[i].state == SST_PCM_STATE_RUNNING &&
-			    sc->pcm.rec[i].peak_meter_regaddr[0] != 0) {
+			    sst_regaddr_valid(sc, sc->pcm.rec[i].peak_meter_regaddr[0])) {
 				ch = &sc->pcm.rec[i];
 				break;
 			}
@@ -1739,6 +1810,18 @@ sst_telemetry_refresh(struct sst_softc *sc)
 
 	if (ch == NULL) {
 		/* No active stream -- return silence */
+		sc->pcm.peak_left = 0;
+		sc->pcm.peak_right = 0;
+		sc->pcm.limiter_active = false;
+		return;
+	}
+
+	/*
+	 * Re-validate both peak meter addresses (the selection loop above
+	 * only checked [0]) before touching the bus.
+	 */
+	if (!sst_regaddr_valid(sc, ch->peak_meter_regaddr[0]) ||
+	    !sst_regaddr_valid(sc, ch->peak_meter_regaddr[1])) {
 		sc->pcm.peak_left = 0;
 		sc->pcm.peak_right = 0;
 		sc->pcm.limiter_active = false;
@@ -1756,9 +1839,13 @@ sst_telemetry_refresh(struct sst_softc *sc)
 	if (peak_l >= 0x7F000000 || peak_r >= 0x7F000000)
 		sc->pcm.clip_count++;
 
-	/* Read volume register for limiter activity detection */
-	vol = bus_read_4(sc->mem_res, ch->volume_regaddr[0]);
-	sc->pcm.limiter_active = (vol < 0x7FFFFFFF);
+	/* Read volume register for limiter activity detection, if valid */
+	if (sst_regaddr_valid(sc, ch->volume_regaddr[0])) {
+		vol = bus_read_4(sc->mem_res, ch->volume_regaddr[0]);
+		sc->pcm.limiter_active = (vol < 0x7FFFFFFF);
+	} else {
+		sc->pcm.limiter_active = false;
+	}
 }
 
 /*

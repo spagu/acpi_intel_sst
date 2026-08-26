@@ -21,8 +21,6 @@
 #include "acpi_intel_sst.h"
 
 #define SST_SRAM_CTRL_OFFSET	0xFB000
-#define SST_SRAM_CTRL_ENABLE	0x1F	/* Bits 0-4 enable SRAM */
-#define SST_PCI_BAR0_PHYS	0xDF800000	/* PCI-allocated BAR0 physical address */
 
 /*
  * sst_sram_sanitize - Dummy readback after SRAM power-up
@@ -144,25 +142,24 @@ void
 sst_scan_bar0(struct sst_softc *sc)
 {
 	static const struct { uint32_t off; const char *name; } regs[] = {
-		{ 0x000000, "DRAM base" },
-		{ 0x0A0000, "IRAM base" },
-		{ 0x0FB000, "SHIM (host)" },
-		{ 0x0FB004, "SHIM+4" },
-		{ 0x0FB008, "SHIM PISR" },
-		{ 0x0FB010, "SHIM PIMR" },
-		{ 0x0FB014, "SHIM ISRX" },
-		{ 0x0FB018, "SHIM ISRD" },
-		{ 0x0FB028, "SHIM IMRX" },
-		{ 0x0FB038, "SHIM IPCX" },
-		{ 0x0FB040, "SHIM IPCD" },
-		{ 0x0FB044, "SHIM+0x44" },
-		{ 0x0FB078, "SHIM CLKCTL" },
-		{ 0x0FB05C, "SHIM CS1" },
-		{ 0x0FC000, "SSP0" },
-		{ 0x0FD000, "SSP1" },
-		{ 0x0FE000, "DMA0" },
-		{ 0x0FF000, "DMA1" },
-		{ 0x0E7000, "old SHIM (LPT)" },
+		{ SST_DRAM_OFFSET,			"DRAM base" },
+		{ SST_IRAM_OFFSET,			"IRAM base" },
+		{ SST_SHIM_OFFSET + SST_SHIM_CSR,	"SHIM CSR" },
+		{ SST_SHIM_OFFSET + SST_SHIM_PISR,	"SHIM PISR" },
+		{ SST_SHIM_OFFSET + SST_SHIM_PIMR,	"SHIM PIMR" },
+		{ SST_SHIM_OFFSET + SST_SHIM_ISRX,	"SHIM ISRX" },
+		{ SST_SHIM_OFFSET + SST_SHIM_ISRD,	"SHIM ISRD" },
+		{ SST_SHIM_OFFSET + SST_SHIM_IMRX,	"SHIM IMRX" },
+		{ SST_SHIM_OFFSET + SST_SHIM_IMRD,	"SHIM IMRD" },
+		{ SST_SHIM_OFFSET + SST_SHIM_IPCX,	"SHIM IPCX" },
+		{ SST_SHIM_OFFSET + SST_SHIM_IPCD,	"SHIM IPCD" },
+		{ SST_SHIM_OFFSET + SST_SHIM_CLKCTL,	"SHIM CLKCTL" },
+		{ SST_SHIM_OFFSET + SST_SHIM_CSR2,	"SHIM CSR2" },
+		{ SST_SSP0_OFFSET,			"SSP0" },
+		{ SST_SSP1_OFFSET,			"SSP1" },
+		{ SST_DMA0_OFFSET,			"DMA0" },
+		{ SST_DMA1_OFFSET,			"DMA1" },
+		{ 0x0E7000,				"old SHIM (LPT)" },
 	};
 	uint32_t val;
 	int i, alive = 0;
@@ -189,43 +186,6 @@ sst_scan_bar0(struct sst_softc *sc)
  * Note: 0xFB000 is now known to be the SHIM base (host offset).
  * The "SRAM_CTRL" was actually the SHIM CSR register.
  * ================================================================ */
-
-/*
- * Immediate SRAM status check - can be called without any device setup.
- * This is for diagnosing WHEN the SRAM gets reset during driver load.
- * Returns: 1 if SRAM is alive, 0 if dead
- */
-static int __unused
-sst_check_sram_immediate(const char *checkpoint)
-{
-	void *bar0_va;
-	volatile uint32_t *sram_base;
-	volatile uint32_t *ctrl_reg;
-	uint32_t sram_val, ctrl_val;
-	int alive;
-
-	bar0_va = pmap_mapdev_attr(SST_PCI_BAR0_PHYS, 0x100000, VM_MEMATTR_UNCACHEABLE);
-	if (bar0_va == NULL) {
-		printf("sst: [%s] Failed to map BAR0\n", checkpoint);
-		return 0;
-	}
-
-	sram_base = (volatile uint32_t *)bar0_va;
-	ctrl_reg = (volatile uint32_t *)((char *)bar0_va + SST_SRAM_CTRL_OFFSET);
-
-	__asm __volatile("mfence" ::: "memory");
-	sram_val = *sram_base;
-	ctrl_val = *ctrl_reg;
-
-	alive = (sram_val != 0xFFFFFFFF);
-
-	printf("sst: [%s] SRAM[0]=0x%08x CTRL=0x%08x => %s\n",
-	    checkpoint, sram_val, ctrl_val,
-	    alive ? "ALIVE" : "DEAD");
-
-	pmap_unmapdev(bar0_va, 0x100000);
-	return alive;
-}
 
 /*
  * Check if SRAM is active and try to enable it.

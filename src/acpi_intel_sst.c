@@ -254,6 +254,10 @@ sst_acpi_attach(device_t dev)
 	/* Allow boot-time override via device.hints */
 	resource_int_value(device_get_name(dev), device_get_unit(dev),
 	    "debug", &sc->debug_level);
+	if (sc->debug_level < SST_DBG_QUIET)
+		sc->debug_level = SST_DBG_QUIET;
+	else if (sc->debug_level > SST_DBG_TRACE)
+		sc->debug_level = SST_DBG_TRACE;
 
 	mtx_init(&sc->sc_mtx, "sst_sc", NULL, MTX_DEF);
 
@@ -578,8 +582,7 @@ sst_acpi_attach(device_t dev)
 		}
 	}
 
-	/* Restore FD to BIOS default (0x00368011) in case previous
-	 * module loads corrupted it with wrong bit offsets */
+	/* Report the LPC Function Disable register (read-only diagnostics) */
 	{
 		uint32_t rcba_reg, rcba_base, fd;
 		bus_space_tag_t mt = X86_BUS_SPACE_MEM;
@@ -607,18 +610,17 @@ sst_acpi_attach(device_t dev)
 			    (fd & PCH_FD_HDAD) ? "HDA Disabled" :
 			    "HDA Enabled");
 
-			/* Restore BIOS default if corrupted by previous
-			 * wrong-bit-offset writes */
-			if (fd != 0x00368011) {
-				sst_dbg(sc, SST_DBG_TRACE,
-				    "  Restoring FD to BIOS default 0x00368011\n");
-				bus_space_write_4(mt, rh, PCH_RCBA_FD,
-				    0x00368011);
-				DELAY(10000);
-				fd = bus_space_read_4(mt, rh, PCH_RCBA_FD);
-				sst_dbg(sc, SST_DBG_TRACE,
-				    "  FD after restore: 0x%08x\n", fd);
-			}
+			/*
+			 * Function Disable is read-only here.
+			 *
+			 * A previous version restored a hard-coded
+			 * "BIOS default" (0x00368011) taken from one
+			 * XPS 13 9343.  On any other board that value
+			 * can disable SATA, SMBus or xHCI - i.e. take
+			 * the boot disk away - and it also re-disabled
+			 * HDA right after sst_try_enable_hda() cleared
+			 * that bit.  Never write FD from this driver.
+			 */
 
 			bus_space_unmap(mt, rh, PCH_RCBA_SIZE);
 		}
@@ -1056,7 +1058,12 @@ dsp_init:
 	 * RST was already cleared in SHIM config step 5.
 	 * DCLCGE must stay disabled for MMIO writes (Linux uses DMA instead).
 	 */
-	sst_dsp_stall(sc, true);   /* Ensure STALL is set */
+	/* Firmware must not be written to a running DSP core */
+	error = sst_dsp_stall(sc, true);
+	if (error != 0) {
+		device_printf(dev, "DSP stall failed: %d\n", error);
+		goto fail;
+	}
 	{
 		uint32_t pre_csr = sst_shim_read(sc, SST_SHIM_CSR);
 		sst_dbg(sc, SST_DBG_OPS, "Pre-FW load: CSR=0x%08x (STALL=%d RST=%d)\n",
@@ -1581,7 +1588,11 @@ sst_acpi_resume(device_t dev)
 	sst_sram_sanitize(sc);
 
 	/* 2. Init SHIM (mask interrupts, reset DSP) */
-	sst_init(sc);
+	if (sst_init(sc) != 0) {
+		device_printf(dev, "Resume: DSP did not respond to reset\n");
+		sc->state = SST_STATE_ERROR;
+		return (ENXIO);
+	}
 	sc->ipc.ready = false;
 	sc->ipc.state = SST_IPC_STATE_IDLE;
 

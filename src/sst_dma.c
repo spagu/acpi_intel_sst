@@ -161,8 +161,25 @@ dma_build_lli(struct sst_softc *sc, int ch, struct sst_dma_config *config)
 		return (EINVAL);
 	}
 
+	/*
+	 * Widths index a 3-bit DW-DMAC field; anything larger would
+	 * make the shift below undefined.
+	 */
+	if (config->src_width > DMA_WIDTH_64 ||
+	    config->dst_width > DMA_WIDTH_64) {
+		device_printf(sc->dev, "DMA%d: bad transfer width %u/%u\n",
+		    ch, config->src_width, config->dst_width);
+		return (EINVAL);
+	}
+
 	/* Block transfer size in src_width-sized units */
-	block_ts = config->blk_size / (1 << config->src_width);
+	if ((config->blk_size & ((1U << config->src_width) - 1)) != 0) {
+		device_printf(sc->dev,
+		    "DMA%d: block size %u not a multiple of the sample width\n",
+		    ch, config->blk_size);
+		return (EINVAL);
+	}
+	block_ts = config->blk_size / (1U << config->src_width);
 	if (block_ts > DMA_CTL_BLOCK_TS_MASK) {
 		device_printf(sc->dev,
 		    "DMA%d: block_ts %u exceeds max %u\n",
@@ -480,7 +497,7 @@ sst_dma_configure(struct sst_softc *sc, int ch, struct sst_dma_config *config)
 
 		dma_ch_write(sc, ch, DMA_CTL_LO, ctl_lo);
 
-		ctl_hi = (config->size / (1 << config->src_width)) &
+		ctl_hi = (config->size / (1U << config->src_width)) &
 		    DMA_CTL_BLOCK_TS_MASK;
 		dma_ch_write(sc, ch, DMA_CTL_HI, ctl_hi);
 

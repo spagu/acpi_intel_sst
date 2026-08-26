@@ -103,10 +103,24 @@ sst_ipc_send(struct sst_softc *sc, uint32_t header, void *data, size_t size)
 	/* Check if DSP is busy */
 	ipcx = sst_shim_read(sc, SST_SHIM_IPCX);
 	if (ipcx & SST_IPC_BUSY) {
-		device_printf(sc->dev, "IPC: DSP busy\n");
-		sc->ipc.error_count++;
-		error = EBUSY;
-		goto done;
+		/*
+		 * A command that timed out can leave BUSY set forever,
+		 * which would fail every later command with EBUSY.
+		 * Clear the stale BUSY/DONE once and retry the read;
+		 * if the DSP still holds BUSY, it is genuinely busy.
+		 */
+		if (sc->ipc.stuck_busy) {
+			sst_shim_update_bits(sc, SST_SHIM_IPCX,
+			    SST_IPC_BUSY | SST_IPC_DONE, 0);
+			sc->ipc.stuck_busy = false;
+			ipcx = sst_shim_read(sc, SST_SHIM_IPCX);
+		}
+		if (ipcx & SST_IPC_BUSY) {
+			device_printf(sc->dev, "IPC: DSP busy\n");
+			sc->ipc.error_count++;
+			error = EBUSY;
+			goto done;
+		}
 	}
 
 	/*
@@ -167,6 +181,8 @@ sst_ipc_send(struct sst_softc *sc, uint32_t header, void *data, size_t size)
 			device_printf(sc->dev, "IPC timeout\n");
 			sc->ipc.state = SST_IPC_STATE_ERROR;
 			sc->ipc.error_count++;
+			/* The DSP may never clear BUSY for this command */
+			sc->ipc.stuck_busy = true;
 			error = ETIMEDOUT;
 			goto done;
 		}
@@ -328,7 +344,8 @@ sst_ipc_wait_ready(struct sst_softc *sc, int timeout_ms)
 				    csr, isr, ipcd);
 			}
 
-			DELAY(poll_interval_ms * 1000);
+			pause_sbt("sstipc", SBT_1MS * poll_interval_ms, 0,
+			    C_HARDCLOCK);
 			elapsed += poll_interval_ms;
 		}
 
@@ -552,13 +569,22 @@ sst_ipc_alloc_stream(struct sst_softc *sc, struct sst_alloc_stream_req *req,
 	 * Layout: [req fields up to persistent_mem] [modules] [persistent_mem..end]
 	 */
 	off = __offsetof(struct sst_alloc_stream_req, persistent_mem);
-	arrsz = sizeof(struct sst_module_entry) * num_modules;
-	paysize = sizeof(*req) + arrsz;
 
-	if (paysize > sizeof(payload)) {
-		device_printf(sc->dev, "IPC: alloc payload too large\n");
-		return (ENOMEM);
+	/*
+	 * Bound num_modules explicitly: computing arrsz first and only
+	 * then checking paysize relies on two size_t wraparounds
+	 * cancelling out for a negative count.
+	 */
+	if (num_modules < 0 ||
+	    (size_t)num_modules > (sizeof(payload) - sizeof(*req)) /
+	    sizeof(struct sst_module_entry)) {
+		device_printf(sc->dev, "IPC: bad module count %d\n",
+		    num_modules);
+		return (EINVAL);
 	}
+
+	arrsz = sizeof(struct sst_module_entry) * (size_t)num_modules;
+	paysize = sizeof(*req) + arrsz;
 
 	/* Copy first part (up to persistent_mem) */
 	memcpy(payload, req, off);
