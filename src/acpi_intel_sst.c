@@ -479,8 +479,25 @@ sst_acpi_attach(device_t dev)
 		bus_space_tag_t mt = X86_BUS_SPACE_MEM;
 		bus_space_handle_t gnvs_handle;
 		int map_err;
+		int gnvs_probe = 0;
+
+		/*
+		 * PCH_GNVS_BASE is a fixed physical address taken from
+		 * one machine's DSDT.  On any other board that address
+		 * is ordinary RAM, not MMIO, so this dump is opt-in via
+		 *   hint.acpi_intel_sst.0.gnvs_probe=1
+		 * and skipped by default.
+		 */
+		resource_int_value(device_get_name(dev),
+		    device_get_unit(dev), "gnvs_probe", &gnvs_probe);
 
 		sst_dbg(sc, SST_DBG_TRACE, "=== BIOS NVS Variables ===\n");
+
+		if (gnvs_probe == 0) {
+			sst_dbg(sc, SST_DBG_TRACE,
+			    "  skipped (set hint...gnvs_probe=1 to enable)\n");
+			goto gnvs_done;
+		}
 
 		map_err = bus_space_map(mt, PCH_GNVS_BASE, PCH_GNVS_SIZE,
 		    0, &gnvs_handle);
@@ -606,6 +623,8 @@ sst_acpi_attach(device_t dev)
 			    "  Cannot map GNVS at 0x%08x: %d\n",
 			    PCH_GNVS_BASE, map_err);
 		}
+gnvs_done:
+		;
 	}
 
 	/* Report the LPC Function Disable register (read-only diagnostics) */

@@ -232,7 +232,6 @@ void	sst_wpt_power_down(struct sst_softc *sc);
 /* sst_pch.c */
 void	sst_dump_pci_config(struct sst_softc *sc);
 int	sst_try_enable_hda(struct sst_softc *sc);
-int	sst_try_enable_adsp(struct sst_softc *sc);
 void	sst_probe_i2c_codec(struct sst_softc *sc);
 void	sst_iobp_probe(struct sst_softc *sc);
 void	sst_dump_pch_state(struct sst_softc *sc);
