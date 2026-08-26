@@ -91,8 +91,45 @@ struct sst_softc {
 	struct resource		*irq_res;
 	void			*irq_cookie;
 
-	/* Lock for register access */
-	struct mtx		sc_mtx;
+	/*
+	 * Locking model
+	 * =============
+	 *
+	 * (s) sc_mtx        - leaf mutex.  Serializes read-modify-write
+	 *                     access to SHIM registers
+	 *                     (sst_shim_update_bits) and the mixer /
+	 *                     topology state shared between MPSAFE
+	 *                     sysctl handlers and the PCM worker.
+	 * (i) ipc.lock      - IPC state machine and the ISR-cached
+	 *                     reply buffer.  Taken by the interrupt
+	 *                     handler; sleeping under it is allowed
+	 *                     only through cv_timedwait().
+	 * (I) ipc.send_mtx  - serializes IPC senders across the whole
+	 *                     send/wait/complete cycle.
+	 * (c) codec.i2c_lock- one I2C transaction (or read pair) at a
+	 *                     time on the DesignWare controller.
+	 * (j) jack.lock     - jack state and the poll callout.
+	 * (C) CHN_LOCK      - sound(4) per-channel lock, held by the
+	 *                     framework around channel methods.
+	 * (t) ch->trig_sx   - sleepable; serializes the trigger body,
+	 *                     which deliberately runs with CHN_LOCK
+	 *                     dropped because it issues IPC.
+	 *
+	 * Rules
+	 * -----
+	 * 1. Never call sst_ipc_*() or the codec helpers with a
+	 *    non-sleepable lock held: they sleep (cv_timedwait) or
+	 *    busy-wait for milliseconds.  Callouts must defer such work
+	 *    to taskqueue_thread.
+	 * 2. Lock order when more than one is needed:
+	 *    trig_sx -> ipc.send_mtx -> ipc.lock, and sc_mtx / i2c_lock
+	 *    / jack.lock are leaves taken last and never held across a
+	 *    sleep.
+	 * 3. The ISR may run before attach finishes and after detach
+	 *    starts; it must check the per-subsystem "initialized"
+	 *    flags before touching their state.
+	 */
+	struct mtx		sc_mtx;			/* (s) */
 
 	/* State */
 	enum sst_state		state;
