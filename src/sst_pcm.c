@@ -930,8 +930,11 @@ sst_pcm_work(void *arg, int pending __unused)
 						hpf_w = sst_topology_find_widget(sc,
 						    "HPF1.0");
 						if (hpf_w != NULL) {
+							mtx_lock(&sc->sc_mtx);
 							hpf_w->stream_id =
 							    ch->stream_id;
+							mtx_unlock(
+							    &sc->sc_mtx);
 							sst_topology_apply_biquad(sc);
 						}
 					}
@@ -943,8 +946,11 @@ sst_pcm_work(void *arg, int pending __unused)
 						    "LIMITER1.0");
 						if (lim_w != NULL &&
 						    sc->pcm.limiter_threshold > 0) {
+							mtx_lock(&sc->sc_mtx);
 							lim_w->stream_id =
 							    ch->stream_id;
+							mtx_unlock(
+							    &sc->sc_mtx);
 							sst_topology_apply_limiter(sc);
 						}
 					}
@@ -1472,7 +1478,11 @@ sst_chan_trigger_unlocked(struct sst_pcm_channel *ch, int go)
 				hpf_w = sst_topology_find_widget(sc,
 				    "HPF1.0");
 				if (hpf_w != NULL) {
+					/* Published under sc_mtx: topology
+					 * snapshots stream_id with it held */
+					mtx_lock(&sc->sc_mtx);
 					hpf_w->stream_id = ch->stream_id;
+					mtx_unlock(&sc->sc_mtx);
 					sst_topology_apply_biquad(sc);
 				}
 			}
@@ -1485,7 +1495,9 @@ sst_chan_trigger_unlocked(struct sst_pcm_channel *ch, int go)
 				    "LIMITER1.0");
 				if (lim_w != NULL &&
 				    sc->pcm.limiter_threshold > 0) {
+					mtx_lock(&sc->sc_mtx);
 					lim_w->stream_id = ch->stream_id;
+					mtx_unlock(&sc->sc_mtx);
 					sst_topology_apply_limiter(sc);
 				}
 			}
