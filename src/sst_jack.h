@@ -36,10 +36,6 @@ enum sst_jack_state {
 };
 
 /*
- * GPIO Configuration for Realtek ALC3263
- * GPIO pins vary by platform - these are for Dell XPS 13 9343
- */
-/*
  * Jack detection uses the codec pin-sense verb, not GPIO emulation
  * through the SST SHIM CSR (CSR bits 8-11 are DSP STALL/SDPM: writing
  * them from a jack event stalls the DSP core).  These are codec node
@@ -47,8 +43,6 @@ enum sst_jack_state {
  */
 #define SST_JACK_NID_HP		0x21	/* RT286 headphone pin */
 #define SST_JACK_NID_MIC	0x18	/* RT286 mic pin */
-
-
 
 /*
  * Jack Detection Methods
