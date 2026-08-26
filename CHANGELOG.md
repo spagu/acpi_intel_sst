@@ -5,6 +5,137 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.65.0] - 2026-08-26
+
+Audit release: a full source audit (see `audit/` task files) found 68
+issues; this release fixes the critical and high severity ones plus most
+of the medium/low findings. **No functional features were removed**, but
+two behaviours changed on purpose (see Changed).
+
+### Fixed
+
+#### Attach / detach / power (critical)
+
+- **detach on a half-initialized device no longer panics.** Every
+  attach failure path ran the full detach, which destroyed IPC mutexes
+  and a condition variable that were never created and wrote DMA
+  registers through a NULL `mem_res`. All `*_fini()` routines are now
+  idempotent and both front-ends share one `sst_detach_common()`.
+- **shared IRQ can no longer fire into uninitialized state.** In PCI
+  mode the handler was installed *before* `sst_ipc_init()`; the ISR now
+  also checks the IPC and DMA init flags before touching either.
+- **detach order fixed:** IPC interrupts are masked and the handler is
+  torn down *before* the locks and LLI rings it uses are destroyed.
+- **detach powers the DSP down** (`sst_wpt_power_down()`), restoring
+  clock gating instead of leaving DCLCGE disabled.
+- **suspend/resume:** skipped entirely when the DSP never booted (dead
+  BAR0 / diagnostic attach), and the WPT power sequence now always runs
+  — ACPI D3/D0 alone leaves SRAM power-gated, so the firmware written on
+  resume was silently losing bytes.
+- `sst_reset()` / `sst_init()` report DSP stall/reset timeouts instead of
+  discarding them; attach aborts if the core cannot be stalled before
+  the firmware is written.
+
+#### DMA (critical)
+
+- **`dma_channel_enable(ch, false)` never disabled a channel** — the
+  channel-enable bit was set unconditionally, so every stop/free left
+  hardware walking a freed LLI ring.
+- Channels in `PAUSED` (still enabled) are stopped before their
+  descriptor ring is freed or rebuilt.
+- The DMA ISR ignores uninitialized and power-gated (`0xFFFFFFFF`)
+  status, and only services channels that are actually allocated.
+- `sst_dma_get_position()` no longer divides by zero on an unconfigured
+  channel; transfer widths and block sizes are validated.
+
+#### Firmware / IPC (critical)
+
+- **Overflow-safe firmware parsing.** `offset + size` comparisons were
+  done in 32-bit arithmetic and wrapped, so a corrupt image could pass
+  the bounds check and write far outside BAR0.
+- FW_READY mailbox windows must now fit entirely inside DRAM.
+- **IPC late-reply race:** the ISR copied the mailbox outside the lock
+  and accepted the reply regardless of state, so a reply to a command
+  that had already timed out completed the *next* command with the wrong
+  status and payload. The copy and the state change now happen under
+  `ipc.lock` and only while a command is pending.
+- A timed-out command that leaves `BUSY` set is recovered instead of
+  failing every later command with `EBUSY`; FW_READY now wakes waiters
+  immediately.
+- Long boot/ready polling loops use `pause_sbt()` instead of burning a
+  CPU in `DELAY()` for up to five seconds.
+
+#### PCM / mixer (critical)
+
+- **No more sleeping with a mutex held.** `channel_trigger` issued IPC
+  (`cv_timedwait`) and codec I2C delays with the sound(4) channel lock
+  held; the trigger body now runs unlocked, serialized by a per-channel
+  `sx` lock. The mixer handler no longer sends IPC at all — it caches
+  the value and a taskqueue worker applies it.
+- The position callout no longer does stall recovery, volume flushes or
+  volume ramps in softclock context; all of that moved to a taskqueue
+  worker, and the callout is drained before a stream is freed.
+- Playback and capture keep separate deferred-volume flags (a capture
+  channel could swallow a pending playback update).
+- Register offsets returned by the DSP (position, peak meter, volume)
+  are validated against the BAR size and alignment before `bus_read_4()`.
+- `pcm_unregister()` is called exactly once (by the child detach);
+  `pcm_addchan()` and `mixer_init()` failures are checked and unwound.
+- Only our own stale `pcm` children are deleted, not every child of the
+  device.
+
+#### Jack / codec (critical)
+
+- **Jack "GPIO" writes were hitting SHIM CSR bits 8-11**, which are the
+  DSP STALL and SSP power-down controls — inserting headphones stalled
+  the DSP core. Detection and muting now go through the codec pin-sense
+  verb and the output amplifiers.
+- The jack poll callout recursed on its own (non-recursive) mutex, which
+  panicked on the first tick with jack detection enabled; codec I2C work
+  runs in a taskqueue thread now.
+- Codec I2C transactions are serialized by a dedicated mutex (playback
+  and capture triggers could interleave verbs), the microphone path is
+  refcounted so a second capture stream is not silenced, the MMIO window
+  is unmapped on a failed init, and a stuck TX FIFO is reported instead
+  of being treated as success.
+
+#### Platform / diagnostics
+
+- **Removed the unconditional RCBA Function Disable write.** The
+  hard-coded "BIOS default" `0x00368011` came from one XPS 13 9343; on
+  another board it can disable SATA, SMBus or xHCI. It also re-disabled
+  HDA immediately after the driver had enabled it.
+- Firmware module bookkeeping is cleared on unload so a different image
+  cannot inherit stale entry points.
+- The debug tunable is clamped to a valid verbosity range.
+
+### Changed
+
+- **Advertised PCM formats reduced to 48 kHz / S16_LE / 2 channels.**
+  The caps claimed 8 k-192 kHz and S16/S24/S32 while the codec and SSP
+  were unconditionally programmed for 48 kHz/16-bit, so any other rate
+  played at the wrong pitch or as noise.
+- Mixer volume, EQ preset and limiter changes are applied
+  asynchronously (within ~100 ms) instead of inline.
+- `MODULE_DEPEND(..., sound, ...)` added — the module now refuses to
+  load against an incompatible sound(4) instead of failing with
+  unresolved symbols.
+- `make install` is the stock `bsd.kmod.mk` target again (it also runs
+  `kldxref`); a missing `VERSION` file is now a clear build error.
+- Dead code removed: `sst_pcm_intr()`, duplicated SRAM diagnostics.
+
+### Compatibility
+
+- **FreeBSD 15.0+ and 16-CURRENT.** All sound(4), newbus and bus_dma
+  KPIs used by the driver match stable/15 and main as of 2026-08-26.
+- **FreeBSD 14.x is not supported** and the port now refuses to build
+  there: the driver requires `pcm_init()`/`pcm_register()` (reverted
+  from stable/14), `bus_attach_children()` and `DEVICE_UNIT_ANY`.
+- On 16-CURRENT `/dev/dsp*` is created with group `audio` (gid 43) —
+  documented in README, man page and pkg-message.
+- CI builds the module on 15.1-RELEASE and a 16.0-CURRENT snapshot;
+  previously nothing in the pipeline ever compiled the driver.
+
 ## [0.64.4] - 2026-06-15
 
 ### Fixed
