@@ -272,30 +272,66 @@ sst_enable_sram_direct(device_t dev)
 		return (0);
 	}
 
-	/* Hardware didn't process our writes (kernel limitation) */
-	device_printf(dev, "\n");
-	device_printf(dev, "  *** SRAM REQUIRES MANUAL ACTIVATION ***\n");
-	device_printf(dev, "  Kernel writes reach hardware but don't trigger the SRAM state machine.\n");
-	device_printf(dev, "  Manual dd via /dev/mem works. Run BEFORE loading driver:\n");
-	device_printf(dev, "\n");
-	device_printf(dev, "  # Activate SRAM:\n");
-	device_printf(dev, "  printf '\\x00\\x04\\x80\\x84' | dd of=/dev/mem bs=1 seek=$((0xdf8fb000)) conv=notrunc 2>/dev/null\n");
-	device_printf(dev, "  sleep 0.1\n");
-	device_printf(dev, "  printf '\\x1f\\x04\\x80\\x84' | dd of=/dev/mem bs=1 seek=$((0xdf8fb000)) conv=notrunc 2>/dev/null\n");
-	device_printf(dev, "  sleep 0.1\n");
-	device_printf(dev, "  # Then load driver:\n");
-	device_printf(dev, "  kldload acpi_intel_sst\n");
-	device_printf(dev, "\n");
+	/*
+	 * Hardware didn't process our writes (kernel limitation).
+	 * Print the manual-activation recipe using THIS machine's actual
+	 * BAR0 physical address -- it varies by board/firmware, so a
+	 * baked-in constant here would tell the operator to scribble
+	 * over unrelated physical memory on any other machine.
+	 */
+	{
+		unsigned long seek_addr =
+		    (unsigned long)phys_addr + SST_SRAM_CTRL_OFFSET;
+
+		device_printf(dev, "\n");
+		device_printf(dev, "  *** SRAM REQUIRES MANUAL ACTIVATION ***\n");
+		device_printf(dev, "  Kernel writes reach hardware but don't trigger the SRAM state machine.\n");
+		device_printf(dev, "  Manual dd via /dev/mem works. Run BEFORE loading driver:\n");
+		device_printf(dev, "\n");
+		device_printf(dev, "  # Activate SRAM (BAR0=0x%lx, SHIM CSR @ 0x%lx):\n",
+		    (unsigned long)phys_addr, seek_addr);
+		device_printf(dev, "  printf '\\x00\\x04\\x80\\x84' | dd of=/dev/mem bs=1 seek=%lu conv=notrunc 2>/dev/null\n",
+		    seek_addr);
+		device_printf(dev, "  sleep 0.1\n");
+		device_printf(dev, "  printf '\\x1f\\x04\\x80\\x84' | dd of=/dev/mem bs=1 seek=%lu conv=notrunc 2>/dev/null\n",
+		    seek_addr);
+		device_printf(dev, "  sleep 0.1\n");
+		device_printf(dev, "  # Then load driver:\n");
+		device_printf(dev, "  kldload acpi_intel_sst\n");
+		device_printf(dev, "\n");
+	}
 
 	pmap_unmapdev(bar0_va, 0x100000);
 	return (EIO);
 }
 
+/*
+ * sst_enable_sram - best-effort recovery kick for a wedged DSP core.
+ *
+ * IMPORTANT: this does NOT gate SRAM power.  SST_SRAM_CTRL_OFFSET
+ * (0xFB000) is the SHIM base, not a dedicated "SRAM control"
+ * register -- it aliases the SHIM CSR.  Real SRAM power gating is
+ * the xSRAMPGE bitfields in VDRTCTL0 (PCI extended config), handled
+ * by sst_wpt_power_up() in sst_power.c; that path must already have
+ * run before this function is called.
+ *
+ * A previous version of this function did a hand-rolled
+ * read-modify-write of the whole CSR with a 0x1F mask, which
+ * unintentionally toggled SST_CSR_RST (DSP reset, bit 1) together
+ * with SBCS0/SBCS1 (SSP bank clock select, bits 2-3) and two
+ * undocumented bits -- and then busy-waited on DELAY() for close to
+ * two seconds total.  It "worked" only because
+ * sst_dsp_set_regs_defaults() unconditionally overwrites CSR right
+ * after.  Use the documented, single-purpose sst_dsp_reset() helper
+ * instead, and pause() (sleepable, scheduler-friendly) rather than
+ * DELAY() (busy-wait) since this runs from attach/resume thread
+ * context.
+ */
 int
 sst_enable_sram(struct sst_softc *sc)
 {
-	uint32_t ctrl, ctrl_after, test_val;
-	int retries, write_attempts;
+	uint32_t test_val;
+	int retries;
 
 	if (sc->mem_res == NULL) {
 		device_printf(sc->dev, "SRAM Enable: BAR0 not allocated\n");
@@ -312,77 +348,36 @@ sst_enable_sram(struct sst_softc *sc)
 		return (0);
 	}
 
-	/* Read current control register value */
-	ctrl = bus_read_4(sc->mem_res, SST_SRAM_CTRL_OFFSET);
-	sst_dbg(sc, SST_DBG_OPS, "  SRAM_CTRL (0x%x) before: 0x%08x\n",
-	    SST_SRAM_CTRL_OFFSET, ctrl);
+	sst_dbg(sc, SST_DBG_OPS, "  SHIM CSR before: 0x%08x\n",
+	    bus_read_4(sc->mem_res, SST_SRAM_CTRL_OFFSET));
 
-	/*
-	 * Two-step SRAM activation (discovered via manual /dev/mem testing):
-	 * 1. CLEAR enable bits (bits 0-4) → hardware enters reset/idle
-	 * 2. Wait 100ms
-	 * 3. SET enable bits → hardware transitions to active
-	 * When working: SRAM_CTRL changes from 0x8480041f to 0x78663178
-	 */
+	/* Pulse the documented DSP reset bit a few times, sleeping
+	 * (not busy-waiting) between transitions. */
+	for (retries = 0; retries < 3; retries++) {
+		sst_dbg(sc, SST_DBG_TRACE,
+		    "  DSP reset pulse attempt %d...\n", retries + 1);
 
-	/* Phase A: Clear enable bits first */
-	ctrl = bus_read_4(sc->mem_res, SST_SRAM_CTRL_OFFSET);
-	ctrl &= ~SST_SRAM_CTRL_ENABLE;
-	bus_write_4(sc->mem_res, SST_SRAM_CTRL_OFFSET, ctrl);
-	DELAY(100000);  /* 100ms */
+		sst_dsp_reset(sc, true);
+		pause("sstsrst", hz / 10);	/* 100ms */
 
-	ctrl_after = bus_read_4(sc->mem_res, SST_SRAM_CTRL_OFFSET);
-	sst_dbg(sc, SST_DBG_TRACE, "  After clear: SRAM_CTRL = 0x%08x\n", ctrl_after);
+		sst_dsp_reset(sc, false);
+		pause("sstsrst", hz / 5);	/* 200ms */
 
-	/* Phase B: Set enable bits */
-	ctrl = bus_read_4(sc->mem_res, SST_SRAM_CTRL_OFFSET);
-	ctrl |= SST_SRAM_CTRL_ENABLE;
-	bus_write_4(sc->mem_res, SST_SRAM_CTRL_OFFSET, ctrl);
-	DELAY(100000);  /* 100ms */
-
-	ctrl_after = bus_read_4(sc->mem_res, SST_SRAM_CTRL_OFFSET);
-	sst_dbg(sc, SST_DBG_TRACE, "  After set: SRAM_CTRL = 0x%08x\n", ctrl_after);
-
-	/* Check if SRAM is now accessible */
-	for (retries = 0; retries < 20; retries++) {
 		test_val = bus_read_4(sc->mem_res, 0);
-		if (test_val != SST_INVALID_REG_VALUE) {
-			sst_dbg(sc, SST_DBG_LIFE, "  SRAM enabled! IRAM[0]=0x%08x CTRL=0x%08x\n",
-			    test_val, bus_read_4(sc->mem_res, SST_SRAM_CTRL_OFFSET));
-			return (0);
-		}
-		DELAY(10000);
-	}
-
-	/* Retry: try multiple toggle cycles */
-	for (write_attempts = 0; write_attempts < 3; write_attempts++) {
-		sst_dbg(sc, SST_DBG_TRACE, "  Toggle attempt %d...\n", write_attempts + 1);
-
-		/* Clear */
-		ctrl = bus_read_4(sc->mem_res, SST_SRAM_CTRL_OFFSET);
-		ctrl &= ~SST_SRAM_CTRL_ENABLE;
-		bus_write_4(sc->mem_res, SST_SRAM_CTRL_OFFSET, ctrl);
-		DELAY(200000);
-
-		/* Set */
-		ctrl = bus_read_4(sc->mem_res, SST_SRAM_CTRL_OFFSET);
-		ctrl |= SST_SRAM_CTRL_ENABLE;
-		bus_write_4(sc->mem_res, SST_SRAM_CTRL_OFFSET, ctrl);
-		DELAY(200000);
-
-		ctrl_after = bus_read_4(sc->mem_res, SST_SRAM_CTRL_OFFSET);
-		test_val = bus_read_4(sc->mem_res, 0);
-		sst_dbg(sc, SST_DBG_TRACE, "  Attempt %d: CTRL=0x%08x IRAM[0]=0x%08x\n",
-		    write_attempts + 1, ctrl_after, test_val);
+		sst_dbg(sc, SST_DBG_TRACE,
+		    "  Attempt %d: SHIM CSR=0x%08x IRAM[0]=0x%08x\n",
+		    retries + 1, bus_read_4(sc->mem_res, SST_SRAM_CTRL_OFFSET),
+		    test_val);
 
 		if (test_val != SST_INVALID_REG_VALUE) {
-			sst_dbg(sc, SST_DBG_LIFE, "  SRAM enabled after toggle!\n");
+			sst_dbg(sc, SST_DBG_LIFE,
+			    "  SRAM enabled after reset pulse!\n");
 			return (0);
 		}
 	}
 
 	device_printf(sc->dev, "  SRAM enable FAILED\n");
-	sst_dbg(sc, SST_DBG_TRACE, "  Final SRAM_CTRL: 0x%08x\n",
+	sst_dbg(sc, SST_DBG_TRACE, "  Final SHIM CSR: 0x%08x\n",
 	    bus_read_4(sc->mem_res, SST_SRAM_CTRL_OFFSET));
 
 	return (EIO);

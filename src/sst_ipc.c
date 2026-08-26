@@ -12,6 +12,8 @@
 #include <sys/kernel.h>
 #include <sys/bus.h>
 #include <sys/systm.h>
+#include <sys/time.h>
+#include <sys/callout.h>
 #include <sys/lock.h>
 #include <sys/mutex.h>
 #include <sys/condvar.h>

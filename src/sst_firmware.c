@@ -13,6 +13,8 @@
 #include <sys/bus.h>
 #include <sys/firmware.h>
 #include <sys/systm.h>
+#include <sys/time.h>
+#include <sys/callout.h>
 
 #include <machine/bus.h>
 

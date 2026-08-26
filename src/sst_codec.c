@@ -515,6 +515,12 @@ sst_codec_init(struct sst_softc *sc)
 	uint32_t vendor_id;
 	int error, i;
 
+	/* Re-init without a preceding fini would clobber a live mutex */
+	if (codec->lock_valid) {
+		mtx_destroy(&codec->i2c_lock);
+		codec->lock_valid = false;
+	}
+
 	memset(codec, 0, sizeof(*codec));
 
 	mtx_init(&codec->i2c_lock, "sst_i2c", NULL, MTX_DEF);
