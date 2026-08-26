@@ -23,71 +23,38 @@
 #include "sst_jack.h"
 
 /*
- * Read GPIO pin state
- */
-static int
-sst_jack_gpio_read(struct sst_softc *sc, int gpio)
-{
-	uint32_t val;
-
-	/*
-	 * GPIO access via codec registers
-	 * For Realtek ALC3263, GPIO is accessed through HDA verbs
-	 * In SST mode, we use IPC to communicate with DSP which
-	 * controls the codec
-	 */
-
-	/* Read GPIO data register from SHIM area */
-	val = sst_shim_read(sc, SST_SHIM_CSR);
-
-	/* Extract GPIO bit */
-	return ((val >> (gpio + 8)) & 1);
-}
-
-/*
- * Write GPIO pin state
- */
-static void
-sst_jack_gpio_write(struct sst_softc *sc, int gpio, int value)
-{
-	uint32_t mask, val;
-
-	mask = 1U << (gpio + 8);
-	val = value ? mask : 0;
-
-	sst_shim_update_bits(sc, SST_SHIM_CSR, mask, val);
-}
-
-/*
  * Check single jack state
+ *
+ * Presence comes from the codec pin-sense verb.  The previous
+ * implementation read/wrote SHIM CSR bits 8-11 as if they were GPIOs;
+ * those bits are DSP STALL and SSP power-down controls, so jack
+ * activity stalled the DSP core.
+ *
+ * Must be called WITHOUT j->lock held: codec access is I2C and takes
+ * the codec lock plus millisecond-scale DELAYs.
  */
 static enum sst_jack_state
 sst_jack_check_one(struct sst_softc *sc, struct sst_jack_info *jack)
 {
-	int gpio_val;
-	enum sst_jack_state new_state;
+	bool present;
 
-	gpio_val = sst_jack_gpio_read(sc, jack->gpio);
+	if (sst_codec_pin_present(sc, jack->nid, &present) != 0)
+		return (jack->state);	/* Codec unavailable: keep state */
 
 	/* Apply inversion if needed */
 	if (jack->inverted)
-		gpio_val = !gpio_val;
+		present = !present;
 
-	new_state = gpio_val ? SST_JACK_INSERTED : SST_JACK_REMOVED;
-
-	return (new_state);
+	return (present ? SST_JACK_INSERTED : SST_JACK_REMOVED);
 }
 
 /*
  * Update jack state with debouncing
  */
 static bool
-sst_jack_update_one(struct sst_softc *sc, struct sst_jack_info *jack)
+sst_jack_update_one(struct sst_jack_info *jack, enum sst_jack_state new_state)
 {
-	enum sst_jack_state new_state;
 	bool changed = false;
-
-	new_state = sst_jack_check_one(sc, jack);
 
 	if (new_state == jack->state) {
 		/* State stable, reset debounce */
@@ -118,48 +85,51 @@ static void
 sst_jack_handle_change(struct sst_softc *sc, struct sst_jack_info *jack)
 {
 	struct sst_jack *j = &sc->jack;
+	sst_jack_callback_t cb;
+	void *cbArg;
+	enum sst_jack_state state;
+	uint32_t type;
 	const char *typeName;
 	const char *stateName;
 
-	/* Get type name */
-	switch (jack->type) {
+	/*
+	 * Snapshot everything the routing/callback needs under the lock;
+	 * the codec call below must run unlocked.
+	 */
+	mtx_lock(&j->lock);
+	type = jack->type;
+	state = jack->state;
+	cb = j->callback;
+	cbArg = j->callback_arg;
+
+	switch (type) {
 	case SST_JACK_HEADPHONE:
 		typeName = "Headphone";
-		if (jack->state == SST_JACK_INSERTED)
+		if (state == SST_JACK_INSERTED)
 			j->hp_insertions++;
 		break;
 	case SST_JACK_MICROPHONE:
 		typeName = "Microphone";
-		if (jack->state == SST_JACK_INSERTED)
+		if (state == SST_JACK_INSERTED)
 			j->mic_insertions++;
 		break;
 	default:
 		typeName = "Unknown";
 		break;
 	}
+	mtx_unlock(&j->lock);
 
-	/* Get state name */
-	stateName = (jack->state == SST_JACK_INSERTED) ? "inserted" : "removed";
+	stateName = (state == SST_JACK_INSERTED) ? "inserted" : "removed";
 
 	sst_dbg(sc, SST_DBG_LIFE, "Jack: %s %s\n", typeName, stateName);
 
-	/* Handle audio routing */
-	if (jack->type == SST_JACK_HEADPHONE) {
-		if (jack->state == SST_JACK_INSERTED) {
-			/* Mute speakers, unmute headphones */
-			sst_jack_gpio_write(sc, SST_GPIO_SPEAKER_MUTE, 1);
-			sst_jack_gpio_write(sc, SST_GPIO_HP_MUTE, 0);
-		} else {
-			/* Unmute speakers, mute headphones */
-			sst_jack_gpio_write(sc, SST_GPIO_HP_MUTE, 1);
-			sst_jack_gpio_write(sc, SST_GPIO_SPEAKER_MUTE, 0);
-		}
-	}
+	/* Handle audio routing through the codec output amplifiers */
+	if (type == SST_JACK_HEADPHONE)
+		sst_codec_set_hp_route(sc, state == SST_JACK_INSERTED);
 
 	/* Call user callback */
-	if (j->callback != NULL) {
-		j->callback(j->callback_arg, jack->type, jack->state);
-	}
+	if (cb != NULL)
+		cb(cbArg, type, state);
 }
 
 /*
@@ -170,39 +140,57 @@ sst_jack_poll_timer(void *arg)
 {
 	struct sst_softc *sc = arg;
 	struct sst_jack *j = &sc->jack;
+
+	/*
+	 * Runs with j->lock already held (callout_init_mtx).  Do NOT
+	 * lock again and do NOT touch the codec here: reading pin sense
+	 * is an I2C transaction with millisecond DELAYs, which must not
+	 * run in softclock context.  Defer to a taskqueue thread.
+	 */
+	mtx_assert(&j->lock, MA_OWNED);
+
+	if (!j->enabled || !j->polling)
+		return;
+
+	j->poll_count++;
+	taskqueue_enqueue(taskqueue_thread, &j->poll_task);
+
+	callout_reset(&j->poll_callout,
+	    hz * SST_JACK_POLL_INTERVAL_MS / 1000,
+	    sst_jack_poll_timer, sc);
+}
+
+/*
+ * Deferred poll worker - runs in a taskqueue thread, may block
+ */
+static void
+sst_jack_poll_task(void *arg, int pending __unused)
+{
+	struct sst_softc *sc = arg;
+	struct sst_jack *j = &sc->jack;
+	enum sst_jack_state hp_state, mic_state;
 	bool hp_changed, mic_changed;
 
 	mtx_lock(&j->lock);
-
 	if (!j->enabled || !j->polling) {
 		mtx_unlock(&j->lock);
 		return;
 	}
-
-	j->poll_count++;
-
-	/* Check headphone jack */
-	hp_changed = sst_jack_update_one(sc, &j->headphone);
-
-	/* Check microphone jack */
-	mic_changed = sst_jack_update_one(sc, &j->microphone);
-
 	mtx_unlock(&j->lock);
 
-	/* Handle changes outside lock */
+	/* Codec reads happen without j->lock held */
+	hp_state = sst_jack_check_one(sc, &j->headphone);
+	mic_state = sst_jack_check_one(sc, &j->microphone);
+
+	mtx_lock(&j->lock);
+	hp_changed = sst_jack_update_one(&j->headphone, hp_state);
+	mic_changed = sst_jack_update_one(&j->microphone, mic_state);
+	mtx_unlock(&j->lock);
+
 	if (hp_changed)
 		sst_jack_handle_change(sc, &j->headphone);
 	if (mic_changed)
 		sst_jack_handle_change(sc, &j->microphone);
-
-	/* Reschedule timer */
-	mtx_lock(&j->lock);
-	if (j->enabled && j->polling) {
-		callout_reset(&j->poll_callout,
-		    hz * SST_JACK_POLL_INTERVAL_MS / 1000,
-		    sst_jack_poll_timer, sc);
-	}
-	mtx_unlock(&j->lock);
 }
 
 /*
@@ -218,19 +206,20 @@ sst_jack_init(struct sst_softc *sc)
 
 	mtx_init(&j->lock, "sst_jack", NULL, MTX_DEF);
 	callout_init_mtx(&j->poll_callout, &j->lock, 0);
+	TASK_INIT(&j->poll_task, 0, sst_jack_poll_task, sc);
 
 	/* Configure headphone jack */
 	j->headphone.type = SST_JACK_HEADPHONE;
 	j->headphone.state = SST_JACK_REMOVED;
-	j->headphone.gpio = SST_GPIO_HP_DETECT;
-	j->headphone.inverted = true;	/* Active low on most platforms */
+	j->headphone.nid = SST_JACK_NID_HP;
+	j->headphone.inverted = false;	/* Pin sense: 1 = jack present */
 	j->headphone.debounce_cnt = 0;
 
 	/* Configure microphone jack */
 	j->microphone.type = SST_JACK_MICROPHONE;
 	j->microphone.state = SST_JACK_REMOVED;
-	j->microphone.gpio = SST_GPIO_MIC_DETECT;
-	j->microphone.inverted = true;
+	j->microphone.nid = SST_JACK_NID_MIC;
+	j->microphone.inverted = false;
 	j->microphone.debounce_cnt = 0;
 
 	/* Default to polling method */
@@ -264,6 +253,7 @@ sst_jack_fini(struct sst_softc *sc)
 	sst_jack_disable(sc);
 
 	callout_drain(&j->poll_callout);
+	taskqueue_drain(taskqueue_thread, &j->poll_task);
 	mtx_destroy(&j->lock);
 
 	j->initialized = false;
@@ -330,8 +320,9 @@ sst_jack_disable(struct sst_softc *sc)
 
 	mtx_unlock(&j->lock);
 
-	/* Stop polling timer */
+	/* Stop polling timer, then wait for any in-flight worker */
 	callout_drain(&j->poll_callout);
+	taskqueue_drain(taskqueue_thread, &j->poll_task);
 
 	sst_dbg(sc, SST_DBG_OPS, "Jack detection disabled\n");
 }
@@ -395,11 +386,11 @@ sst_jack_poll(struct sst_softc *sc)
 	if (!j->initialized)
 		return;
 
-	mtx_lock(&j->lock);
-
-	/* Direct read without debouncing */
+	/* Codec (I2C) reads must not run under the jack lock */
 	hp_state = sst_jack_check_one(sc, &j->headphone);
 	mic_state = sst_jack_check_one(sc, &j->microphone);
+
+	mtx_lock(&j->lock);
 
 	if (hp_state != j->headphone.state) {
 		j->headphone.state = hp_state;

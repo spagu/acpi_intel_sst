@@ -13,6 +13,8 @@
 
 #include <sys/types.h>
 #include <sys/callout.h>
+#include <sys/sx.h>
+#include <sys/taskqueue.h>
 
 #include "sst_topology.h"
 
@@ -48,6 +50,9 @@ enum sst_pcm_state {
 	SST_PCM_STATE_PAUSED
 };
 
+/* Mixer SET_VOLUME rate limit: at most one IPC burst per 100 ms */
+#define SST_VOL_RATE_TICKS	(hz / 10)
+
 /*
  * PCM Channel Info
  */
@@ -69,6 +74,16 @@ struct sst_pcm_channel {
 	uint32_t		blk_size;	/* Block size */
 	uint32_t		blk_count;	/* Number of blocks */
 	volatile uint32_t	ptr;		/* Current position */
+
+	/* Serializes the trigger body, which runs without CHN_LOCK */
+	struct sx		trig_sx;
+	bool			trig_sx_valid;
+
+	/* Deferred work: IPC must not run in callout (softclock) context */
+	struct task		work_task;
+	bool			work_task_valid;
+	bool			need_recover;	/* Stall recovery requested */
+	bool			need_vol_flush;	/* Deferred volume pending */
 
 	/* Hardware resources */
 	int			ssp_port;	/* SSP port (0 or 1) */
@@ -155,7 +170,10 @@ struct sst_pcm {
 
 	/* Volume rate limiting (prevent DSP IPC flood) */
 	int			vol_ticks;	/* tick count of last SET_VOLUME */
-	bool			vol_pending;	/* deferred volume update waiting */
+	bool			vol_pending;	/* deferred playback volume */
+	bool			cap_vol_pending; /* deferred capture volume */
+	bool			eq_pending;	/* deferred EQ preset apply */
+	bool			lim_pending;	/* deferred limiter apply */
 
 	/* Volume ramp-in state */
 	int			ramp_ms;	/* Ramp duration ms (0=off, default 50) */
@@ -166,6 +184,8 @@ struct sst_pcm {
 	bool			ramp_active;	/* Ramp in progress */
 	bool			after_resume;	/* Next start is after S3 resume */
 	struct callout		ramp_callout;	/* Ramp timer */
+	struct task		ramp_task;	/* Ramp IPC worker */
+	bool			ramp_task_valid;
 
 	/* Telemetry (read on-demand via sysctl handlers) */
 	uint32_t		peak_left;	/* Raw Q1.31 peak level, left */
@@ -176,6 +196,7 @@ struct sst_pcm {
 
 	/* State */
 	bool			registered;	/* PCM device registered */
+	bool			initialized;	/* sst_pcm_init() done */
 };
 
 /* Forward declaration */
@@ -192,6 +213,5 @@ int	sst_pcm_register(struct sst_softc *sc);
 void	sst_pcm_unregister(struct sst_softc *sc);
 
 /* Called from DMA completion */
-void	sst_pcm_intr(struct sst_softc *sc, int dir);
 
 #endif /* _SST_PCM_H_ */

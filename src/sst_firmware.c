@@ -96,7 +96,9 @@ sst_fw_load_block(struct sst_softc *sc, const struct sst_block_header *blk,
 		return (EINVAL);
 	}
 
-	if (blk->ram_offset + blk->size > max_size) {
+	/* Overflow-safe: (ram_offset + size) may wrap in 32 bits */
+	if (blk->ram_offset > max_size ||
+	    blk->size > max_size - blk->ram_offset) {
 		device_printf(sc->dev,
 		    "Block exceeds %s: off=0x%x, size=0x%x, max=0x%zx\n",
 		    type_name, blk->ram_offset, blk->size, max_size);
@@ -234,7 +236,8 @@ sst_fw_load_module(struct sst_softc *sc, const uint8_t *data, size_t size,
 	/* Load each block - starting from after module header */
 	offset = sizeof(struct sst_module_header);
 	for (i = 0; i < mod->blocks; i++) {
-		if (offset + sizeof(struct sst_block_header) > total_size) {
+		if (offset > total_size ||
+		    sizeof(struct sst_block_header) > total_size - offset) {
 			device_printf(sc->dev,
 			    "Block %u header exceeds module\n", i);
 			return (EINVAL);
@@ -243,7 +246,8 @@ sst_fw_load_module(struct sst_softc *sc, const uint8_t *data, size_t size,
 		blk = (const struct sst_block_header *)(data + offset);
 		offset += sizeof(struct sst_block_header);
 
-		if (offset + blk->size > total_size) {
+		/* Overflow-safe form of (offset + blk->size > total_size) */
+		if (blk->size > total_size - offset) {
 			device_printf(sc->dev,
 			    "Block %u data exceeds module: offset=%u"
 			    " blk_size=%u total=%zu\n",
@@ -872,8 +876,15 @@ sst_fw_boot(struct sst_softc *sc)
 		    fw_ready.fw_info_size);
 
 		/* Update IPC mailbox configuration if offsets look valid */
-		if (fw_ready.inbox_offset < SST_DRAM_SIZE &&
-		    fw_ready.outbox_offset < SST_DRAM_SIZE &&
+		/*
+		 * Whole mailbox windows must fit inside DRAM: the host
+		 * writes up to SST_MBOX_SIZE_IN bytes at outbox_offset and
+		 * reads up to SST_IPC_REPLY_MAX bytes at inbox_offset.
+		 */
+		if (fw_ready.outbox_offset < SST_DRAM_SIZE &&
+		    fw_ready.inbox_offset < SST_DRAM_SIZE &&
+		    SST_MBOX_SIZE_IN <= SST_DRAM_SIZE - fw_ready.outbox_offset &&
+		    SST_IPC_REPLY_MAX <= SST_DRAM_SIZE - fw_ready.inbox_offset &&
 		    fw_ready.inbox_size > 0 &&
 		    fw_ready.outbox_size > 0) {
 			/*

@@ -66,11 +66,15 @@ dma_channel_enable(struct sst_softc *sc, int ch, bool enable)
 {
 	uint32_t val;
 
-	val = (1 << ch);		/* Channel bit */
-	val |= (1 << (ch + 8));	/* Write enable bit */
-
+	/*
+	 * DW-DMAC CHEN: bits [7:0] are the channel enable bits, bits [15:8]
+	 * are the matching write-enable bits.  Set the write-enable bit
+	 * always; set the channel bit only when enabling.  (Setting it
+	 * unconditionally would make "disable" a no-op.)
+	 */
+	val = 1U << (ch + 8);		/* Write enable bit */
 	if (enable)
-		val |= (1 << ch);
+		val |= 1U << ch;	/* Channel bit */
 
 	dma_write(sc, DMA_CHEN, val);
 }
@@ -299,9 +303,14 @@ sst_dma_fini(struct sst_softc *sc)
 {
 	int i;
 
-	/* Stop all channels */
+	/* Idempotent: attach fail paths call detach before init */
+	if (!sc->dma.initialized)
+		return;
+
+	/* Stop all channels (PAUSED is still enabled) */
 	for (i = 0; i < SST_DMA_CHANNELS; i++) {
-		if (sc->dma.ch[i].state == SST_DMA_STATE_RUNNING)
+		if (sc->dma.ch[i].state == SST_DMA_STATE_RUNNING ||
+		    sc->dma.ch[i].state == SST_DMA_STATE_PAUSED)
 			sst_dma_stop(sc, i);
 		dma_free_lli(sc, i);
 	}
@@ -342,7 +351,9 @@ sst_dma_free(struct sst_softc *sc, int ch)
 	if (ch < 0 || ch >= SST_DMA_CHANNELS)
 		return;
 
-	if (sc->dma.ch[ch].state == SST_DMA_STATE_RUNNING)
+	/* A PAUSED channel is still enabled and walking the LLI ring */
+	if (sc->dma.ch[ch].state == SST_DMA_STATE_RUNNING ||
+	    sc->dma.ch[ch].state == SST_DMA_STATE_PAUSED)
 		sst_dma_stop(sc, ch);
 
 	dma_free_lli(sc, ch);
@@ -375,9 +386,11 @@ sst_dma_configure(struct sst_softc *sc, int ch, struct sst_dma_config *config)
 
 	dch = &sc->dma.ch[ch];
 
-	if (dch->state == SST_DMA_STATE_RUNNING) {
-		device_printf(sc->dev, "DMA%d: Cannot configure while running\n",
-			      ch);
+	if (dch->state == SST_DMA_STATE_RUNNING ||
+	    dch->state == SST_DMA_STATE_PAUSED) {
+		device_printf(sc->dev, "DMA%d: Cannot configure while %s\n",
+		    ch, dch->state == SST_DMA_STATE_RUNNING ? "running" :
+		    "paused");
 		return (EBUSY);
 	}
 
@@ -658,11 +671,22 @@ sst_dma_intr(struct sst_softc *sc)
 	uint32_t status_block, status_tfr, status_err;
 	int i;
 
+	/* Shared IRQ may fire before init / after fini */
+	if (!sc->dma.initialized)
+		return;
+
 	status_block = dma_read(sc, DMA_STATUS_BLOCK);
 	status_tfr = dma_read(sc, DMA_STATUS_TFR);
 	status_err = dma_read(sc, DMA_STATUS_ERR);
 
+	/* Power-gated block reads back all ones: nothing real to service */
+	if (status_block == 0xFFFFFFFF || status_tfr == 0xFFFFFFFF ||
+	    status_err == 0xFFFFFFFF)
+		return;
+
 	for (i = 0; i < SST_DMA_CHANNELS; i++) {
+		if ((sc->dma.active_mask & (1U << i)) == 0)
+			continue;
 		if (status_block & (1 << i)) {
 			/* Clear block interrupt */
 			dma_write(sc, DMA_CLEAR_BLOCK, (1 << i));
@@ -726,6 +750,10 @@ sst_dma_get_position(struct sst_softc *sc, int ch)
 		return (0);
 
 	dch = &sc->dma.ch[ch];
+
+	/* Unconfigured channel: avoid modulo by zero */
+	if (dch->state == SST_DMA_STATE_IDLE || dch->config.size == 0)
+		return (0);
 
 	if (dch->config.direction == DMA_TT_M2P) {
 		/* Playback: position = SAR - buffer_base */

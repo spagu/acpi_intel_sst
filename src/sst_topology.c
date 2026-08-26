@@ -553,7 +553,7 @@ sst_topology_create_playback_pipe(struct sst_softc *sc)
 	pipe->period_size = 1024;	/* 1024 frames */
 	pipe->period_count = 4;
 	pipe->ssp_port = 0;		/* SSP0 for playback */
-	pipe->dma_channel = -1;
+	pipe->dma_channel = SST_DMA_CH_NONE;
 	pipe->core_id = 0;
 
 	/* Create widgets for playback pipeline */
@@ -711,7 +711,7 @@ sst_topology_create_capture_pipe(struct sst_softc *sc)
 	pipe->period_size = 1024;
 	pipe->period_count = 4;
 	pipe->ssp_port = 0;		/* SSP0 for capture (shared with playback) */
-	pipe->dma_channel = -1;
+	pipe->dma_channel = SST_DMA_CH_NONE;
 	pipe->core_id = 0;
 
 	/* Create widgets for capture pipeline */
@@ -1023,6 +1023,30 @@ sst_topology_find_widget(struct sst_softc *sc, const char *name)
 }
 
 /*
+ * Snapshot a widget's DSP stream binding under sc_mtx.
+ *
+ * sc->pcm.* fields are visible to MPSAFE sysctl handlers and the
+ * IPC completions that free a stream, so w->stream_id and sc->fw.state
+ * must be read together, under the lock, rather than field-by-field.
+ * The lock is dropped before returning: sst_ipc_set_biquad(),
+ * sst_ipc_set_limiter() and sst_ipc_stream_set_params() all sleep
+ * (cv_timedwait) and must never be called with sc_mtx held.
+ */
+static bool
+sst_topology_widget_stream_snapshot(struct sst_softc *sc, struct sst_widget *w,
+				    uint32_t *stream_id)
+{
+	bool active;
+
+	mtx_lock(&sc->sc_mtx);
+	*stream_id = w->stream_id;
+	active = (*stream_id != 0 && sc->fw.state == SST_FW_STATE_RUNNING);
+	mtx_unlock(&sc->sc_mtx);
+
+	return (active);
+}
+
+/*
  * Set widget volume
  */
 int
@@ -1030,6 +1054,7 @@ sst_topology_set_widget_volume(struct sst_softc *sc, struct sst_widget *w,
 			       int32_t volume)
 {
 	struct sst_stream_params params;
+	uint32_t stream_id;
 
 	if (w == NULL)
 		return (EINVAL);
@@ -1045,16 +1070,25 @@ sst_topology_set_widget_volume(struct sst_softc *sc, struct sst_widget *w,
 	 * peak_gain_db or PEQ positive gain), reduce the volume ceiling
 	 * by the same amount so EQ peak + volume never exceeds
 	 * -SST_HEADROOM_DB dBFS.
+	 *
+	 * biquad_mode/peq_gain are also written by MPSAFE sysctl handlers,
+	 * so snapshot them under sc_mtx before using them.
 	 */
 	{
 		int32_t ceiling;
 		int peak = 0;
+		int biquad_mode;
+		int peq_gain;
+
+		mtx_lock(&sc->sc_mtx);
+		biquad_mode = sc->pcm.biquad_mode;
+		peq_gain = sc->pcm.peq_gain;
+		mtx_unlock(&sc->sc_mtx);
 
 		ceiling = -SST_HEADROOM_HALF_DB;
 
-		if (sc->pcm.biquad_mode == SST_BIQUAD_MODE_PEQ &&
-		    sc->pcm.peq_gain > 0) {
-			peak = sc->pcm.peq_gain;
+		if (biquad_mode == SST_BIQUAD_MODE_PEQ && peq_gain > 0) {
+			peak = peq_gain;
 		} else {
 			struct sst_widget *hpf;
 			hpf = sst_topology_find_widget(sc, "HPF1.0");
@@ -1072,11 +1106,11 @@ sst_topology_set_widget_volume(struct sst_softc *sc, struct sst_widget *w,
 	w->volume = volume;
 
 	/* Update DSP if stream is active */
-	if (w->stream_id != 0 && sc->fw.state == SST_FW_STATE_RUNNING) {
+	if (sst_topology_widget_stream_snapshot(sc, w, &stream_id)) {
 		uint32_t gain;
 
 		memset(&params, 0, sizeof(params));
-		params.stream_id = w->stream_id;
+		params.stream_id = stream_id;
 		gain = sst_db_to_linear(volume);
 		params.volume_left = gain;
 		params.volume_right = gain;
@@ -1142,6 +1176,7 @@ sst_topology_set_widget_limiter(struct sst_softc *sc, struct sst_widget *w,
 				uint32_t threshold_idx)
 {
 	const struct sst_limiter_preset *entry;
+	uint32_t stream_id;
 
 	if (w == NULL)
 		return (EINVAL);
@@ -1157,8 +1192,8 @@ sst_topology_set_widget_limiter(struct sst_softc *sc, struct sst_widget *w,
 	w->limiter_threshold = threshold_idx;
 
 	/* Send limiter parameters to DSP if stream is active */
-	if (w->stream_id != 0 && sc->fw.state == SST_FW_STATE_RUNNING) {
-		return sst_ipc_set_limiter(sc, w->stream_id,
+	if (sst_topology_widget_stream_snapshot(sc, w, &stream_id)) {
+		return sst_ipc_set_limiter(sc, stream_id,
 		    entry->threshold_linear, entry->attack_us,
 		    entry->release_us);
 	}
@@ -1175,6 +1210,7 @@ sst_topology_set_widget_limiter_ex(struct sst_softc *sc, struct sst_widget *w,
 				   uint32_t threshold_idx, uint32_t release_us)
 {
 	const struct sst_limiter_preset *entry;
+	uint32_t stream_id;
 
 	if (w == NULL || w->module_type != SST_MOD_LIMITER)
 		return (EINVAL);
@@ -1186,8 +1222,8 @@ sst_topology_set_widget_limiter_ex(struct sst_softc *sc, struct sst_widget *w,
 	w->limiter_threshold = threshold_idx;
 
 	/* Send with custom release time */
-	if (w->stream_id != 0 && sc->fw.state == SST_FW_STATE_RUNNING) {
-		return sst_ipc_set_limiter(sc, w->stream_id,
+	if (sst_topology_widget_stream_snapshot(sc, w, &stream_id)) {
+		return sst_ipc_set_limiter(sc, stream_id,
 		    entry->threshold_linear, entry->attack_us,
 		    release_us);
 	}
@@ -1203,11 +1239,13 @@ sst_topology_set_widget_biquad(struct sst_softc *sc, struct sst_widget *w,
 			       int32_t b0, int32_t b1, int32_t b2,
 			       int32_t a1, int32_t a2)
 {
+	uint32_t stream_id;
+
 	if (w == NULL || w->module_type != SST_MOD_HPF)
 		return (EINVAL);
 
-	if (w->stream_id != 0 && sc->fw.state == SST_FW_STATE_RUNNING) {
-		return sst_ipc_set_biquad(sc, w->stream_id,
+	if (sst_topology_widget_stream_snapshot(sc, w, &stream_id)) {
+		return sst_ipc_set_biquad(sc, stream_id,
 		    b0, b1, b2, a1, a2);
 	}
 
@@ -1271,18 +1309,34 @@ void
 sst_topology_apply_biquad(struct sst_softc *sc)
 {
 	struct sst_widget *hpf_w;
+	int biquad_mode, peq_gain, peq_q;
+	uint16_t peq_freq, hpf_cutoff;
 
 	hpf_w = sst_topology_find_widget(sc, "HPF1.0");
 	if (hpf_w == NULL)
 		return;
 
-	if (sc->pcm.biquad_mode == SST_BIQUAD_MODE_PEQ &&
-	    sc->pcm.peq_freq > 0) {
+	/*
+	 * Snapshot the sysctl-visible biquad state under sc_mtx before
+	 * using it: these fields are written by MPSAFE sysctl handlers
+	 * that can run concurrently with this call.  The IPC dispatched
+	 * from sst_topology_set_widget_biquad() below sleeps, so it must
+	 * happen with the lock already dropped.
+	 */
+	mtx_lock(&sc->sc_mtx);
+	biquad_mode = sc->pcm.biquad_mode;
+	peq_freq = sc->pcm.peq_freq;
+	peq_gain = sc->pcm.peq_gain;
+	peq_q = sc->pcm.peq_q;
+	hpf_cutoff = sc->pcm.hpf_cutoff;
+	mtx_unlock(&sc->sc_mtx);
+
+	if (biquad_mode == SST_BIQUAD_MODE_PEQ && peq_freq > 0) {
 		int32_t b0, b1, b2, a1, a2;
 		int error;
 
-		error = sst_biquad_compute_peq(sc->pcm.peq_freq,
-		    sc->pcm.peq_gain, sc->pcm.peq_q, 48000,
+		error = sst_biquad_compute_peq(peq_freq,
+		    peq_gain, peq_q, 48000,
 		    &b0, &b1, &b2, &a1, &a2);
 		if (error == 0)
 			sst_topology_set_widget_biquad(sc, hpf_w,
@@ -1292,7 +1346,7 @@ sst_topology_apply_biquad(struct sst_softc *sc)
 		int idx;
 		const struct sst_hpf_coeff_entry *entry;
 
-		idx = sst_hpf_snap_freq(sc->pcm.hpf_cutoff);
+		idx = sst_hpf_snap_freq(hpf_cutoff);
 		entry = &sst_hpf_table[idx];
 		sst_topology_set_widget_biquad(sc, hpf_w,
 		    entry->b0, entry->b1, entry->b2,
@@ -1302,8 +1356,8 @@ sst_topology_apply_biquad(struct sst_softc *sc)
 	/*
 	 * Update gain budget: PEQ boost requires lowering volume ceiling.
 	 * Re-apply current volume so headroom logic kicks in.
-	 * The ceiling calculation in set_widget_volume reads
-	 * sc->pcm.biquad_mode and sc->pcm.peq_gain directly.
+	 * sst_topology_set_widget_volume() re-snapshots
+	 * sc->pcm.biquad_mode/peq_gain itself under sc_mtx.
 	 */
 	{
 		struct sst_widget *pga;
@@ -1321,17 +1375,27 @@ void
 sst_topology_apply_limiter(struct sst_softc *sc)
 {
 	struct sst_widget *lim_w;
+	uint32_t limiter_threshold, limiter_release;
 
 	lim_w = sst_topology_find_widget(sc, "LIMITER1.0");
 	if (lim_w == NULL)
 		return;
 
-	if (sc->pcm.limiter_release > 0) {
+	/*
+	 * Snapshot under sc_mtx: written by MPSAFE sysctl handlers.  The
+	 * IPC dispatched below sleeps and must happen unlocked.
+	 */
+	mtx_lock(&sc->sc_mtx);
+	limiter_threshold = sc->pcm.limiter_threshold;
+	limiter_release = sc->pcm.limiter_release;
+	mtx_unlock(&sc->sc_mtx);
+
+	if (limiter_release > 0) {
 		sst_topology_set_widget_limiter_ex(sc, lim_w,
-		    sc->pcm.limiter_threshold, sc->pcm.limiter_release);
+		    limiter_threshold, limiter_release);
 	} else {
 		sst_topology_set_widget_limiter(sc, lim_w,
-		    sc->pcm.limiter_threshold);
+		    limiter_threshold);
 	}
 }
 
@@ -1346,8 +1410,12 @@ sst_eq_preset_sysctl(SYSCTL_HANDLER_ARGS)
 {
 	struct sst_softc *sc = arg1;
 	int preset, error;
+	uint16_t hpf_cutoff;
 
+	mtx_lock(&sc->sc_mtx);
 	preset = (int)sc->pcm.eq_preset;
+	mtx_unlock(&sc->sc_mtx);
+
 	error = sysctl_handle_int(oidp, &preset, 0, req);
 	if (error || req->newptr == NULL)
 		return (error);
@@ -1355,24 +1423,35 @@ sst_eq_preset_sysctl(SYSCTL_HANDLER_ARGS)
 	if (preset < 0 || preset >= SST_EQ_NUM_PRESETS)
 		return (EINVAL);
 
-	sc->pcm.eq_preset = (enum sst_eq_preset_id)preset;
-
 	/* Map preset to HPF cutoff */
 	switch (preset) {
 	case SST_EQ_PRESET_FLAT:
-		sc->pcm.hpf_cutoff = 0;
+		hpf_cutoff = 0;
 		break;
 	case SST_EQ_PRESET_STOCK_SPEAKER:
-		sc->pcm.hpf_cutoff = 150;
+		hpf_cutoff = 150;
 		break;
 	case SST_EQ_PRESET_MOD_SPEAKER:
-		sc->pcm.hpf_cutoff = 100;
+		hpf_cutoff = 100;
+		break;
+	default:
+		hpf_cutoff = 0;
 		break;
 	}
 
-	/* Switch to HPF mode and apply */
+	/*
+	 * Update the sysctl-visible state as a group under sc_mtx, then
+	 * drop the lock before applying: sst_topology_apply_biquad() ends
+	 * up calling sst_ipc_set_biquad(), which sleeps (cv_timedwait) and
+	 * must never be called with sc_mtx held.
+	 */
+	mtx_lock(&sc->sc_mtx);
+	sc->pcm.eq_preset = (enum sst_eq_preset_id)preset;
+	sc->pcm.hpf_cutoff = hpf_cutoff;
 	sc->pcm.biquad_mode = SST_BIQUAD_MODE_HPF;
 	sc->pcm.peq_freq = 0;
+	mtx_unlock(&sc->sc_mtx);
+
 	sst_topology_apply_biquad(sc);
 
 	return (0);
@@ -1388,7 +1467,10 @@ sst_hpf_cutoff_sysctl(SYSCTL_HANDLER_ARGS)
 	struct sst_softc *sc = arg1;
 	int val, error;
 
+	mtx_lock(&sc->sc_mtx);
 	val = (int)sc->pcm.hpf_cutoff;
+	mtx_unlock(&sc->sc_mtx);
+
 	error = sysctl_handle_int(oidp, &val, 0, req);
 	if (error || req->newptr == NULL)
 		return (error);
@@ -1401,11 +1483,17 @@ sst_hpf_cutoff_sysctl(SYSCTL_HANDLER_ARGS)
 	if (val > 500)
 		val = 500;
 
+	/*
+	 * Update the group under sc_mtx, then drop it before applying:
+	 * sst_topology_apply_biquad() sleeps via sst_ipc_set_biquad() and
+	 * must not be called with sc_mtx held.
+	 */
+	mtx_lock(&sc->sc_mtx);
 	sc->pcm.hpf_cutoff = (uint16_t)val;
-
-	/* Switch to HPF mode */
 	sc->pcm.biquad_mode = SST_BIQUAD_MODE_HPF;
 	sc->pcm.peq_freq = 0;
+	mtx_unlock(&sc->sc_mtx);
+
 	sst_topology_apply_biquad(sc);
 
 	return (0);
@@ -1421,7 +1509,10 @@ sst_limiter_threshold_sysctl(SYSCTL_HANDLER_ARGS)
 	struct sst_softc *sc = arg1;
 	int val, error;
 
+	mtx_lock(&sc->sc_mtx);
 	val = (int)sc->pcm.limiter_threshold;
+	mtx_unlock(&sc->sc_mtx);
+
 	error = sysctl_handle_int(oidp, &val, 0, req);
 	if (error || req->newptr == NULL)
 		return (error);
@@ -1429,7 +1520,15 @@ sst_limiter_threshold_sysctl(SYSCTL_HANDLER_ARGS)
 	if (val < 0 || val >= SST_LIMITER_NUM_PRESETS)
 		return (EINVAL);
 
+	/*
+	 * Drop sc_mtx before applying: sst_topology_apply_limiter() sleeps
+	 * via sst_ipc_set_limiter() and must not be called with the lock
+	 * held.
+	 */
+	mtx_lock(&sc->sc_mtx);
 	sc->pcm.limiter_threshold = (uint32_t)val;
+	mtx_unlock(&sc->sc_mtx);
+
 	sst_topology_apply_limiter(sc);
 
 	return (0);

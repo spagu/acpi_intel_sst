@@ -38,17 +38,20 @@
  */
 static uint32_t sst_fmtlist[] = {
 	SND_FORMAT(AFMT_S16_LE, 2, 0),
-	SND_FORMAT(AFMT_S24_LE, 2, 0),
-	SND_FORMAT(AFMT_S32_LE, 2, 0),
 	0
 };
 
 /*
  * Supported rates
+ *
+ * The codec DAC/ADC format verb (RT286_FMT_48K_16B_2CH) and the SSP
+ * defaults are programmed for 48 kHz / 16-bit / 2 channels, so only
+ * that format is advertised.  Advertising more made sound(4) hand us
+ * rates the codec was never switched to (wrong pitch or noise).
  */
 static struct pcmchan_caps sst_caps = {
-	8000,		/* Minimum rate */
-	192000,		/* Maximum rate */
+	48000,		/* Minimum rate */
+	48000,		/* Maximum rate */
 	sst_fmtlist,	/* Formats */
 	0		/* Flags */
 };
@@ -59,6 +62,10 @@ static struct pcmchan_caps sst_caps = {
 static void *sst_chan_init(kobj_t obj, void *devinfo,
     struct snd_dbuf *b, struct pcm_channel *c, int dir);
 static int sst_chan_free(kobj_t obj, void *data);
+static void sst_pcm_work(void *arg, int pending);
+static void sst_pcm_ramp_cb(void *arg);
+static void sst_pcm_ramp_task(void *arg, int pending);
+static void sst_pcm_delete_stale_children(struct sst_softc *sc);
 static int sst_chan_setformat(kobj_t obj, void *data, uint32_t format);
 static uint32_t sst_chan_setspeed(kobj_t obj, void *data, uint32_t speed);
 static uint32_t sst_chan_setblocksize(kobj_t obj, void *data, uint32_t blocksize);
@@ -502,7 +509,7 @@ sst_chan_init(kobj_t obj, void *devinfo, struct snd_dbuf *b,
 	    ch->buf, ch->buf_size);
 	if (sndbuf_setup(b, ch->buf, ch->buf_size) != 0) {
 		device_printf(sc->dev, "Failed to setup sound buffer\n");
-		sst_dma_free(sc, ch->dma_ch);
+		sst_pcm_free_pgtbl(ch);
 		sst_pcm_free_buffer(ch);
 		sst_pcm_release_channel(sc, ch);
 		return (NULL);
@@ -515,6 +522,20 @@ sst_chan_init(kobj_t obj, void *devinfo, struct snd_dbuf *b,
 
 	/* Initialize position polling callout */
 	callout_init(&ch->poll_timer, 1);
+
+	/* Serializes trigger START/STOP, which run without CHN_LOCK */
+	if (!ch->trig_sx_valid) {
+		sx_init(&ch->trig_sx, "sst_trig");
+		ch->trig_sx_valid = true;
+	}
+
+	/* Deferred worker for IPC-heavy work seen from the callout */
+	if (!ch->work_task_valid) {
+		TASK_INIT(&ch->work_task, 0, sst_pcm_work, ch);
+		ch->work_task_valid = true;
+	}
+	ch->need_recover = false;
+	ch->need_vol_flush = false;
 
 	/* DSP stream not yet allocated */
 	ch->stream_id = 0;
@@ -541,8 +562,17 @@ sst_chan_free(kobj_t obj, void *data)
 
 	sc = ch->sc;
 
-	/* Stop and drain polling timer */
+	/* Stop and drain polling timer, then the deferred worker */
 	callout_drain(&ch->poll_timer);
+	if (ch->work_task_valid) {
+		taskqueue_drain(taskqueue_thread, &ch->work_task);
+		ch->work_task_valid = false;
+	}
+
+	if (ch->trig_sx_valid) {
+		sx_destroy(&ch->trig_sx);
+		ch->trig_sx_valid = false;
+	}
 
 	/* Free DSP stream if allocated */
 	if (ch->stream_allocated)
@@ -625,6 +655,38 @@ sst_chan_setblocksize(kobj_t obj, void *data, uint32_t blocksize)
  * We just provide the ring buffer page table and audio format.
  * The DSP returns position register addresses for polling.
  */
+/*
+ * Validate a DSP-supplied BAR0 register offset.
+ *
+ * ALLOC_STREAM returns register offsets (position, peak meter,
+ * volume) that we later dereference with bus_read_4().  Anything
+ * outside the mapped BAR - or misaligned - is rejected and treated
+ * as "not available" (0) rather than faulting the kernel.
+ */
+static uint32_t
+sst_pcm_valid_regaddr(struct sst_softc *sc, uint32_t regaddr)
+{
+	rman_res_t size;
+
+	if (regaddr == 0 || sc->mem_res == NULL)
+		return (0);
+
+	if ((regaddr & 3) != 0)
+		goto bad;
+
+	size = rman_get_size(sc->mem_res);
+	if ((rman_res_t)regaddr + 4 > size)
+		goto bad;
+
+	return (regaddr);
+
+bad:
+	device_printf(sc->dev,
+	    "PCM: DSP returned bogus register offset 0x%x (ignored)\n",
+	    regaddr);
+	return (0);
+}
+
 static int
 sst_pcm_alloc_dsp_stream(struct sst_softc *sc, struct sst_pcm_channel *ch)
 {
@@ -761,13 +823,24 @@ sst_pcm_alloc_dsp_stream(struct sst_softc *sc, struct sst_pcm_channel *ch)
 
 	ch->stream_id = rsp.stream_hw_id;
 	ch->stream_allocated = true;
-	ch->read_pos_regaddr = rsp.read_pos_regaddr;
+
+	/*
+	 * The register offsets below come from the DSP reply and are
+	 * used as raw BAR0 offsets.  A corrupt or stale reply would
+	 * otherwise fault the kernel on the next poll or sysctl read.
+	 */
+	ch->read_pos_regaddr =
+	    sst_pcm_valid_regaddr(sc, rsp.read_pos_regaddr);
 
 	/* Capture telemetry register addresses */
-	ch->peak_meter_regaddr[0] = rsp.peak_meter_regaddr[0];
-	ch->peak_meter_regaddr[1] = rsp.peak_meter_regaddr[1];
-	ch->volume_regaddr[0] = rsp.volume_regaddr[0];
-	ch->volume_regaddr[1] = rsp.volume_regaddr[1];
+	ch->peak_meter_regaddr[0] =
+	    sst_pcm_valid_regaddr(sc, rsp.peak_meter_regaddr[0]);
+	ch->peak_meter_regaddr[1] =
+	    sst_pcm_valid_regaddr(sc, rsp.peak_meter_regaddr[1]);
+	ch->volume_regaddr[0] =
+	    sst_pcm_valid_regaddr(sc, rsp.volume_regaddr[0]);
+	ch->volume_regaddr[1] =
+	    sst_pcm_valid_regaddr(sc, rsp.volume_regaddr[1]);
 
 	sst_dbg(sc, SST_DBG_LIFE,
 	    "PCM: Allocated DSP stream %u for %s "
@@ -808,11 +881,170 @@ sst_pcm_free_dsp_stream(struct sst_softc *sc, struct sst_pcm_channel *ch)
  * notify sound(4) via chn_intr().
  */
 static void
+sst_pcm_work(void *arg, int pending __unused)
+{
+	struct sst_pcm_channel *ch = arg;
+	struct sst_softc *sc = ch->sc;
+
+	/*
+	 * Runs in a taskqueue thread, NOT in the callout: every step
+	 * below issues IPC (cv_timedwait) or codec I2C with millisecond
+	 * DELAYs, neither of which may run in softclock context.
+	 */
+	if (ch->state != SST_PCM_STATE_RUNNING)
+		return;
+
+	if (ch->need_recover) {
+		ch->need_recover = false;
+		if (ch->stream_allocated) {
+			sst_dbg(sc, SST_DBG_LIFE,
+			    "PCM: stream %u stalled, restarting\n",
+			    ch->stream_id);
+			sst_pcm_free_dsp_stream(sc, ch);
+
+			if (sst_pcm_alloc_dsp_stream(sc, ch) == 0) {
+				sst_ipc_stream_reset(sc, ch->stream_id);
+				sst_ipc_stream_pause(sc, ch->stream_id);
+
+				sst_shim_update_bits(sc, SST_SHIM_HMDC,
+				    SST_HMDC_HDDA_ALL, SST_HMDC_HDDA_ALL);
+
+				sst_ipc_stream_resume(sc, ch->stream_id);
+				sst_ssp_start(sc, ch->ssp_port);
+				sst_codec_pll_rearm(sc);
+
+				/* Restore volume and effects */
+				if (ch->dir == PCMDIR_PLAY) {
+					struct sst_stream_params vsp;
+					memset(&vsp, 0, sizeof(vsp));
+					vsp.stream_id = ch->stream_id;
+					vsp.volume_left =
+					    sst_percent_to_q131(sc->pcm.vol_left);
+					vsp.volume_right =
+					    sst_percent_to_q131(sc->pcm.vol_right);
+					sst_ipc_stream_set_params(sc, &vsp);
+
+					/* Restore biquad (HPF or PEQ) */
+					{
+						struct sst_widget *hpf_w;
+						hpf_w = sst_topology_find_widget(sc,
+						    "HPF1.0");
+						if (hpf_w != NULL) {
+							hpf_w->stream_id =
+							    ch->stream_id;
+							sst_topology_apply_biquad(sc);
+						}
+					}
+
+					/* Restore limiter */
+					{
+						struct sst_widget *lim_w;
+						lim_w = sst_topology_find_widget(sc,
+						    "LIMITER1.0");
+						if (lim_w != NULL &&
+						    sc->pcm.limiter_threshold > 0) {
+							lim_w->stream_id =
+							    ch->stream_id;
+							sst_topology_apply_limiter(sc);
+						}
+					}
+				} else {
+					struct sst_stream_params vsp;
+					memset(&vsp, 0, sizeof(vsp));
+					vsp.stream_id = ch->stream_id;
+					vsp.volume_left =
+					    sst_percent_to_q131(
+					    sc->pcm.cap_vol_left);
+					vsp.volume_right =
+					    sst_percent_to_q131(
+					    sc->pcm.cap_vol_right);
+					vsp.mute = sc->pcm.mic_mute;
+					sst_ipc_stream_set_params(sc, &vsp);
+				}
+
+				sst_dbg(sc, SST_DBG_LIFE,
+				    "PCM: stream recovered as %u\n",
+				    ch->stream_id);
+			} else {
+				device_printf(sc->dev,
+				    "PCM: stream recovery failed\n");
+			}
+		}
+		ch->stall_count = 0;
+	}
+
+	/* Re-check: recovery above may have raced with a STOP */
+	if (ch->state != SST_PCM_STATE_RUNNING)
+		return;
+
+	/*
+	 * Deferred mixer work: sst_mixer_set() runs with the sound(4)
+	 * mixer mutex held and therefore cannot issue IPC itself.
+	 */
+	if (ch->dir == PCMDIR_PLAY && sc->pcm.eq_pending) {
+		struct sst_widget *hpf_w;
+
+		sc->pcm.eq_pending = false;
+		hpf_w = sst_topology_find_widget(sc, "HPF1.0");
+		if (hpf_w != NULL)
+			sst_topology_set_widget_eq_preset(sc, hpf_w,
+			    sc->pcm.eq_preset);
+	}
+
+	if (ch->dir == PCMDIR_PLAY && sc->pcm.lim_pending) {
+		struct sst_widget *lim_w;
+
+		sc->pcm.lim_pending = false;
+		lim_w = sst_topology_find_widget(sc, "LIMITER1.0");
+		if (lim_w != NULL)
+			sst_topology_set_widget_limiter(sc, lim_w,
+			    sc->pcm.limiter_threshold);
+	}
+
+	if (ch->need_vol_flush) {
+		struct sst_stream_params vsp;
+
+		ch->need_vol_flush = false;
+		if (!ch->stream_allocated)
+			return;
+
+		memset(&vsp, 0, sizeof(vsp));
+		vsp.stream_id = ch->stream_id;
+		if (ch->dir == PCMDIR_PLAY) {
+			vsp.volume_left =
+			    sst_percent_to_q131(sc->pcm.vol_left);
+			vsp.volume_right =
+			    sst_percent_to_q131(sc->pcm.vol_right);
+			vsp.mute = sc->pcm.mute;
+		} else {
+			vsp.volume_left =
+			    sst_percent_to_q131(sc->pcm.cap_vol_left);
+			vsp.volume_right =
+			    sst_percent_to_q131(sc->pcm.cap_vol_right);
+			vsp.mute = sc->pcm.mic_mute;
+		}
+		sst_ipc_stream_set_params(sc, &vsp);
+	}
+}
+
+/*
+ * DSP position polling callback
+ *
+ * The DSP firmware writes the current playback/capture position to
+ * a register in DRAM (read_pos_regaddr, returned by ALLOC_STREAM).
+ * We poll this register to detect block boundary crossings and
+ * notify sound(4) via chn_intr().
+ *
+ * Nothing here may sleep: it runs in softclock context.  Stall
+ * recovery and deferred volume are handed to sst_pcm_work().
+ */
+static void
 sst_pcm_poll(void *arg)
 {
 	struct sst_pcm_channel *ch = arg;
 	struct sst_softc *sc = ch->sc;
 	uint32_t pos;
+	bool defer = false;
 
 	if (ch->state != SST_PCM_STATE_RUNNING)
 		return;
@@ -847,97 +1079,16 @@ sst_pcm_poll(void *arg)
 	}
 
 	/*
-	 * DSP stream stall recovery.
+	 * DSP stream stall recovery (deferred to sst_pcm_work).
 	 *
 	 * The catpt DSP firmware can stall its DMA engine after
-	 * processing many SET_VOLUME IPC messages.  The position
-	 * register stops advancing but the DSP core stays alive
-	 * (IPC still works).  Recover by re-issuing RESUME.
-	 *
+	 * processing many SET_VOLUME IPC messages: the position
+	 * register stops advancing while the DSP core stays alive.
 	 * 200 polls at ~5ms = 1 second of no movement.
 	 */
 	if (ch->stall_count == 200 && ch->stream_allocated) {
-		sst_dbg(sc, SST_DBG_LIFE,
-		    "PCM: stream %u stalled at pos=%u, restarting\n",
-		    ch->stream_id, pos);
-		/*
-		 * Full stream restart: FREE old stream, ALLOC new one.
-		 *
-		 * The catpt DSP's DMA engine can stall after many
-		 * SET_VOLUME IPCs.  Neither RESUME nor RESET recovers
-		 * it.  The only fix is to tear down and reallocate
-		 * the entire stream, keeping the same ring buffer.
-		 */
-		sst_pcm_free_dsp_stream(sc, ch);
-
-		if (sst_pcm_alloc_dsp_stream(sc, ch) == 0) {
-			sst_ipc_stream_reset(sc, ch->stream_id);
-			sst_ipc_stream_pause(sc, ch->stream_id);
-
-			sst_shim_update_bits(sc, SST_SHIM_HMDC,
-			    SST_HMDC_HDDA_ALL, SST_HMDC_HDDA_ALL);
-
-			sst_ipc_stream_resume(sc, ch->stream_id);
-			sst_ssp_start(sc, ch->ssp_port);
-			sst_codec_pll_rearm(sc);
-
-			/* Restore volume and effects */
-			if (ch->dir == PCMDIR_PLAY) {
-				struct sst_stream_params vsp;
-				memset(&vsp, 0, sizeof(vsp));
-				vsp.stream_id = ch->stream_id;
-				vsp.volume_left =
-				    sst_percent_to_q131(sc->pcm.vol_left);
-				vsp.volume_right =
-				    sst_percent_to_q131(sc->pcm.vol_right);
-				sst_ipc_stream_set_params(sc, &vsp);
-
-				/* Restore biquad (HPF or PEQ) */
-				{
-					struct sst_widget *hpf_w;
-					hpf_w = sst_topology_find_widget(sc,
-					    "HPF1.0");
-					if (hpf_w != NULL) {
-						hpf_w->stream_id =
-						    ch->stream_id;
-						sst_topology_apply_biquad(sc);
-					}
-				}
-
-				/* Restore limiter */
-				{
-					struct sst_widget *lim_w;
-					lim_w = sst_topology_find_widget(sc,
-					    "LIMITER1.0");
-					if (lim_w != NULL &&
-					    sc->pcm.limiter_threshold > 0) {
-						lim_w->stream_id =
-						    ch->stream_id;
-						sst_topology_apply_limiter(sc);
-					}
-				}
-			} else {
-				struct sst_stream_params vsp;
-				memset(&vsp, 0, sizeof(vsp));
-				vsp.stream_id = ch->stream_id;
-				vsp.volume_left =
-				    sst_percent_to_q131(
-				    sc->pcm.cap_vol_left);
-				vsp.volume_right =
-				    sst_percent_to_q131(
-				    sc->pcm.cap_vol_right);
-				vsp.mute = sc->pcm.mic_mute;
-				sst_ipc_stream_set_params(sc, &vsp);
-			}
-
-			sst_dbg(sc, SST_DBG_LIFE,
-			    "PCM: stream recovered as %u\n",
-			    ch->stream_id);
-		} else {
-			device_printf(sc->dev,
-			    "PCM: stream recovery failed\n");
-		}
-		ch->stall_count = 0;
+		ch->need_recover = true;
+		defer = true;
 	}
 
 	ch->last_pos = pos;
@@ -949,41 +1100,30 @@ sst_pcm_poll(void *arg)
 	 */
 
 	/*
-	 * Flush deferred volume update.
-	 *
-	 * If the mixer rate-limiter deferred a SET_VOLUME, send
-	 * the final value now (from callout context, outside the
-	 * rapid ioctl storm).  Single-channel flush -- no loop.
+	 * Flush deferred volume update.  Playback and capture keep
+	 * separate flags so one direction cannot swallow the other's
+	 * pending update.
 	 */
-	if (sc->pcm.vol_pending && ch->stream_allocated) {
-		int elapsed = ticks - sc->pcm.vol_ticks;
+	if (ch->stream_allocated) {
+		bool *flag = (ch->dir == PCMDIR_PLAY) ?
+		    &sc->pcm.vol_pending : &sc->pcm.cap_vol_pending;
 
-		if (elapsed >= hz / 2) {
-			struct sst_stream_params vsp;
-
-			sc->pcm.vol_pending = false;
+		if (*flag && (ticks - sc->pcm.vol_ticks) >=
+		    SST_VOL_RATE_TICKS) {
+			*flag = false;
 			sc->pcm.vol_ticks = ticks;
-
-			memset(&vsp, 0, sizeof(vsp));
-			vsp.stream_id = ch->stream_id;
-			if (ch->dir == PCMDIR_PLAY) {
-				vsp.volume_left =
-				    sst_percent_to_q131(sc->pcm.vol_left);
-				vsp.volume_right =
-				    sst_percent_to_q131(sc->pcm.vol_right);
-				vsp.mute = sc->pcm.mute;
-			} else {
-				vsp.volume_left =
-				    sst_percent_to_q131(
-				    sc->pcm.cap_vol_left);
-				vsp.volume_right =
-				    sst_percent_to_q131(
-				    sc->pcm.cap_vol_right);
-				vsp.mute = sc->pcm.mic_mute;
-			}
-			sst_ipc_stream_set_params(sc, &vsp);
+			ch->need_vol_flush = true;
+			defer = true;
 		}
+
+		/* EQ / limiter changes deferred by the mixer */
+		if (ch->dir == PCMDIR_PLAY &&
+		    (sc->pcm.eq_pending || sc->pcm.lim_pending))
+			defer = true;
 	}
+
+	if (defer && ch->work_task_valid)
+		taskqueue_enqueue(taskqueue_thread, &ch->work_task);
 
 	/* Reschedule */
 	callout_reset(&ch->poll_timer, SST_PCM_POLL_TICKS,
@@ -1035,7 +1175,7 @@ sst_ramp_gain(int curve, int step, int steps)
  * PCMTRIG_START when ramp_ms > 0.
  */
 static void
-sst_pcm_ramp_cb(void *arg)
+sst_pcm_ramp_task(void *arg, int pending __unused)
 {
 	struct sst_softc *sc = arg;
 	struct sst_stream_params sp;
@@ -1069,6 +1209,19 @@ sst_pcm_ramp_cb(void *arg)
 }
 
 /*
+ * Ramp timer: only kicks the worker.  The ramp itself sends IPC and
+ * therefore cannot run in softclock context.
+ */
+static void
+sst_pcm_ramp_cb(void *arg)
+{
+	struct sst_softc *sc = arg;
+
+	if (sc->pcm.ramp_active && sc->pcm.ramp_task_valid)
+		taskqueue_enqueue(taskqueue_thread, &sc->pcm.ramp_task);
+}
+
+/*
  * Suspend PCM subsystem — tear down active streams.
  * Called from sst_acpi_suspend() before DSP reset.
  */
@@ -1079,26 +1232,31 @@ sst_pcm_suspend(struct sst_softc *sc)
 
 	for (i = 0; i < SST_PCM_MAX_PLAY; i++) {
 		struct sst_pcm_channel *ch = &sc->pcm.play[i];
-		if (ch->state == SST_PCM_STATE_RUNNING)
-			callout_stop(&ch->poll_timer);
+		/* Suspend may sleep: wait for poll and worker to finish */
+		ch->state = SST_PCM_STATE_INIT;
+		callout_drain(&ch->poll_timer);
+		if (ch->work_task_valid)
+			taskqueue_drain(taskqueue_thread, &ch->work_task);
 		if (ch->stream_allocated)
 			sst_pcm_free_dsp_stream(sc, ch);
-		ch->state = SST_PCM_STATE_INIT;
 	}
 	for (i = 0; i < SST_PCM_MAX_REC; i++) {
 		struct sst_pcm_channel *ch = &sc->pcm.rec[i];
-		if (ch->state == SST_PCM_STATE_RUNNING)
-			callout_stop(&ch->poll_timer);
+		/* Suspend may sleep: wait for a running poll to finish */
+		ch->state = SST_PCM_STATE_INIT;
+		callout_drain(&ch->poll_timer);
 		if (ch->stream_allocated)
 			sst_pcm_free_dsp_stream(sc, ch);
-		ch->state = SST_PCM_STATE_INIT;
 	}
 
 	/* Disable codec microphone if active */
 	sst_codec_disable_microphone(sc);
 
 	/* Stop ramp if in progress */
-	callout_stop(&sc->pcm.ramp_callout);
+	sc->pcm.ramp_active = false;
+	callout_drain(&sc->pcm.ramp_callout);
+	if (sc->pcm.ramp_task_valid)
+		taskqueue_drain(taskqueue_thread, &sc->pcm.ramp_task);
 	sc->pcm.ramp_active = false;
 }
 
@@ -1141,10 +1299,45 @@ sst_pcm_resume(struct sst_softc *sc)
  *   START: alloc_stream → set_device_formats → resume → set_write_pos
  *   STOP:  pause → free_stream
  */
+static int sst_chan_trigger_unlocked(struct sst_pcm_channel *ch, int go);
+
 static int
 sst_chan_trigger(kobj_t obj, void *data, int go)
 {
 	struct sst_pcm_channel *ch = data;
+	int error;
+
+	switch (go) {
+	case PCMTRIG_START:
+	case PCMTRIG_STOP:
+	case PCMTRIG_ABORT:
+		/*
+		 * sound(4) calls trigger with the channel mutex held.
+		 * Starting/stopping a stream requires IPC round-trips
+		 * (cv_timedwait) and codec I2C delays, which must not
+		 * happen with a non-sleepable lock held.  Drop the
+		 * channel lock for the duration; ch->state is only
+		 * changed from trigger and the (drained) poll callout.
+		 */
+		CHN_UNLOCK(ch->pcm_ch);
+		if (ch->trig_sx_valid)
+			sx_xlock(&ch->trig_sx);
+		error = sst_chan_trigger_unlocked(ch, go);
+		if (ch->trig_sx_valid)
+			sx_xunlock(&ch->trig_sx);
+		CHN_LOCK(ch->pcm_ch);
+		return (error);
+	default:
+		return (0);
+	}
+}
+
+/*
+ * Trigger body, called WITHOUT the channel lock (see sst_chan_trigger).
+ */
+static int
+sst_chan_trigger_unlocked(struct sst_pcm_channel *ch, int go)
+{
 	struct sst_softc *sc;
 	int error;
 
@@ -1336,8 +1529,16 @@ sst_chan_trigger(kobj_t obj, void *data, int go)
 		if (ch->state != SST_PCM_STATE_RUNNING)
 			return (0);
 
-		/* Stop polling first */
-		callout_stop(&ch->poll_timer);
+		/*
+		 * Stop polling and wait for a running callback: the
+		 * stream is freed below and the callback dereferences
+		 * ch->stream_id.  Safe to drain here because the
+		 * channel lock is not held (see sst_chan_trigger).
+		 */
+		ch->state = SST_PCM_STATE_PREPARED;
+		callout_drain(&ch->poll_timer);
+		if (ch->work_task_valid)
+			taskqueue_drain(taskqueue_thread, &ch->work_task);
 
 		/* Disable SSP (clear SSE bit) */
 		sst_ssp_stop(sc, ch->ssp_port);
@@ -1521,12 +1722,18 @@ sst_mixer_init(struct snd_mixer *m)
 	return (0);
 }
 
+/*
+ * Mixer set handler.
+ *
+ * Runs with the sound(4) mixer mutex held, so it must never issue
+ * IPC (which sleeps in cv_timedwait).  All it does is cache the new
+ * value and raise a *_pending flag; sst_pcm_work() applies it from a
+ * taskqueue thread, rate-limited to SST_VOL_RATE_TICKS.
+ */
 static int
 sst_mixer_set(struct snd_mixer *m, unsigned dev, unsigned left, unsigned right)
 {
 	struct sst_softc *sc = mix_getdevinfo(m);
-	struct sst_stream_params sp;
-	int i;
 
 	switch (dev) {
 	case SOUND_MIXER_VOLUME:
@@ -1546,51 +1753,16 @@ sst_mixer_set(struct snd_mixer *m, unsigned dev, unsigned left, unsigned right)
 		 * values are stored and sent by the poll timer as a
 		 * deferred update.
 		 */
-		{
-			int now = ticks;
-			int elapsed = now - sc->pcm.vol_ticks;
-
-			if (elapsed < hz / 2 && sc->pcm.vol_ticks != 0) {
-				/* Too soon — defer to poll timer */
-				sc->pcm.vol_pending = true;
-				break;
-			}
-			sc->pcm.vol_ticks = now;
-			sc->pcm.vol_pending = false;
-		}
-
-		/* Update volume on all active playback streams */
-		for (i = 0; i < SST_PCM_MAX_PLAY; i++) {
-			if (sc->pcm.play[i].stream_allocated) {
-				memset(&sp, 0, sizeof(sp));
-				sp.stream_id = sc->pcm.play[i].stream_id;
-				sp.volume_left = sst_percent_to_q131(left);
-				sp.volume_right = sst_percent_to_q131(right);
-				sp.mute = sc->pcm.mute;
-				sst_ipc_stream_set_params(sc, &sp);
-			}
-		}
+		sc->pcm.vol_pending = true;
 		break;
 
 	case SOUND_MIXER_MIC:
 		sc->pcm.cap_vol_left = left;
 		sc->pcm.cap_vol_right = right;
-
-		/* Update volume on all active capture streams */
-		for (i = 0; i < SST_PCM_MAX_REC; i++) {
-			if (sc->pcm.rec[i].stream_allocated) {
-				memset(&sp, 0, sizeof(sp));
-				sp.stream_id = sc->pcm.rec[i].stream_id;
-				sp.volume_left = sst_percent_to_q131(left);
-				sp.volume_right = sst_percent_to_q131(right);
-				sp.mute = sc->pcm.mic_mute;
-				sst_ipc_stream_set_params(sc, &sp);
-			}
-		}
+		sc->pcm.cap_vol_pending = true;
 		break;
 
 	case SOUND_MIXER_BASS: {
-		struct sst_widget *hpf_w;
 		enum sst_eq_preset_id preset;
 
 		/*
@@ -1607,16 +1779,11 @@ sst_mixer_set(struct snd_mixer *m, unsigned dev, unsigned left, unsigned right)
 			preset = SST_EQ_PRESET_MOD_SPEAKER;
 
 		sc->pcm.eq_preset = preset;
-
-		hpf_w = sst_topology_find_widget(sc, "HPF1.0");
-		if (hpf_w != NULL)
-			sst_topology_set_widget_eq_preset(sc, hpf_w, preset);
-
+		sc->pcm.eq_pending = true;
 		break;
 	}
 
 	case SOUND_MIXER_TREBLE: {
-		struct sst_widget *lim_w;
 		int idx;
 
 		/*
@@ -1632,12 +1799,7 @@ sst_mixer_set(struct snd_mixer *m, unsigned dev, unsigned left, unsigned right)
 				idx = 8;
 		}
 		sc->pcm.limiter_threshold = idx;
-
-		/* Update limiter widget if topology is loaded */
-		lim_w = sst_topology_find_widget(sc, "LIMITER1.0");
-		if (lim_w != NULL)
-			sst_topology_set_widget_limiter(sc, lim_w, idx);
-
+		sc->pcm.lim_pending = true;
 		break;
 	}
 
@@ -1727,6 +1889,9 @@ sst_pcm_init(struct sst_softc *sc)
 
 	/* Volume ramp-in defaults */
 	callout_init(&sc->pcm.ramp_callout, 1);	/* 1 = MP-safe */
+	TASK_INIT(&sc->pcm.ramp_task, 0, sst_pcm_ramp_task, sc);
+	sc->pcm.ramp_task_valid = true;
+	sc->pcm.initialized = true;
 	sc->pcm.ramp_ms = SST_RAMP_MS_DEFAULT;
 	sc->pcm.resume_ramp_ms = SST_RAMP_MS_DEFAULT;
 	sc->pcm.ramp_curve = SST_RAMP_LOG;
@@ -1747,14 +1912,42 @@ sst_pcm_init(struct sst_softc *sc)
 void
 sst_pcm_fini(struct sst_softc *sc)
 {
+	/* Idempotent: attach fail paths call detach before init */
+	if (!sc->pcm.initialized)
+		return;
+	sc->pcm.initialized = false;
+
 	callout_drain(&sc->pcm.ramp_callout);
+	if (sc->pcm.ramp_task_valid) {
+		taskqueue_drain(taskqueue_thread, &sc->pcm.ramp_task);
+		sc->pcm.ramp_task_valid = false;
+	}
 	sst_pcm_unregister(sc);
 
-	/*
-	 * Delete any remaining children (e.g. stale pcm devices left
-	 * over from a previous module load that didn't get cleaned up).
-	 */
-	device_delete_children(sc->dev);
+	/* Delete any remaining stale pcm children */
+	sst_pcm_delete_stale_children(sc);
+}
+
+/*
+ * Delete leftover "pcm" children of our device (and only those).
+ */
+static void
+sst_pcm_delete_stale_children(struct sst_softc *sc)
+{
+	device_t *children;
+	const char *name;
+	int i, count;
+
+	if (device_get_children(sc->dev, &children, &count) != 0)
+		return;
+
+	for (i = 0; i < count; i++) {
+		name = device_get_name(children[i]);
+		if (name != NULL && strcmp(name, "pcm") == 0)
+			device_delete_child(sc->dev, children[i]);
+	}
+
+	free(children, M_TEMP);
 }
 
 /*
@@ -1776,11 +1969,13 @@ sst_pcm_register(struct sst_softc *sc)
 	}
 
 	/*
-	 * Clean up any stale children from a previous module load.
-	 * After kldunload + kldload, old child devices may still exist
-	 * with ivars pointing to the old (freed) softc.
+	 * Clean up any stale "pcm" children from a previous module
+	 * load.  After kldunload + kldload, old child devices may still
+	 * exist with ivars pointing to the old (freed) softc.  Only our
+	 * own children are removed - device_delete_children() would
+	 * also delete unrelated children of this device.
 	 */
-	device_delete_children(sc->dev);
+	sst_pcm_delete_stale_children(sc);
 
 	sc->pcm.pcm_dev = device_add_child(sc->dev, "pcm", DEVICE_UNIT_ANY);
 	if (sc->pcm.pcm_dev == NULL) {
@@ -1814,12 +2009,13 @@ sst_pcm_unregister(struct sst_softc *sc)
 		return;
 
 	if (sc->pcm.pcm_dev != NULL) {
-		if (sc->pcm.registered)
-			pcm_unregister(sc->pcm.pcm_dev);
 		/*
 		 * Delete the child device so it doesn't survive a
 		 * module reload with stale ivars pointing to freed
-		 * memory (the old softc).
+		 * memory (the old softc).  The child's detach
+		 * (sst_pcm_child_detach) performs the single
+		 * pcm_unregister() - calling it here too would run it
+		 * twice on a destroyed snddev_info.
 		 */
 		device_delete_child(sc->dev, sc->pcm.pcm_dev);
 		sc->pcm.pcm_dev = NULL;
@@ -1881,21 +2077,40 @@ sst_pcm_child_attach(device_t dev)
 	pcm_init(dev, sc);
 
 	/* Add playback channels */
-	for (i = 0; i < SST_PCM_MAX_PLAY; i++)
-		pcm_addchan(dev, PCMDIR_PLAY, &sst_chan_class, sc);
+	for (i = 0; i < SST_PCM_MAX_PLAY; i++) {
+		error = pcm_addchan(dev, PCMDIR_PLAY, &sst_chan_class, sc);
+		if (error) {
+			device_printf(dev,
+			    "PCM: pcm_addchan(play %d) failed: %d\n",
+			    i, error);
+			goto fail;
+		}
+	}
 
 	/* Add capture channels */
-	for (i = 0; i < SST_PCM_MAX_REC; i++)
-		pcm_addchan(dev, PCMDIR_REC, &sst_chan_class, sc);
+	for (i = 0; i < SST_PCM_MAX_REC; i++) {
+		error = pcm_addchan(dev, PCMDIR_REC, &sst_chan_class, sc);
+		if (error) {
+			device_printf(dev,
+			    "PCM: pcm_addchan(rec %d) failed: %d\n",
+			    i, error);
+			goto fail;
+		}
+	}
 
 	error = pcm_register(dev, status);
 	if (error) {
 		device_printf(dev, "PCM: pcm_register failed: %d\n", error);
-		return (error);
+		goto fail;
 	}
 
 	/* Register mixer */
-	mixer_init(dev, &sst_mixer_class, sc);
+	error = mixer_init(dev, &sst_mixer_class, sc);
+	if (error) {
+		device_printf(dev, "PCM: mixer_init failed: %d\n", error);
+		pcm_unregister(dev);
+		return (error);
+	}
 
 	sc->pcm.registered = true;
 
@@ -1903,6 +2118,14 @@ sst_pcm_child_attach(device_t dev)
 	    status, SST_PCM_MAX_PLAY, SST_PCM_MAX_REC);
 
 	return (0);
+
+fail:
+	/*
+	 * Release the channels added so far along with the snddev_info
+	 * lock allocated by pcm_init().
+	 */
+	pcm_unregister(dev);
+	return (error);
 }
 
 static int
@@ -1940,32 +2163,11 @@ static driver_t sst_pcm_driver = {
 DRIVER_MODULE(snd_intel_sst, acpi_intel_sst, sst_pcm_driver, NULL, NULL);
 
 /*
- * PCM interrupt handler (called from DMA completion)
- * Iterates over all active streams and updates their positions
+ * The PCM child links against sound(4) (pcm_register, mixer_init,
+ * chn_intr, sndbuf_setup).  Without this dependency the module loads
+ * on GENERIC by accident and fails with unresolved symbols on kernels
+ * that build sound(4) as a module.
  */
-void
-sst_pcm_intr(struct sst_softc *sc, int dir)
-{
-	struct sst_pcm_channel *ch;
-	int i;
+MODULE_DEPEND(acpi_intel_sst, sound, SOUND_MINVER, SOUND_PREFVER,
+    SOUND_MAXVER);
 
-	if (dir == PCMDIR_PLAY) {
-		for (i = 0; i < SST_PCM_MAX_PLAY; i++) {
-			ch = &sc->pcm.play[i];
-			if (ch->allocated && ch->state == SST_PCM_STATE_RUNNING) {
-				ch->ptr += ch->blk_size;
-				if (ch->ptr >= ch->buf_size)
-					ch->ptr = 0;
-			}
-		}
-	} else {
-		for (i = 0; i < SST_PCM_MAX_REC; i++) {
-			ch = &sc->pcm.rec[i];
-			if (ch->allocated && ch->state == SST_PCM_STATE_RUNNING) {
-				ch->ptr += ch->blk_size;
-				if (ch->ptr >= ch->buf_size)
-					ch->ptr = 0;
-			}
-		}
-	}
-}

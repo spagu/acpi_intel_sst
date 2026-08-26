@@ -65,3 +65,6 @@ acpi/*.hex
 check.txt
 dump.txt
 *.mp3
+
+# Local audit tasks (not committed)
+/audit/

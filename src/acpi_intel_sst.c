@@ -87,7 +87,8 @@ sst_intr(void *arg)
 	if (isr == 0 || isr == SST_INVALID_REG_VALUE)
 		return;
 
-	if (isr & (SST_IMC_IPCCD | SST_IMC_IPCDB))
+	/* Shared IRQ: subsystems may not be initialized yet (or anymore) */
+	if (sc->ipc.initialized && (isr & (SST_IMC_IPCCD | SST_IMC_IPCDB)))
 		sst_ipc_intr(sc);
 
 	sst_dma_intr(sc);
@@ -1230,24 +1231,6 @@ sst_pci_attach(device_t dev)
 	sst_dbg(sc, SST_DBG_LIFE, "BAR0 test: %s\n",
 	    bar0_ok ? "ACCESSIBLE" : "DEAD (0xFFFFFFFF)");
 
-	/* Allocate IRQ */
-	sc->irq_rid = 0;
-	sc->irq_res = bus_alloc_resource_any(dev, SYS_RES_IRQ,
-	    &sc->irq_rid, RF_SHAREABLE | RF_ACTIVE);
-	if (sc->irq_res == NULL) {
-		device_printf(dev, "Failed to allocate IRQ\n");
-		/* Don't fail yet, maybe we can run without IRQ for init test */
-	} else {
-		sst_dbg(sc, SST_DBG_LIFE, "IRQ assigned\n");
-		error = bus_setup_intr(dev, sc->irq_res,
-		    INTR_TYPE_AV | INTR_MPSAFE,
-		    NULL, sst_intr, sc, &sc->irq_cookie);
-		if (error) {
-			device_printf(dev, "Failed to setup IRQ: %d\n", error);
-			sc->irq_cookie = NULL;
-		}
-	}
-
 	if (bar0_ok) {
 		/* Probe DSP memory regions */
 		sst_dbg(sc, SST_DBG_LIFE, "DSP Memory Layout (PCI):\n");
@@ -1261,11 +1244,29 @@ sst_pci_attach(device_t dev)
 		    SST_SHIM_OFFSET,
 		    bus_read_4(sc->mem_res, SST_SHIM_OFFSET));
 
-		/* Initialize IPC subsystem */
+		/* Initialize IPC subsystem BEFORE the IRQ handler exists */
 		error = sst_ipc_init(sc);
 		if (error) {
 			device_printf(dev, "IPC init failed\n");
 			goto fail;
+		}
+
+		/* Allocate IRQ (shared: ISR may fire immediately) */
+		sc->irq_rid = 0;
+		sc->irq_res = bus_alloc_resource_any(dev, SYS_RES_IRQ,
+		    &sc->irq_rid, RF_SHAREABLE | RF_ACTIVE);
+		if (sc->irq_res == NULL) {
+			device_printf(dev, "Failed to allocate IRQ\n");
+		} else {
+			sst_dbg(sc, SST_DBG_LIFE, "IRQ assigned\n");
+			error = bus_setup_intr(dev, sc->irq_res,
+			    INTR_TYPE_AV | INTR_MPSAFE,
+			    NULL, sst_intr, sc, &sc->irq_cookie);
+			if (error) {
+				device_printf(dev,
+				    "Failed to setup IRQ: %d\n", error);
+				sc->irq_cookie = NULL;
+			}
 		}
 
 		/* Initialize firmware subsystem */
@@ -1405,20 +1406,35 @@ sst_pci_attach(device_t dev)
 	return (0);
 
 fail:
-	if (sc->irq_res)
-		bus_release_resource(dev, SYS_RES_IRQ, sc->irq_rid, sc->irq_res);
-	if (sc->shim_res)
-		bus_release_resource(dev, SYS_RES_MEMORY, sc->shim_rid, sc->shim_res);
-	if (sc->mem_res)
-		bus_release_resource(dev, SYS_RES_MEMORY, sc->mem_rid, sc->mem_res);
-	mtx_destroy(&sc->sc_mtx);
+	/* Every *_fini() is idempotent, so a full teardown is safe here */
+	sst_pci_detach(dev);
 	return (error);
 }
 
-static int
-sst_pci_detach(device_t dev)
+/*
+ * sst_detach_common - teardown shared by the ACPI and PCI front-ends.
+ *
+ * Order matters:
+ *   1. mask DSP interrupts and tear down the (shared) IRQ handler so
+ *      the ISR can no longer touch IPC/DMA state,
+ *   2. release subsystems in reverse order of initialization,
+ *   3. power the DSP block down (re-enables clock gating),
+ *   4. release bus resources.
+ */
+static void
+sst_detach_common(device_t dev)
 {
 	struct sst_softc *sc = device_get_softc(dev);
+
+	if (sc->mem_res != NULL && sc->ipc.initialized) {
+		sst_shim_write(sc, SST_SHIM_IMRX, SST_IMC_DEFAULT);
+		sst_shim_write(sc, SST_SHIM_IMRD, SST_IMD_DEFAULT);
+	}
+
+	if (sc->irq_cookie != NULL) {
+		bus_teardown_intr(dev, sc->irq_res, sc->irq_cookie);
+		sc->irq_cookie = NULL;
+	}
 
 	/* Cleanup subsystems in reverse order of initialization */
 	sst_codec_fini(sc);
@@ -1430,26 +1446,37 @@ sst_pci_detach(device_t dev)
 	sst_fw_fini(sc);
 	sst_ipc_fini(sc);
 
-	if (sc->irq_cookie) {
-		bus_teardown_intr(dev, sc->irq_res, sc->irq_cookie);
-		sc->irq_cookie = NULL;
-	}
-	if (sc->irq_res) {
-		bus_release_resource(dev, SYS_RES_IRQ, sc->irq_rid, sc->irq_res);
+	/* Leave the DSP power-gated with clock gating restored */
+	if (sc->shim_res != NULL)
+		sst_wpt_power_down(sc);
+
+	if (sc->irq_res != NULL) {
+		bus_release_resource(dev, SYS_RES_IRQ, sc->irq_rid,
+		    sc->irq_res);
 		sc->irq_res = NULL;
 	}
-	if (sc->shim_res) {
-		bus_release_resource(dev, SYS_RES_MEMORY, sc->shim_rid, sc->shim_res);
+	if (sc->shim_res != NULL) {
+		bus_release_resource(dev, SYS_RES_MEMORY, sc->shim_rid,
+		    sc->shim_res);
 		sc->shim_res = NULL;
 	}
-	if (sc->mem_res) {
-		bus_release_resource(dev, SYS_RES_MEMORY, sc->mem_rid, sc->mem_res);
+	if (sc->mem_res != NULL) {
+		bus_release_resource(dev, SYS_RES_MEMORY, sc->mem_rid,
+		    sc->mem_res);
 		sc->mem_res = NULL;
 	}
 
 	if (mtx_initialized(&sc->sc_mtx))
 		mtx_destroy(&sc->sc_mtx);
 
+	sc->attached = false;
+	sc->state = SST_STATE_DETACHED;
+}
+
+static int
+sst_pci_detach(device_t dev)
+{
+	sst_detach_common(dev);
 	return (0);
 }
 
@@ -1460,44 +1487,9 @@ sst_pci_detach(device_t dev)
 static int
 sst_acpi_detach(device_t dev)
 {
-	struct sst_softc *sc;
+	struct sst_softc *sc = device_get_softc(dev);
 
-	sc = device_get_softc(dev);
-
-	sst_codec_fini(sc);
-	sst_jack_fini(sc);
-	sst_topology_fini(sc);
-	sst_pcm_fini(sc);
-	sst_ssp_fini(sc);
-	sst_dma_fini(sc);
-	sst_fw_fini(sc);
-	sst_ipc_fini(sc);
-
-	if (sc->irq_cookie != NULL) {
-		bus_teardown_intr(dev, sc->irq_res, sc->irq_cookie);
-		sc->irq_cookie = NULL;
-	}
-
-	if (sc->irq_res != NULL) {
-		bus_release_resource(dev, SYS_RES_IRQ, sc->irq_rid,
-		    sc->irq_res);
-		sc->irq_res = NULL;
-	}
-
-	if (sc->shim_res != NULL) {
-		bus_release_resource(dev, SYS_RES_MEMORY, sc->shim_rid,
-		    sc->shim_res);
-		sc->shim_res = NULL;
-	}
-
-	if (sc->mem_res != NULL) {
-		bus_release_resource(dev, SYS_RES_MEMORY, sc->mem_rid,
-		    sc->mem_res);
-		sc->mem_res = NULL;
-	}
-
-	if (mtx_initialized(&sc->sc_mtx))
-		mtx_destroy(&sc->sc_mtx);
+	sst_detach_common(dev);
 
 	if (sc->handle != NULL)
 		acpi_pwr_switch_consumer(sc->handle, ACPI_STATE_D3);
@@ -1515,6 +1507,18 @@ sst_acpi_suspend(device_t dev)
 	struct sst_softc *sc = device_get_softc(dev);
 
 	sst_dbg(sc, SST_DBG_LIFE, "Suspending...\n");
+
+	/*
+	 * Only a fully booted DSP has anything to tear down.  Devices
+	 * left in the diagnostic state (dead BAR0, no firmware) have no
+	 * IPC/PCM/DMA state and a dead SHIM: leave them alone.
+	 */
+	if (sc->fw.state != SST_FW_STATE_RUNNING ||
+	    (sc->state != SST_STATE_ATTACHED &&
+	     sc->state != SST_STATE_RUNNING)) {
+		sst_dbg(sc, SST_DBG_LIFE, "Suspend: DSP not running, skip\n");
+		return (0);
+	}
 
 	/* 1. Stop jack detection polling */
 	sst_jack_disable(sc);
@@ -1535,12 +1539,15 @@ sst_acpi_suspend(device_t dev)
 	sc->topology.widget_count = 0;
 	sc->topology.route_count = 0;
 
-	/* 6. Reset DSP and power off */
+	/*
+	 * 6. Reset DSP and power off.  Always run the WPT power-down
+	 * sequence (VDRTCTL0/PMCS via BAR1) - ACPI D3 alone does not
+	 * gate SRAM or restore clock gating.
+	 */
 	sst_reset(sc);
+	sst_wpt_power_down(sc);
 	if (sc->handle != NULL)
 		acpi_pwr_switch_consumer(sc->handle, ACPI_STATE_D3);
-	else
-		sst_wpt_power_down(sc);
 	sc->state = SST_STATE_SUSPENDED;
 
 	sst_dbg(sc, SST_DBG_LIFE, "Suspended\n");
@@ -1555,13 +1562,23 @@ sst_acpi_resume(device_t dev)
 
 	sst_dbg(sc, SST_DBG_LIFE, "Resuming...\n");
 
-	/* 1. Power to D0 */
+	/* Nothing was suspended (see sst_acpi_suspend) */
+	if (sc->state != SST_STATE_SUSPENDED)
+		return (0);
+
+	/*
+	 * 1. Power to D0.  After S3 the BIOS leaves VDRTCTL0/PMCS at
+	 * their reset values (SRAM power-gated), so the WPT power-up
+	 * sequence is required in addition to ACPI D0 - otherwise
+	 * sst_fw_reload() writes into gated SRAM and silently loses
+	 * bytes.
+	 */
 	if (sc->handle != NULL) {
 		acpi_pwr_switch_consumer(sc->handle, ACPI_STATE_D0);
 		DELAY(10000);
-	} else {
-		sst_wpt_power_up(sc);
 	}
+	sst_wpt_power_up(sc);
+	sst_sram_sanitize(sc);
 
 	/* 2. Init SHIM (mask interrupts, reset DSP) */
 	sst_init(sc);

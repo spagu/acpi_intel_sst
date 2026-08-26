@@ -68,6 +68,7 @@ sst_i2c_init(struct sst_softc *sc)
 	bus_space_handle_t priv_handle;
 	uint32_t comp_type, pmcsr;
 	int timeout;
+	int error = ENXIO;
 
 	codec->mem_tag = X86_BUS_SPACE_MEM;
 
@@ -111,7 +112,7 @@ sst_i2c_init(struct sst_softc *sc)
 		device_printf(sc->dev,
 		    "codec: bad I2C COMP_TYPE 0x%08x (expected 0x%08x)\n",
 		    comp_type, DW_IC_COMP_TYPE_VALUE);
-		return (ENXIO);
+		goto unmap;
 	}
 
 	/* Disable controller before configuration */
@@ -125,7 +126,8 @@ sst_i2c_init(struct sst_softc *sc)
 	}
 	if (timeout <= 0) {
 		device_printf(sc->dev, "codec: I2C disable timeout\n");
-		return (ETIMEDOUT);
+		error = ETIMEDOUT;
+		goto unmap;
 	}
 
 	/* Configure: master, fast 400kHz, restart enable, slave disable */
@@ -155,11 +157,18 @@ sst_i2c_init(struct sst_softc *sc)
 	}
 	if (timeout <= 0) {
 		device_printf(sc->dev, "codec: I2C enable timeout\n");
-		return (ETIMEDOUT);
+		error = ETIMEDOUT;
+		goto unmap;
 	}
 
 	sst_dbg(sc, SST_DBG_LIFE, "codec: I2C0 controller initialized\n");
 	return (0);
+
+unmap:
+	/* Never leave the MMIO window mapped on a failed init */
+	bus_space_unmap(codec->mem_tag, codec->i2c_handle, SST_I2C0_SIZE);
+	codec->i2c_mapped = false;
+	return (error);
 }
 
 /*
@@ -217,6 +226,10 @@ sst_i2c_write(struct sst_softc *sc, const uint8_t *data, int len)
 		    DW_IC_STATUS) & DW_IC_STATUS_TFE)
 			break;
 		DELAY(100);
+	}
+	if (timeout <= 0) {
+		device_printf(sc->dev, "codec: I2C write TX FIFO timeout\n");
+		return (ETIMEDOUT);
 	}
 
 	/* Check for abort */
@@ -327,14 +340,26 @@ sst_i2c_recv(struct sst_softc *sc, uint8_t *buf, int buf_len)
 static int
 sst_codec_write(struct sst_softc *sc, uint32_t reg, uint32_t val)
 {
+	struct sst_codec *codec = &sc->codec;
 	uint8_t data[4];
+	int error;
 
 	data[0] = (reg >> 24) & 0xFF;
 	data[1] = (reg >> 16) & 0xFF;
 	data[2] = ((reg >> 8) & 0xFF) | ((val >> 8) & 0xFF);
 	data[3] = val & 0xFF;
 
-	return (sst_i2c_write(sc, data, 4));
+	/*
+	 * Serialize FIFO access: playback trigger, capture trigger and
+	 * the jack task all reach the codec from different contexts.
+	 */
+	if (codec->lock_valid)
+		mtx_lock(&codec->i2c_lock);
+	error = sst_i2c_write(sc, data, 4);
+	if (codec->lock_valid)
+		mtx_unlock(&codec->i2c_lock);
+
+	return (error);
 }
 
 /*
@@ -351,6 +376,7 @@ sst_codec_write(struct sst_softc *sc, uint32_t reg, uint32_t val)
 static int
 sst_codec_read(struct sst_softc *sc, uint32_t reg, uint32_t *val)
 {
+	struct sst_codec *codec = &sc->codec;
 	uint8_t wdata[4], rdata[4];
 	uint32_t r;
 	int error;
@@ -361,23 +387,33 @@ sst_codec_read(struct sst_softc *sc, uint32_t reg, uint32_t *val)
 	wdata[2] = (r >> 8) & 0xFF;
 	wdata[3] = r & 0xFF;
 
+	/*
+	 * Both phases must be held under one lock: another context
+	 * squeezing a verb in between would consume our response.
+	 */
+	if (codec->lock_valid)
+		mtx_lock(&codec->i2c_lock);
+
 	/* Step 1: Write GET verb (with STOP) - like i2c_master_send */
 	error = sst_i2c_write(sc, wdata, 4);
-	if (error) {
+	if (error == 0) {
+		/* Step 2: Read 4-byte response - like i2c_master_recv */
+		error = sst_i2c_recv(sc, rdata, 4);
+		if (error)
+			device_printf(sc->dev,
+			    "codec: read recv-phase failed reg=0x%08x: %d\n",
+			    reg, error);
+	} else {
 		device_printf(sc->dev,
 		    "codec: read write-phase failed reg=0x%08x: %d\n",
 		    reg, error);
-		return (error);
 	}
 
-	/* Step 2: Read 4-byte response (with STOP) - like i2c_master_recv */
-	error = sst_i2c_recv(sc, rdata, 4);
-	if (error) {
-		device_printf(sc->dev,
-		    "codec: read recv-phase failed reg=0x%08x: %d\n",
-		    reg, error);
+	if (codec->lock_valid)
+		mtx_unlock(&codec->i2c_lock);
+
+	if (error)
 		return (error);
-	}
 
 	/*
 	 * Reassemble 32-bit response from big-endian I2C bytes.
@@ -481,13 +517,16 @@ sst_codec_init(struct sst_softc *sc)
 
 	memset(codec, 0, sizeof(*codec));
 
+	mtx_init(&codec->i2c_lock, "sst_i2c", NULL, MTX_DEF);
+	codec->lock_valid = true;
+
 	sst_dbg(sc, SST_DBG_LIFE, "codec: initializing RT286...\n");
 
 	/* Step 1: Set up I2C */
 	error = sst_i2c_init(sc);
 	if (error) {
 		device_printf(sc->dev, "codec: I2C init failed: %d\n", error);
-		return (error);
+		goto fail;
 	}
 
 	/* Step 2: Verify vendor ID */
@@ -559,6 +598,10 @@ sst_codec_init(struct sst_softc *sc)
 
 fail:
 	sst_i2c_fini(sc);
+	if (codec->lock_valid) {
+		mtx_destroy(&codec->i2c_lock);
+		codec->lock_valid = false;
+	}
 	return (error);
 }
 
@@ -751,7 +794,8 @@ sst_codec_enable_microphone(struct sst_softc *sc)
 		return (ENXIO);
 	}
 
-	if (codec->mic_active)
+	/* Refcounted: a second capture stream must not re-run the setup */
+	if (codec->mic_refs++ > 0)
 		return (0);
 
 	sst_dbg(sc, SST_DBG_OPS, "codec: enabling microphone input...\n");
@@ -779,7 +823,6 @@ sst_codec_enable_microphone(struct sst_softc *sc)
 	sst_codec_write(sc, RT286_SET_AMP_OUT_L(RT286_NID_ADC0), 0x00);
 	sst_codec_write(sc, RT286_SET_AMP_OUT_R(RT286_NID_ADC0), 0x00);
 
-	codec->mic_active = true;
 	sst_dbg(sc, SST_DBG_OPS, "codec: microphone input enabled\n");
 
 	return (0);
@@ -790,7 +833,11 @@ sst_codec_disable_microphone(struct sst_softc *sc)
 {
 	struct sst_codec *codec = &sc->codec;
 
-	if (!codec->initialized || !codec->mic_active)
+	if (!codec->initialized || codec->mic_refs <= 0)
+		return (0);
+
+	/* Only power the mic path down when the last stream stops */
+	if (--codec->mic_refs > 0)
 		return (0);
 
 	sst_dbg(sc, SST_DBG_OPS, "codec: disabling microphone input...\n");
@@ -809,7 +856,6 @@ sst_codec_disable_microphone(struct sst_softc *sc)
 	sst_codec_write(sc,
 	    RT286_SET_POWER(RT286_NID_MIC), RT286_PWR_D3);
 
-	codec->mic_active = false;
 	sst_dbg(sc, SST_DBG_OPS, "codec: microphone input disabled\n");
 
 	return (0);
@@ -847,12 +893,79 @@ sst_codec_pll_rearm(struct sst_softc *sc)
 	    RT286_SET_FORMAT(RT286_NID_DAC1), RT286_FMT_48K_16B_2CH);
 
 	/* Re-set ADC0 format if microphone is active */
-	if (codec->mic_active)
+	if (codec->mic_refs > 0)
 		sst_codec_write(sc,
 		    RT286_SET_FORMAT(RT286_NID_ADC0), RT286_FMT_48K_16B_2CH);
 
 	DELAY(50000);	/* 50ms for PLL to lock to BCLK */
 	return (0);
+}
+
+/* ================================================================
+ * Jack Presence Detect / Output Routing
+ *
+ * Presence is read from the codec pin-sense verb (0xF09), NOT from
+ * the SST SHIM CSR: bits 8-11 of CSR are DSP STALL/SDPM controls,
+ * and poking them stalls the DSP core.
+ * ================================================================ */
+
+int
+sst_codec_pin_present(struct sst_softc *sc, uint32_t nid, bool *present)
+{
+	struct sst_codec *codec = &sc->codec;
+	uint32_t sense;
+	int error;
+
+	if (present == NULL)
+		return (EINVAL);
+	if (!codec->initialized)
+		return (ENXIO);
+
+	error = sst_codec_read(sc, RT286_GET_PIN_SENSE(nid), &sense);
+	if (error)
+		return (error);
+
+	*present = (sense & RT286_PIN_SENSE_PRESENT) != 0;
+	return (0);
+}
+
+/*
+ * sst_codec_set_hp_route - follow a headphone insertion event
+ *
+ * Headphones in: mute the speaker amp, unmute the HP amp.
+ * Headphones out: the reverse.  Muting is done through the codec
+ * output amplifiers (bit 7 = mute), not through any GPIO.
+ */
+int
+sst_codec_set_hp_route(struct sst_softc *sc, bool hpInserted)
+{
+	struct sst_codec *codec = &sc->codec;
+	int error = 0;
+
+	if (!codec->initialized)
+		return (ENXIO);
+
+	if (hpInserted) {
+		error |= sst_codec_write(sc,
+		    RT286_SET_AMP_OUT_LR(RT286_NID_SPK), 0x80);
+		error |= sst_codec_write(sc,
+		    RT286_SET_AMP_OUT_L(RT286_NID_HP), 0x00);
+		error |= sst_codec_write(sc,
+		    RT286_SET_AMP_OUT_R(RT286_NID_HP), 0x00);
+	} else {
+		error |= sst_codec_write(sc,
+		    RT286_SET_AMP_OUT_LR(RT286_NID_HP), 0x80);
+		error |= sst_codec_write(sc,
+		    RT286_SET_AMP_OUT_L(RT286_NID_SPK), 0x00);
+		error |= sst_codec_write(sc,
+		    RT286_SET_AMP_OUT_R(RT286_NID_SPK), 0x00);
+	}
+
+	sst_dbg(sc, SST_DBG_OPS, "codec: route -> %s%s\n",
+	    hpInserted ? "headphone" : "speaker",
+	    error ? " (with I2C errors)" : "");
+
+	return (error ? EIO : 0);
 }
 
 /* ================================================================
@@ -864,8 +977,14 @@ sst_codec_fini(struct sst_softc *sc)
 {
 	struct sst_codec *codec = &sc->codec;
 
-	if (!codec->initialized)
+	if (!codec->initialized) {
+		/* init failed after the lock was created, or never ran */
+		if (codec->lock_valid) {
+			mtx_destroy(&codec->i2c_lock);
+			codec->lock_valid = false;
+		}
 		return;
+	}
 
 	sst_dbg(sc, SST_DBG_LIFE, "codec: shutting down RT286...\n");
 
@@ -906,12 +1025,12 @@ sst_codec_fini(struct sst_softc *sc)
 	}
 
 	/* Tear down microphone path if active */
-	if (codec->mic_active) {
+	if (codec->mic_refs > 0) {
 		sst_codec_write(sc,
 		    RT286_SET_AMP_OUT_LR(RT286_NID_ADC0), 0x80);
 		sst_codec_write(sc,
 		    RT286_SET_PIN_CTRL(RT286_NID_MIC), 0x00);
-		codec->mic_active = false;
+		codec->mic_refs = 0;
 	}
 
 	/* Power down remaining widgets */
@@ -929,6 +1048,11 @@ sst_codec_fini(struct sst_softc *sc)
 
 	/* Tear down I2C */
 	sst_i2c_fini(sc);
+
+	if (codec->lock_valid) {
+		mtx_destroy(&codec->i2c_lock);
+		codec->lock_valid = false;
+	}
 
 	sst_dbg(sc, SST_DBG_LIFE, "codec: RT286 shutdown complete\n");
 }

@@ -43,7 +43,7 @@
  * SSCR0 - Control Register 0
  */
 #define SSCR0_DSS_MASK		(0x0F << 0)	/* Data Size Select */
-#define SSCR0_DSS(x)		(((x) - 1) << 0)
+#define SSCR0_DSS(x)		((((x) - 1) & 0x0F) << 0)
 #define SSCR0_FRF_MASK		(0x03 << 4)	/* Frame Format */
 #define SSCR0_FRF_MOTOROLA	(0x00 << 4)	/* Motorola SPI */
 #define SSCR0_FRF_TI		(0x01 << 4)	/* TI SSP */
