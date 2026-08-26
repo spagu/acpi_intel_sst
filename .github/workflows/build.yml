@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Check for tabs (FreeBSD style)
         run: |
@@ -42,7 +42,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install cppcheck
         run: sudo apt-get update && sudo apt-get install -y cppcheck
@@ -63,7 +63,7 @@ jobs:
 
       - name: Upload cppcheck report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: cppcheck-report
           path: cppcheck-report.txt
@@ -73,7 +73,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install flawfinder
         run: pip install flawfinder
@@ -91,9 +91,55 @@ jobs:
 
       - name: Upload flawfinder report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: flawfinder-report
           path: |
             flawfinder-report.txt
             flawfinder-report.html
+
+  freebsd-build:
+    name: Build on FreeBSD ${{ matrix.osversion }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - osversion: "15.1"     # current production release
+            release: "15.1"
+          - osversion: "16.0-CURRENT"
+            release: "16.0-CURRENT"
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Build kernel module in a FreeBSD VM
+        uses: vmactions/freebsd-vm@v1
+        with:
+          release: ${{ matrix.release }}
+          usesh: true
+          prepare: |
+            pkg install -y git
+          run: |
+            set -e
+            # Kernel sources are required to build an out-of-tree module
+            if [ ! -d /usr/src/sys ]; then
+              echo "Fetching kernel sources for $(uname -r)"
+              git clone --depth 1 \
+                -b $(uname -r | sed 's/-RELEASE.*/-RELEASE/;s/^\([0-9]*\)\..*CURRENT/main/' ) \
+                https://git.FreeBSD.org/src.git /usr/src || \
+              git clone --depth 1 https://git.FreeBSD.org/src.git /usr/src
+            fi
+            uname -a
+            make -C src clean || true
+            make -C src
+
+      - name: Upload built module
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: acpi_intel_sst-${{ matrix.osversion }}
+          path: src/acpi_intel_sst.ko
+          if-no-files-found: warn

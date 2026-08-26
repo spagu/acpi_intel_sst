@@ -134,6 +134,23 @@ When a headphone is inserted, the driver automatically routes audio from
 speakers to headphones.
 Jack state and statistics are available via
 .Xr sysctl 8 .
+.Ss Audio Device Permissions
+On FreeBSD 16-CURRENT and later,
+.Pa /dev/dsp*
+nodes are created with group ownership set to
+.Li audio
+.Pq gid 43 .
+Users who are not members of the
+.Li audio
+group will receive permission denied errors when accessing audio devices.
+To add your user to the audio group, run:
+.Bd -literal -offset indent
+pw groupmod audio -m $USER
+.Ed
+.Pp
+You must log out and log back in for the group membership to take effect.
+On FreeBSD 15.x, the audio device nodes are created with different permissions
+and this step is not required.
 .Ss Suspend and Resume
 Full S3 suspend/resume is supported.
 On suspend, all streams are torn down, the codec is powered off, and the
@@ -398,6 +415,7 @@ The
 .Nm
 driver first appeared as an out-of-tree module for
 .Fx 15.0 .
+It is supported on FreeBSD 15.0 and later, including 16-CURRENT.
 It is based on the Linux catpt driver by Cezary Rojewski.
 .Sh AUTHORS
 The

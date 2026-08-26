@@ -18,6 +18,9 @@ LICENSE_PERMS_INTEL_FW=	dist-mirror no-dist-sell pkg-mirror no-pkg-sell auto-acc
 ONLY_FOR_ARCHS=	amd64
 ONLY_FOR_ARCHS_REASON=	Intel SST DSP is only available on x86_64 platforms
 
+IGNORE_FreeBSD_13=	Requires sound(4) pcm_init()/pcm_register() KPI from FreeBSD 15.0+
+IGNORE_FreeBSD_14=	Requires sound(4) pcm_init()/pcm_register() KPI from FreeBSD 15.0+
+
 USES=		kmod uidfix
 
 USE_GITHUB=	yes

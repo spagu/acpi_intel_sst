@@ -43,7 +43,18 @@ Intel SST Audio Driver - Post-Install Configuration
 
    A full power-off reboot is required for DSDT changes to take effect.
 
-4. VERIFY
+4. AUDIO DEVICE PERMISSIONS (FreeBSD 16-CURRENT+)
+
+   On FreeBSD 16-CURRENT and later, /dev/dsp* nodes are created with
+   group ownership set to 'audio' (gid 43). Non-root users must be
+   added to this group to access audio devices:
+
+       pw groupmod audio -m $USER
+
+   After running this command, you must log out and log back in for
+   the group membership to take effect.
+
+5. VERIFY
 
        cat /dev/sndstat
        mixer vol 80
