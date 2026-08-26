@@ -12,6 +12,8 @@
 #include <sys/kernel.h>
 #include <sys/bus.h>
 #include <sys/systm.h>
+#include <sys/time.h>
+#include <sys/callout.h>
 #include <sys/lock.h>
 #include <sys/mutex.h>
 #include <sys/condvar.h>
@@ -28,9 +30,13 @@
 int
 sst_ipc_init(struct sst_softc *sc)
 {
+	if (sc->ipc.initialized)
+		return (0);
+
 	mtx_init(&sc->ipc.send_mtx, "sst_ipc_send", NULL, MTX_DEF);
 	mtx_init(&sc->ipc.lock, "sst_ipc", NULL, MTX_DEF);
 	cv_init(&sc->ipc.wait_cv, "sst_ipc_cv");
+	sc->ipc.initialized = true;
 
 	sc->ipc.state = SST_IPC_STATE_IDLE;
 	sc->ipc.ready = false;
@@ -60,6 +66,10 @@ sst_ipc_init(struct sst_softc *sc)
 void
 sst_ipc_fini(struct sst_softc *sc)
 {
+	/* Idempotent: attach fail paths call detach before init */
+	if (!sc->ipc.initialized)
+		return;
+	sc->ipc.initialized = false;
 	cv_destroy(&sc->ipc.wait_cv);
 	mtx_destroy(&sc->ipc.lock);
 	mtx_destroy(&sc->ipc.send_mtx);
@@ -95,10 +105,24 @@ sst_ipc_send(struct sst_softc *sc, uint32_t header, void *data, size_t size)
 	/* Check if DSP is busy */
 	ipcx = sst_shim_read(sc, SST_SHIM_IPCX);
 	if (ipcx & SST_IPC_BUSY) {
-		device_printf(sc->dev, "IPC: DSP busy\n");
-		sc->ipc.error_count++;
-		error = EBUSY;
-		goto done;
+		/*
+		 * A command that timed out can leave BUSY set forever,
+		 * which would fail every later command with EBUSY.
+		 * Clear the stale BUSY/DONE once and retry the read;
+		 * if the DSP still holds BUSY, it is genuinely busy.
+		 */
+		if (sc->ipc.stuck_busy) {
+			sst_shim_update_bits(sc, SST_SHIM_IPCX,
+			    SST_IPC_BUSY | SST_IPC_DONE, 0);
+			sc->ipc.stuck_busy = false;
+			ipcx = sst_shim_read(sc, SST_SHIM_IPCX);
+		}
+		if (ipcx & SST_IPC_BUSY) {
+			device_printf(sc->dev, "IPC: DSP busy\n");
+			sc->ipc.error_count++;
+			error = EBUSY;
+			goto done;
+		}
 	}
 
 	/*
@@ -159,6 +183,8 @@ sst_ipc_send(struct sst_softc *sc, uint32_t header, void *data, size_t size)
 			device_printf(sc->dev, "IPC timeout\n");
 			sc->ipc.state = SST_IPC_STATE_ERROR;
 			sc->ipc.error_count++;
+			/* The DSP may never clear BUSY for this command */
+			sc->ipc.stuck_busy = true;
 			error = ETIMEDOUT;
 			goto done;
 		}
@@ -320,7 +346,8 @@ sst_ipc_wait_ready(struct sst_softc *sc, int timeout_ms)
 				    csr, isr, ipcd);
 			}
 
-			DELAY(poll_interval_ms * 1000);
+			pause_sbt("sstipc", SBT_1MS * poll_interval_ms, 0,
+			    C_HARDCLOCK);
 			elapsed += poll_interval_ms;
 		}
 
@@ -400,18 +427,25 @@ sst_ipc_intr(struct sst_softc *sc)
 
 		ipcx = sst_shim_read(sc, SST_SHIM_IPCX);
 
+		mtx_lock(&sc->ipc.lock);
+
 		/*
-		 * Copy reply data from mbox_in BEFORE clearing DONE.
-		 *
-		 * The catpt firmware writes the IPC reply to the same
-		 * mailbox region where the host wrote the command
-		 * (mbox_in / "outbox"), overwriting the command data.
-		 * The "inbox" region only holds the FW_READY notification.
+		 * Only accept the reply if a command is actually pending.
+		 * A late reply to a command that already timed out must
+		 * not complete (and corrupt) the next command.
 		 */
-		{
+		if (sc->ipc.state == SST_IPC_STATE_PENDING) {
 			uint32_t dwords, k;
 			uint8_t *dst = sc->ipc.reply_data;
 
+			/*
+			 * Copy reply data from mbox_in BEFORE clearing
+			 * DONE.  The catpt firmware writes the reply to
+			 * the same mailbox region where the host wrote
+			 * the command (mbox_in / "outbox").  Done under
+			 * ipc.lock so sst_ipc_recv() never sees a torn
+			 * buffer.
+			 */
 			sc->ipc.reply_size = SST_IPC_REPLY_MAX;
 			dwords = SST_IPC_REPLY_MAX / 4;
 			for (k = 0; k < dwords; k++) {
@@ -419,19 +453,21 @@ sst_ipc_intr(struct sst_softc *sc)
 				    sc->ipc.mbox_in + (k * 4));
 				memcpy(dst + (k * 4), &val, 4);
 			}
+
+			/* Extract status from reply (bits 4:0) */
+			sc->ipc.msg.reply = ipcx;
+			sc->ipc.msg.status = ipcx & SST_IPC_STATUS_MASK;
+			sc->ipc.state = SST_IPC_STATE_DONE;
+			cv_signal(&sc->ipc.wait_cv);
+
+			sst_dbg(sc, SST_DBG_TRACE,
+			    "IPC reply: IPCX=0x%08x status=%d\n",
+			    ipcx, sc->ipc.msg.status);
+		} else {
+			sc->ipc.error_count++;
+			sst_dbg(sc, SST_DBG_TRACE,
+			    "IPC: stale reply IPCX=0x%08x ignored\n", ipcx);
 		}
-
-		mtx_lock(&sc->ipc.lock);
-
-		/* Extract status from reply (bits 4:0) */
-		sc->ipc.msg.reply = ipcx;
-		sc->ipc.msg.status = ipcx & SST_IPC_STATUS_MASK;
-		sc->ipc.state = SST_IPC_STATE_DONE;
-		cv_signal(&sc->ipc.wait_cv);
-
-		sst_dbg(sc, SST_DBG_TRACE,
-		    "IPC reply: IPCX=0x%08x status=%d\n",
-		    ipcx, sc->ipc.msg.status);
 
 		mtx_unlock(&sc->ipc.lock);
 
@@ -459,6 +495,8 @@ sst_ipc_intr(struct sst_softc *sc)
 			/* First notification after boot is FW_READY */
 			if (!sc->ipc.ready) {
 				sc->ipc.ready = true;
+				/* Wake sst_ipc_wait_ready() immediately */
+				cv_broadcast(&sc->ipc.wait_cv);
 				sst_dbg(sc, SST_DBG_LIFE,
 				    "IPC: DSP ready: IPCD=0x%08x\n",
 				    ipcd);
@@ -533,13 +571,22 @@ sst_ipc_alloc_stream(struct sst_softc *sc, struct sst_alloc_stream_req *req,
 	 * Layout: [req fields up to persistent_mem] [modules] [persistent_mem..end]
 	 */
 	off = __offsetof(struct sst_alloc_stream_req, persistent_mem);
-	arrsz = sizeof(struct sst_module_entry) * num_modules;
-	paysize = sizeof(*req) + arrsz;
 
-	if (paysize > sizeof(payload)) {
-		device_printf(sc->dev, "IPC: alloc payload too large\n");
-		return (ENOMEM);
+	/*
+	 * Bound num_modules explicitly: computing arrsz first and only
+	 * then checking paysize relies on two size_t wraparounds
+	 * cancelling out for a negative count.
+	 */
+	if (num_modules < 0 ||
+	    (size_t)num_modules > (sizeof(payload) - sizeof(*req)) /
+	    sizeof(struct sst_module_entry)) {
+		device_printf(sc->dev, "IPC: bad module count %d\n",
+		    num_modules);
+		return (EINVAL);
 	}
+
+	arrsz = sizeof(struct sst_module_entry) * (size_t)num_modules;
+	paysize = sizeof(*req) + arrsz;
 
 	/* Copy first part (up to persistent_mem) */
 	memcpy(payload, req, off);

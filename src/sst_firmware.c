@@ -13,6 +13,8 @@
 #include <sys/bus.h>
 #include <sys/firmware.h>
 #include <sys/systm.h>
+#include <sys/time.h>
+#include <sys/callout.h>
 
 #include <machine/bus.h>
 
@@ -96,7 +98,9 @@ sst_fw_load_block(struct sst_softc *sc, const struct sst_block_header *blk,
 		return (EINVAL);
 	}
 
-	if (blk->ram_offset + blk->size > max_size) {
+	/* Overflow-safe: (ram_offset + size) may wrap in 32 bits */
+	if (blk->ram_offset > max_size ||
+	    blk->size > max_size - blk->ram_offset) {
 		device_printf(sc->dev,
 		    "Block exceeds %s: off=0x%x, size=0x%x, max=0x%zx\n",
 		    type_name, blk->ram_offset, blk->size, max_size);
@@ -234,7 +238,8 @@ sst_fw_load_module(struct sst_softc *sc, const uint8_t *data, size_t size,
 	/* Load each block - starting from after module header */
 	offset = sizeof(struct sst_module_header);
 	for (i = 0; i < mod->blocks; i++) {
-		if (offset + sizeof(struct sst_block_header) > total_size) {
+		if (offset > total_size ||
+		    sizeof(struct sst_block_header) > total_size - offset) {
 			device_printf(sc->dev,
 			    "Block %u header exceeds module\n", i);
 			return (EINVAL);
@@ -243,7 +248,8 @@ sst_fw_load_module(struct sst_softc *sc, const uint8_t *data, size_t size,
 		blk = (const struct sst_block_header *)(data + offset);
 		offset += sizeof(struct sst_block_header);
 
-		if (offset + blk->size > total_size) {
+		/* Overflow-safe form of (offset + blk->size > total_size) */
+		if (blk->size > total_size - offset) {
 			device_printf(sc->dev,
 			    "Block %u data exceeds module: offset=%u"
 			    " blk_size=%u total=%zu\n",
@@ -437,6 +443,13 @@ sst_fw_init(struct sst_softc *sc)
 	sc->fw.entry_point = 0;
 	sc->fw.modules = 0;
 	sc->fw.state = SST_FW_STATE_NONE;
+
+	/*
+	 * Drop per-module state: a different image loaded afterwards
+	 * would otherwise inherit stale entry points and persistent
+	 * sizes for modules it does not even contain.
+	 */
+	memset(sc->fw.mod, 0, sizeof(sc->fw.mod));
 	sc->fw.dram_alloc_next = 0;
 
 	/* Assume all stages supported until probed otherwise */
@@ -767,7 +780,13 @@ sst_fw_boot(struct sst_softc *sc)
 					    ipcd, isrx);
 				}
 
-				DELAY(poll_ms * 1000);
+				/*
+				 * Boot runs from attach/resume, both
+				 * sleepable: yield instead of burning
+				 * a CPU for up to SST_BOOT_TIMEOUT_MS.
+				 */
+				pause_sbt("sstfwb", SBT_1MS * poll_ms, 0,
+				    C_HARDCLOCK);
 				elapsed += poll_ms;
 			}
 
@@ -872,8 +891,15 @@ sst_fw_boot(struct sst_softc *sc)
 		    fw_ready.fw_info_size);
 
 		/* Update IPC mailbox configuration if offsets look valid */
-		if (fw_ready.inbox_offset < SST_DRAM_SIZE &&
-		    fw_ready.outbox_offset < SST_DRAM_SIZE &&
+		/*
+		 * Whole mailbox windows must fit inside DRAM: the host
+		 * writes up to SST_MBOX_SIZE_IN bytes at outbox_offset and
+		 * reads up to SST_IPC_REPLY_MAX bytes at inbox_offset.
+		 */
+		if (fw_ready.outbox_offset < SST_DRAM_SIZE &&
+		    fw_ready.inbox_offset < SST_DRAM_SIZE &&
+		    SST_MBOX_SIZE_IN <= SST_DRAM_SIZE - fw_ready.outbox_offset &&
+		    SST_IPC_REPLY_MAX <= SST_DRAM_SIZE - fw_ready.inbox_offset &&
 		    fw_ready.inbox_size > 0 &&
 		    fw_ready.outbox_size > 0) {
 			/*

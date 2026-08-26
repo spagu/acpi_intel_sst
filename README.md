@@ -6,7 +6,7 @@
 
 **The first Intel Smart Sound Technology driver for any BSD operating system**
 
-[![FreeBSD](https://img.shields.io/badge/FreeBSD-15--CURRENT-AB2B28?style=for-the-badge&logo=freebsd&logoColor=white)](https://www.freebsd.org/)
+[![FreeBSD](https://img.shields.io/badge/FreeBSD-15.x%20%7C%2016--CURRENT-AB2B28?style=for-the-badge&logo=freebsd&logoColor=white)](https://www.freebsd.org/)
 [![License](https://img.shields.io/badge/License-BSD--3--Clause-0078D4?style=for-the-badge)](LICENSE)
 [![Platform](https://img.shields.io/badge/Intel-Broadwell--U-0071C5?style=for-the-badge&logo=intel&logoColor=white)](https://ark.intel.com/)
 [![Status](https://img.shields.io/badge/Audio-Working!-2ea44f?style=for-the-badge&logo=headphones&logoColor=white)](#current-status-v0644)
@@ -127,7 +127,7 @@ sleep 5 && kill %1
 
 ### Prerequisites
 
-- FreeBSD 15-CURRENT (or 14.x with source tree at `/usr/src`)
+- FreeBSD 15.0+ and 16-CURRENT
 - Intel Broadwell-U or Haswell platform
 - Intel SST firmware (`IntcSST2.bin`)
 
@@ -239,6 +239,22 @@ mixer mic 80
 cat /dev/dsp0.1 > /tmp/test.raw &
 sleep 5 && kill %1
 ```
+
+---
+
+## Audio Device Permissions
+
+On FreeBSD 16-CURRENT and later, `/dev/dsp*` nodes are created with group ownership set to `audio` (gid 43).
+Users who are not members of the `audio` group will receive permission denied errors when attempting to access audio devices.
+
+To add your user to the audio group:
+
+```bash
+pw groupmod audio -m $USER
+```
+
+You must log out and log back in for the group membership to take effect.
+On FreeBSD 15.x, the audio device nodes are created with different permissions and this step is not required.
 
 ---
 

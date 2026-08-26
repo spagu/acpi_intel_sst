@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Check for tabs (FreeBSD style)
         run: |
@@ -42,7 +42,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install cppcheck
         run: sudo apt-get update && sudo apt-get install -y cppcheck
@@ -63,7 +63,7 @@ jobs:
 
       - name: Upload cppcheck report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: cppcheck-report
           path: cppcheck-report.txt
@@ -73,7 +73,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install flawfinder
         run: pip install flawfinder
@@ -91,9 +91,89 @@ jobs:
 
       - name: Upload flawfinder report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: flawfinder-report
           path: |
             flawfinder-report.txt
             flawfinder-report.html
+
+  freebsd-build:
+    name: Build on FreeBSD ${{ matrix.osversion }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # vmactions/freebsd-vm only ships images up to the latest
+        # release (12.4 - 15.1 today); there is no 16-CURRENT image, so
+        # main is covered by the KPI review in audit/compat, not here.
+        include:
+          - osversion: "15.0"     # oldest supported release
+            release: "15.0"
+          - osversion: "15.1"     # current production release
+            release: "15.1"
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Build kernel module in a FreeBSD VM
+        # Pinned to a full commit SHA: third-party actions can move a
+        # tag under us, and this one runs arbitrary code in our runner.
+        uses: vmactions/freebsd-vm@f0552d3b69211736abd97f02ff3d4674c56b73b1 # v1
+        with:
+          release: ${{ matrix.release }}
+          usesh: true
+          prepare: |
+            pkg install -y git
+          run: |
+            set -e
+            # Kernel sources are required to build an out-of-tree module
+            if [ ! -d /usr/src/sys ]; then
+              echo "Fetching kernel sources for $(uname -r)"
+              git clone --depth 1 \
+                -b "releng/${{ matrix.release }}" \
+                https://git.FreeBSD.org/src.git /usr/src || \
+              git clone --depth 1 \
+                -b "stable/15" \
+                https://git.FreeBSD.org/src.git /usr/src
+            fi
+            uname -a
+            make -C src clean || true
+            make -C src
+
+      - name: Upload built module
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: acpi_intel_sst-${{ matrix.osversion }}
+          path: src/acpi_intel_sst.ko
+          if-no-files-found: warn
+
+  unit-tests:
+    name: Host-side Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Build and run firmware parser bounds tests
+        run: make -C tests/unit test
+
+      - name: Verify predicate mirror is in sync with the driver
+        run: |
+          # These predicates are duplicated in tests/unit for host-side
+          # testing; fail loudly if the driver copy changes.
+          set -e
+          for expr in \
+            'blk->ram_offset > max_size' \
+            'blk->size > total_size - offset' \
+            'SST_MBOX_SIZE_IN <= SST_DRAM_SIZE - fw_ready.outbox_offset'; do
+            grep -qF "$expr" src/sst_firmware.c || {
+              echo "::error::predicate '$expr' no longer present in src/sst_firmware.c -"\
+                   "update tests/unit/sst_fw_predicates.h to match"
+              exit 1
+            }
+          done
+          echo "predicate mirror in sync"

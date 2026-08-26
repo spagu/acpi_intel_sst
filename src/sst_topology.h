@@ -29,6 +29,13 @@
 #define SST_TPLG_NAME_LEN		32
 
 /*
+ * Sentinel value for "no DMA channel assigned yet" (sst_pipeline.dma_channel
+ * is signed specifically so this fits without being confused with a valid
+ * channel index).
+ */
+#define SST_DMA_CH_NONE			(-1)
+
+/*
  * Widget Types
  * Based on ALSA/ASoC widget types
  */
@@ -179,7 +186,8 @@ struct sst_pipeline {
 
 	/* Hardware binding */
 	uint32_t		ssp_port;	/* SSP port number */
-	uint32_t		dma_channel;	/* DMA channel */
+	int32_t			dma_channel;	/* DMA channel, or
+						   SST_DMA_CH_NONE */
 
 	/* Widgets in this pipeline */
 	struct sst_widget	*widgets;

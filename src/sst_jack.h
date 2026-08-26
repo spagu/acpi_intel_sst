@@ -15,6 +15,7 @@
 #include <sys/lock.h>
 #include <sys/mutex.h>
 #include <sys/callout.h>
+#include <sys/taskqueue.h>
 
 /*
  * Jack Types
@@ -35,22 +36,13 @@ enum sst_jack_state {
 };
 
 /*
- * GPIO Configuration for Realtek ALC3263
- * GPIO pins vary by platform - these are for Dell XPS 13 9343
+ * Jack detection uses the codec pin-sense verb, not GPIO emulation
+ * through the SST SHIM CSR (CSR bits 8-11 are DSP STALL/SDPM: writing
+ * them from a jack event stalls the DSP core).  These are codec node
+ * IDs whose presence bit is polled.
  */
-#define SST_GPIO_HP_DETECT	0	/* Headphone detect GPIO */
-#define SST_GPIO_MIC_DETECT	1	/* Microphone detect GPIO */
-#define SST_GPIO_HP_MUTE	2	/* Headphone mute GPIO */
-#define SST_GPIO_SPEAKER_MUTE	3	/* Speaker mute GPIO */
-
-/*
- * GPIO Register Offsets (Realtek HDA-style)
- */
-#define SST_GPIO_DATA		0x00	/* GPIO Data */
-#define SST_GPIO_DIR		0x01	/* GPIO Direction (0=in, 1=out) */
-#define SST_GPIO_WAKE		0x02	/* GPIO Wake Enable */
-#define SST_GPIO_UNSOL		0x03	/* GPIO Unsolicited Response */
-#define SST_GPIO_STICKY		0x04	/* GPIO Sticky Mask */
+#define SST_JACK_NID_HP		0x21	/* RT286 headphone pin */
+#define SST_JACK_NID_MIC	0x18	/* RT286 mic pin */
 
 /*
  * Jack Detection Methods
@@ -80,7 +72,7 @@ typedef void (*sst_jack_callback_t)(void *arg, uint32_t jackType,
 struct sst_jack_info {
 	uint32_t		type;		/* Jack type (SST_JACK_*) */
 	enum sst_jack_state	state;		/* Current state */
-	int			gpio;		/* GPIO pin number */
+	uint32_t		nid;		/* Codec pin node ID */
 	bool			inverted;	/* Inverted logic */
 	int			debounce_cnt;	/* Debounce counter */
 	enum sst_jack_state	pending_state;	/* Pending state */
@@ -108,8 +100,8 @@ struct sst_jack {
 	sst_jack_callback_t	callback;	/* Event callback */
 	void			*callback_arg;	/* Callback argument */
 
-	/* GPIO base address (from codec) */
-	bus_addr_t		gpio_base;
+	/* Deferred poll worker (codec I2C must not run in callout ctx) */
+	struct task		poll_task;
 
 	/* Statistics */
 	uint32_t		hp_insertions;	/* Headphone insertions */

@@ -267,11 +267,11 @@ sst_ssp_start(struct sst_softc *sc, int port)
 	if (port < 0 || port >= SST_SSP_PORTS)
 		return (EINVAL);
 
-	/* Increment reference count for shared port usage */
-	sc->ssp.port[port].ref_count++;
-
-	if (sc->ssp.port[port].state == SST_SSP_STATE_RUNNING)
+	if (sc->ssp.port[port].state == SST_SSP_STATE_RUNNING) {
+		/* Already running: just record the additional user. */
+		sc->ssp.port[port].ref_count++;
 		return (0);
+	}
 
 	if (sc->ssp.port[port].state == SST_SSP_STATE_IDLE) {
 		/*
@@ -288,6 +288,13 @@ sst_ssp_start(struct sst_softc *sc, int port)
 			return (EINVAL);
 		}
 	}
+
+	/*
+	 * State is now validated (CONFIGURED); commit to starting the
+	 * port, so only increment the reference count once we know we
+	 * will not bail out with an error below.
+	 */
+	sc->ssp.port[port].ref_count++;
 
 	/* Clear status */
 	sssr = ssp_read(sc, port, SSP_SSSR);
@@ -406,14 +413,13 @@ sst_ssp_write(struct sst_softc *sc, int port, const void *data, size_t len)
 
 	while (words-- > 0) {
 		/* Wait for TX FIFO not full */
-		timeout = 1000;
-		while (timeout-- > 0) {
+		for (timeout = 1000; timeout > 0; timeout--) {
 			if (ssp_read(sc, port, SSP_SSSR) & SSSR_TNF)
 				break;
 			DELAY(1);
 		}
 
-		if (timeout <= 0) {
+		if (timeout == 0) {
 			sc->ssp.port[port].errors++;
 			return (ETIMEDOUT);
 		}
@@ -440,14 +446,13 @@ sst_ssp_read(struct sst_softc *sc, int port, void *data, size_t len)
 
 	while (words-- > 0) {
 		/* Wait for RX FIFO not empty */
-		timeout = 1000;
-		while (timeout-- > 0) {
+		for (timeout = 1000; timeout > 0; timeout--) {
 			if (ssp_read(sc, port, SSP_SSSR) & SSSR_RNE)
 				break;
 			DELAY(1);
 		}
 
-		if (timeout <= 0) {
+		if (timeout == 0) {
 			sc->ssp.port[port].errors++;
 			return (ETIMEDOUT);
 		}

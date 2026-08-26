@@ -12,7 +12,9 @@
 #include <sys/param.h>
 #include <sys/kernel.h>
 #include <sys/bus.h>
+#include <sys/malloc.h>
 #include <sys/systm.h>
+#include <sys/taskqueue.h>
 
 #include <machine/bus.h>
 #include <machine/cpufunc.h>
@@ -50,6 +52,50 @@ sst_dump_pci_config(struct sst_softc *sc)
 	    bus_read_4(sc->shim_res, SST_PCI_VDRTCTL0));
 	sst_dbg(sc, SST_DBG_TRACE, "  VDRTCTL2: 0x%08x\n",
 	    bus_read_4(sc->shim_res, SST_PCI_VDRTCTL2));
+}
+
+/* ================================================================
+ * Deferred PCI Bus Rescan
+ *
+ * device_attach() already holds bus_topo_lock() (a non-recursive sx)
+ * on FreeBSD >= 14.  Calling bus_topo_lock()/BUS_RESCAN() directly
+ * from a function that is itself invoked from sst_pci_attach() (or
+ * any other attach-time hook) recurses on that lock and panics with
+ * "recursed on non-recursive lock".  FreeBSD 13.x masked this because
+ * the topology lock was the recursive Giant mutex.
+ *
+ * Defer the actual rescan to a taskqueue thread, which runs outside
+ * of device_attach()'s call stack and can safely take the topology
+ * lock itself.  This is safe on every supported branch (13.x - 16.x).
+ * ================================================================ */
+
+struct sst_rescan_ctx {
+	struct task	task;
+	device_t	pci;
+};
+
+static void
+sst_rescan_task(void *arg, int pending __unused)
+{
+	struct sst_rescan_ctx *ctx = arg;
+
+	bus_topo_lock();
+	BUS_RESCAN(ctx->pci);
+	bus_topo_unlock();
+	free(ctx, M_DEVBUF);
+}
+
+static void
+sst_schedule_pci_rescan(device_t pci)
+{
+	struct sst_rescan_ctx *ctx;
+
+	ctx = malloc(sizeof(*ctx), M_DEVBUF, M_NOWAIT | M_ZERO);
+	if (ctx == NULL)
+		return;
+	ctx->pci = pci;
+	TASK_INIT(&ctx->task, 0, sst_rescan_task, ctx);
+	taskqueue_enqueue(taskqueue_thread, &ctx->task);
 }
 
 /* ================================================================
@@ -165,108 +211,117 @@ sst_try_enable_hda(struct sst_softc *sc)
 				bus_space_handle_t hh;
 				int herr, htimeout;
 
-				/* Read and program HDA BAR */
+				/*
+				 * Read the HDA BAR.  Do NOT program a guessed
+				 * physical address here: if firmware/BIOS has
+				 * not assigned BAR0 yet, poking an arbitrary
+				 * address risks colliding with another
+				 * device's decode window.  Leave it alone and
+				 * let pci(4) assign a real BAR during the
+				 * BUS_RESCAN below; hdac(4) performs its own
+				 * reset once properly attached with a valid
+				 * resource.
+				 */
 				hda_bar = pci_cfgregread(0, PCH_HDA_BUS,
 				    PCH_HDA_DEV, PCH_HDA_FUNC, 0x10, 4);
-				if (hda_bar == 0 ||
-				    hda_bar == 0xFFFFFFFF) {
-					hda_bar = 0xDF900000;
-					pci_cfgregwrite(0, PCH_HDA_BUS,
-					    PCH_HDA_DEV, PCH_HDA_FUNC,
-					    0x10, hda_bar, 4);
-					DELAY(10000);
-				}
-				hda_bar &= ~0xF; /* mask type bits */
-
-				/* Enable MEM + Bus Master */
-				hda_cmd = pci_cfgregread(0, PCH_HDA_BUS,
-				    PCH_HDA_DEV, PCH_HDA_FUNC, 0x04, 2);
-				if ((hda_cmd & 0x06) != 0x06) {
-					pci_cfgregwrite(0, PCH_HDA_BUS,
-					    PCH_HDA_DEV, PCH_HDA_FUNC,
-					    0x04, hda_cmd | 0x06, 2);
-					DELAY(10000);
-				}
-
-				sst_dbg(sc, SST_DBG_OPS,
-				    "  HDA BAR: 0x%08x, CMD: 0x%04x\n",
-				    hda_bar, hda_cmd | 0x06);
-
-				/* Map HDA MMIO */
-				herr = bus_space_map(ht, hda_bar,
-				    0x4000, 0, &hh);
-				if (herr == 0) {
-					uint32_t gcap, gctl, statests;
-
-					gcap = bus_space_read_4(ht, hh,
-					    0x00);
-					gctl = bus_space_read_4(ht, hh,
-					    0x08);
-					sst_dbg(sc, SST_DBG_TRACE,
-					    "  HDA GCAP: 0x%08x,"
-					    " GCTL: 0x%08x\n",
-					    gcap, gctl);
-
-					/* HDA Reset: enter reset */
-					bus_space_write_4(ht, hh, 0x08,
-					    gctl & ~1);
-					for (htimeout = 100;
-					    htimeout > 0; htimeout--) {
-						DELAY(1000);
-						gctl = bus_space_read_4(ht,
-						    hh, 0x08);
-						if ((gctl & 1) == 0)
-							break;
-					}
-					sst_dbg(sc, SST_DBG_TRACE,
-					    "  HDA in reset: GCTL=0x%08x"
-					    " (%s)\n", gctl,
-					    (gctl & 1) == 0 ? "OK" :
-					    "FAILED");
-
-					/* Exit reset */
-					DELAY(1000);
-					bus_space_write_4(ht, hh, 0x08,
-					    gctl | 1);
-					for (htimeout = 100;
-					    htimeout > 0; htimeout--) {
-						DELAY(1000);
-						gctl = bus_space_read_4(ht,
-						    hh, 0x08);
-						if (gctl & 1)
-							break;
-					}
-					sst_dbg(sc, SST_DBG_TRACE,
-					    "  HDA out of reset:"
-					    " GCTL=0x%08x (%s)\n", gctl,
-					    (gctl & 1) ? "OK" : "FAILED");
-
-					/* Wait for codec discovery */
-					DELAY(500000); /* 500ms */
-
-					/* Check STATESTS for codecs */
-					statests = bus_space_read_2(ht,
-					    hh, 0x0E);
-					sst_dbg(sc, SST_DBG_TRACE,
-					    "  HDA STATESTS: 0x%04x"
-					    " (codecs: %s%s%s%s)\n",
-					    statests,
-					    (statests & 1) ? "SDI0 " : "",
-					    (statests & 2) ? "SDI1 " : "",
-					    (statests & 4) ? "SDI2 " : "",
-					    statests == 0 ? "NONE" : "");
-
-					gcap = bus_space_read_4(ht, hh,
-					    0x00);
-					sst_dbg(sc, SST_DBG_TRACE,
-					    "  HDA GCAP after: 0x%08x\n",
-					    gcap);
-
-					bus_space_unmap(ht, hh, 0x4000);
+				if (hda_bar == 0 || hda_bar == 0xFFFFFFFF) {
+					sst_dbg(sc, SST_DBG_OPS,
+					    "  HDA BAR0 not yet assigned;"
+					    " deferring reset to pci(4)/hdac(4)"
+					    " after rescan\n");
 				} else {
-					device_printf(sc->dev,
-					    "  HDA map failed: %d\n",
-					    herr);
+					hda_bar &= ~0xF; /* mask type bits */
+
+					/* Enable MEM + Bus Master */
+					hda_cmd = pci_cfgregread(0, PCH_HDA_BUS,
+					    PCH_HDA_DEV, PCH_HDA_FUNC, 0x04, 2);
+					if ((hda_cmd & 0x06) != 0x06) {
+						pci_cfgregwrite(0, PCH_HDA_BUS,
+						    PCH_HDA_DEV, PCH_HDA_FUNC,
+						    0x04, hda_cmd | 0x06, 2);
+						DELAY(10000);
+					}
+
+					sst_dbg(sc, SST_DBG_OPS,
+					    "  HDA BAR: 0x%08x, CMD: 0x%04x\n",
+					    hda_bar, hda_cmd | 0x06);
+
+					/* Map HDA MMIO */
+					herr = bus_space_map(ht, hda_bar,
+					    0x4000, 0, &hh);
+					if (herr == 0) {
+						uint32_t gcap, gctl, statests;
+
+						gcap = bus_space_read_4(ht, hh,
+						    0x00);
+						gctl = bus_space_read_4(ht, hh,
+						    0x08);
+						sst_dbg(sc, SST_DBG_TRACE,
+						    "  HDA GCAP: 0x%08x,"
+						    " GCTL: 0x%08x\n",
+						    gcap, gctl);
+
+						/* HDA Reset: enter reset */
+						bus_space_write_4(ht, hh, 0x08,
+						    gctl & ~1);
+						for (htimeout = 100;
+						    htimeout > 0; htimeout--) {
+							DELAY(1000);
+							gctl = bus_space_read_4(ht,
+							    hh, 0x08);
+							if ((gctl & 1) == 0)
+								break;
+						}
+						sst_dbg(sc, SST_DBG_TRACE,
+						    "  HDA in reset: GCTL=0x%08x"
+						    " (%s)\n", gctl,
+						    (gctl & 1) == 0 ? "OK" :
+						    "FAILED");
+
+						/* Exit reset */
+						DELAY(1000);
+						bus_space_write_4(ht, hh, 0x08,
+						    gctl | 1);
+						for (htimeout = 100;
+						    htimeout > 0; htimeout--) {
+							DELAY(1000);
+							gctl = bus_space_read_4(ht,
+							    hh, 0x08);
+							if (gctl & 1)
+								break;
+						}
+						sst_dbg(sc, SST_DBG_TRACE,
+						    "  HDA out of reset:"
+						    " GCTL=0x%08x (%s)\n", gctl,
+						    (gctl & 1) ? "OK" : "FAILED");
+
+						/* Wait for codec discovery */
+						DELAY(500000); /* 500ms */
+
+						/* Check STATESTS for codecs */
+						statests = bus_space_read_2(ht,
+						    hh, 0x0E);
+						sst_dbg(sc, SST_DBG_TRACE,
+						    "  HDA STATESTS: 0x%04x"
+						    " (codecs: %s%s%s%s)\n",
+						    statests,
+						    (statests & 1) ? "SDI0 " : "",
+						    (statests & 2) ? "SDI1 " : "",
+						    (statests & 4) ? "SDI2 " : "",
+						    statests == 0 ? "NONE" : "");
+
+						gcap = bus_space_read_4(ht, hh,
+						    0x00);
+						sst_dbg(sc, SST_DBG_TRACE,
+						    "  HDA GCAP after: 0x%08x\n",
+						    gcap);
+
+						bus_space_unmap(ht, hh, 0x4000);
+					} else {
+						device_printf(sc->dev,
+						    "  HDA map failed: %d\n",
+						    herr);
+					}
 				}
 			}
 
@@ -283,11 +338,9 @@ sst_try_enable_hda(struct sst_softc *sc)
 					    "pci", 0);
 					if (pci != NULL) {
 						sst_dbg(sc, SST_DBG_LIFE,
-						    "  Triggering PCI"
+						    "  Scheduling PCI"
 						    " rescan...\n");
-						bus_topo_lock();
-						BUS_RESCAN(pci);
-						bus_topo_unlock();
+						sst_schedule_pci_rescan(pci);
 					}
 				}
 			}
@@ -334,11 +387,9 @@ sst_try_enable_hda(struct sst_softc *sc)
 				    "pci", 0);
 				if (pci != NULL) {
 					sst_dbg(sc, SST_DBG_LIFE,
-					    "  Triggering PCI"
+					    "  Scheduling PCI"
 					    " rescan...\n");
-					bus_topo_lock();
-					BUS_RESCAN(pci);
-					bus_topo_unlock();
+					sst_schedule_pci_rescan(pci);
 				}
 			}
 		}
@@ -365,105 +416,6 @@ sst_try_enable_hda(struct sst_softc *sc)
 	bus_space_unmap(mem_tag, rcba_handle, PCH_RCBA_SIZE);
 
 	return (hda_vid != 0xFFFFFFFF ? 0 : ENXIO);
-}
-
-/* ================================================================
- * ADSP Enablement via RCBA
- *
- * When ADSD (bit 0 of FD register) is set, the ADSP function is
- * disabled at the PCH level. This means BAR0 (DSP MMIO) is gated
- * off and returns 0xFFFFFFFF, even though BAR1 (PCI config mirror)
- * may still be accessible via the LPSS private config space.
- *
- * This function clears ADSD to re-enable the ADSP hardware,
- * which should make BAR0 accessible.
- * ================================================================ */
-
-int __unused
-sst_try_enable_adsp(struct sst_softc *sc)
-{
-	uint32_t rcba_reg, rcba_base, fd, fd_new, fd_verify;
-	bus_space_tag_t mem_tag;
-	bus_space_handle_t rcba_handle;
-	int error;
-
-	sst_dbg(sc, SST_DBG_LIFE, "=== ADSP Enablement ===\n");
-
-	/* Read RCBA from LPC bridge */
-	rcba_reg = pci_cfgregread(0, PCH_LPC_BUS, PCH_LPC_DEV,
-	    PCH_LPC_FUNC, PCH_LPC_RCBA_REG, 4);
-	rcba_base = rcba_reg & PCH_RCBA_MASK;
-
-	if (rcba_base == 0 || rcba_base == PCH_RCBA_MASK ||
-	    !(rcba_reg & PCH_RCBA_ENABLE)) {
-		device_printf(sc->dev, "  RCBA not available\n");
-		return (ENXIO);
-	}
-
-	/* Map RCBA region */
-	mem_tag = X86_BUS_SPACE_MEM;
-	error = bus_space_map(mem_tag, rcba_base, PCH_RCBA_SIZE, 0,
-	    &rcba_handle);
-	if (error != 0) {
-		device_printf(sc->dev, "  Failed to map RCBA: %d\n", error);
-		return (error);
-	}
-
-	/* Read FD register */
-	fd = bus_space_read_4(mem_tag, rcba_handle, PCH_RCBA_FD);
-	sst_dbg(sc, SST_DBG_OPS, "  FD before: 0x%08x (ADSD=%d, HDAD=%d)\n",
-	    fd, (fd & PCH_FD_ADSD) ? 1 : 0, (fd & PCH_FD_HDAD) ? 1 : 0);
-
-	if (!(fd & PCH_FD_ADSD)) {
-		sst_dbg(sc, SST_DBG_LIFE, "  ADSP already enabled\n");
-		bus_space_unmap(mem_tag, rcba_handle, PCH_RCBA_SIZE);
-		return (0);
-	}
-
-	/* Clear ADSD to enable ADSP, also set HDAD to disable HDA
-	 * (only one of HDA/ADSP should be active) */
-	fd_new = fd & ~PCH_FD_ADSD;	/* Enable ADSP */
-	fd_new |= PCH_FD_HDAD;		/* Disable HDA (mutual exclusion) */
-
-	sst_dbg(sc, SST_DBG_OPS, "  Writing FD: 0x%08x -> 0x%08x\n",
-	    fd, fd_new);
-	sst_dbg(sc, SST_DBG_OPS, "  (Clearing ADSD to enable ADSP, setting HDAD)\n");
-
-	bus_space_write_4(mem_tag, rcba_handle, PCH_RCBA_FD, fd_new);
-	DELAY(100000);	/* 100ms settle */
-
-	/* Verify write took effect */
-	fd_verify = bus_space_read_4(mem_tag, rcba_handle, PCH_RCBA_FD);
-	sst_dbg(sc, SST_DBG_OPS, "  FD after:  0x%08x (ADSD=%d, HDAD=%d)\n",
-	    fd_verify,
-	    (fd_verify & PCH_FD_ADSD) ? 1 : 0,
-	    (fd_verify & PCH_FD_HDAD) ? 1 : 0);
-
-	if (fd_verify & PCH_FD_ADSD) {
-		sst_dbg(sc, SST_DBG_OPS,
-		    "  ADSD write REJECTED by hardware\n");
-		/* Try just clearing ADSD without touching HDAD */
-		fd_new = fd & ~PCH_FD_ADSD;
-		sst_dbg(sc, SST_DBG_OPS,
-		    "  Retry: writing FD 0x%08x (only clear ADSD)\n", fd_new);
-		bus_space_write_4(mem_tag, rcba_handle, PCH_RCBA_FD, fd_new);
-		DELAY(100000);
-		fd_verify = bus_space_read_4(mem_tag, rcba_handle, PCH_RCBA_FD);
-		sst_dbg(sc, SST_DBG_OPS, "  FD retry:  0x%08x (ADSD=%d)\n",
-		    fd_verify, (fd_verify & PCH_FD_ADSD) ? 1 : 0);
-	}
-
-	if (!(fd_verify & PCH_FD_ADSD)) {
-		sst_dbg(sc, SST_DBG_LIFE, "  *** ADSP ENABLED! ***\n");
-		sst_dbg(sc, SST_DBG_LIFE, "  Waiting for hardware to stabilize...\n");
-		DELAY(200000);	/* 200ms for hardware to come up */
-	} else {
-		device_printf(sc->dev, "  ADSD is write-locked, cannot enable ADSP via FD\n");
-	}
-
-	bus_space_unmap(mem_tag, rcba_handle, PCH_RCBA_SIZE);
-
-	return ((fd_verify & PCH_FD_ADSD) ? EPERM : 0);
 }
 
 /* ================================================================
@@ -589,7 +541,9 @@ sst_iobp_probe(struct sst_softc *sc)
 	uint32_t pcicfgctl, pmctl, vdldat1, vdldat2;
 	bus_space_tag_t mt;
 	bus_space_handle_t rh;
-	int error;
+	int error, pmctl_error;
+
+	pmctl = 0;
 
 	sst_dbg(sc, SST_DBG_TRACE, "=== IOBP Sideband Probe ===\n");
 
@@ -620,8 +574,8 @@ sst_iobp_probe(struct sst_softc *sc)
 	    !!(pcicfgctl & ADSP_PCICFGCTL_PCICD),
 	    !!(pcicfgctl & ADSP_PCICFGCTL_ACPIIE));
 
-	error = sst_iobp_read(mt, rh, ADSP_IOBP_PMCTL, &pmctl);
-	if (error == 0)
+	pmctl_error = sst_iobp_read(mt, rh, ADSP_IOBP_PMCTL, &pmctl);
+	if (pmctl_error == 0)
 		sst_dbg(sc, SST_DBG_TRACE, "  PMCTL: 0x%08x %s\n",
 		    pmctl, pmctl == 0x3f ? "(OK)" : "(NEED 0x3f!)");
 	error = sst_iobp_read(mt, rh, ADSP_IOBP_VDLDAT1, &vdldat1);
@@ -631,8 +585,9 @@ sst_iobp_probe(struct sst_softc *sc)
 	if (error == 0)
 		sst_dbg(sc, SST_DBG_TRACE, "  VDLDAT2: 0x%08x\n", vdldat2);
 
-	/* Set PMCTL if needed */
-	if (pmctl != ADSP_PMCTL_VALUE) {
+	/* Set PMCTL if needed (only if the read above actually
+	 * succeeded; pmctl is uninitialized garbage otherwise) */
+	if (pmctl_error == 0 && pmctl != ADSP_PMCTL_VALUE) {
 		sst_dbg(sc, SST_DBG_OPS, "  Setting PMCTL=0x3f\n");
 		sst_iobp_write(mt, rh, ADSP_IOBP_PMCTL, ADSP_PMCTL_VALUE);
 		DELAY(10000);
@@ -986,10 +941,10 @@ sst_dump_pch_state(struct sst_softc *sc)
 			sst_dbg(sc, SST_DBG_TRACE,
 			    "  Direct BAR0[0]=0x%08x [4]=0x%08x\n", v0, v4);
 
-			/* Try SHIM offset */
-			if (0xC0000 < 0x1000) {
-				/* Can't reach SHIM with 4K map */
-			}
+			/*
+			 * SHIM is at BAR0 + 0xFB000, well past this 4K
+			 * probe map; it is mapped separately below.
+			 */
 			bus_space_unmap(mem_tag, bar0_handle, 0x1000);
 		} else {
 			sst_dbg(sc, SST_DBG_TRACE,

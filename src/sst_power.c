@@ -22,22 +22,32 @@
 
 #include "acpi_intel_sst.h"
 
-void
+int
 sst_reset(struct sst_softc *sc)
 {
+	int error;
+
 	sst_dbg(sc, SST_DBG_LIFE, "Resetting DSP...\n");
-	sst_dsp_stall(sc, true);
-	sst_dsp_reset(sc, true);
+
+	error = sst_dsp_stall(sc, true);
+	if (error != 0)
+		device_printf(sc->dev, "DSP stall timed out: %d\n", error);
+
+	error = sst_dsp_reset(sc, true);
+	if (error != 0)
+		device_printf(sc->dev, "DSP reset timed out: %d\n", error);
+
 	DELAY(SST_RESET_DELAY_US);
+	return (error);
 }
 
-void
+int
 sst_init(struct sst_softc *sc)
 {
 	/* Mask all IPC interrupts initially */
 	sst_shim_write(sc, SST_SHIM_IMRX, SST_IMC_DEFAULT);
 	sst_shim_write(sc, SST_SHIM_IMRD, SST_IMD_DEFAULT);
-	sst_reset(sc);
+	return (sst_reset(sc));
 }
 
 /* ================================================================
@@ -198,8 +208,9 @@ sst_wpt_power_down(struct sst_softc *sc)
 	bus_write_4(sc->shim_res, SST_PCI_VDRTCTL2, vdrtctl2);
 
 	/* 2. Assert reset (if SHIM is accessible) */
-	if (sc->mem_res != NULL)
-		sst_dsp_reset(sc, true);
+	if (sc->mem_res != NULL && sst_dsp_reset(sc, true) != 0)
+		device_printf(sc->dev,
+		    "power-down: DSP reset timed out (continuing)\n");
 
 	/* 3-5. Set SSP bank clocks, LP clock, register defaults
 	 * (only if SHIM accessible - during initial power cycle it may not be) */
@@ -390,17 +401,16 @@ sst_wpt_power_up(struct sst_softc *sc)
 	    (vdrtctl0 & SST_WPT_VDRTCTL0_DSRAMPGE_MASK) >>
 		SST_WPT_VDRTCTL0_DSRAMPGE_SHIFT);
 
-	/* Quick BAR0 test - check multiple offsets */
+	/* Quick BAR0 test - check IRAM and SHIM */
 	if (sc->mem_res != NULL) {
 		uint32_t iram0 = bus_read_4(sc->mem_res, 0);
 		uint32_t shim0 = bus_read_4(sc->mem_res, SST_SHIM_OFFSET);
-		uint32_t sram_ctrl = bus_read_4(sc->mem_res, 0xFB000);
+
 		sst_dbg(sc, SST_DBG_TRACE,
-		    "  BAR0 test: IRAM[0]=0x%08x SHIM[0]=0x%08x SRAM_CTRL=0x%08x\n",
-		    iram0, shim0, sram_ctrl);
+		    "  BAR0 test: IRAM[0]=0x%08x SHIM[0]=0x%08x\n",
+		    iram0, shim0);
 		if (iram0 != SST_INVALID_REG_VALUE ||
-		    shim0 != SST_INVALID_REG_VALUE ||
-		    sram_ctrl != SST_INVALID_REG_VALUE)
+		    shim0 != SST_INVALID_REG_VALUE)
 			sst_dbg(sc, SST_DBG_LIFE, "  *** BAR0 ALIVE! ***\n");
 	}
 

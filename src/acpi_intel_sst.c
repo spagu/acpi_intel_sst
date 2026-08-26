@@ -59,6 +59,14 @@ static int sst_pci_probe(device_t dev);
 static int sst_pci_attach(device_t dev);
 static int sst_pci_detach(device_t dev);
 static void sst_intr(void *arg);
+
+/*
+ * Set once the ACPI front-end has claimed the DSP.  The PCI front-end
+ * uses it to avoid attaching a second driver instance to the same
+ * hardware after PCICD is cleared.  Written only from attach/detach,
+ * which the newbus topology lock already serializes.
+ */
+static device_t sst_acpi_instance;
 /* Supported ACPI IDs */
 static char *sst_ids[] = {
 	SST_ACPI_ID_BDW,
@@ -87,7 +95,8 @@ sst_intr(void *arg)
 	if (isr == 0 || isr == SST_INVALID_REG_VALUE)
 		return;
 
-	if (isr & (SST_IMC_IPCCD | SST_IMC_IPCDB))
+	/* Shared IRQ: subsystems may not be initialized yet (or anymore) */
+	if (sc->ipc.initialized && (isr & (SST_IMC_IPCCD | SST_IMC_IPCDB)))
 		sst_ipc_intr(sc);
 
 	sst_dma_intr(sc);
@@ -219,12 +228,26 @@ sst_acpi_probe(device_t dev)
 static int
 sst_pci_probe(device_t dev)
 {
-	if (pci_get_vendor(dev) == PCI_VENDOR_INTEL &&
-	    pci_get_device(dev) == PCI_DEVICE_SST_BDW) {
-		device_set_desc(dev, "Intel Broadwell-U Audio DSP (PCI Mode)");
-		return (BUS_PROBE_DEFAULT);
+	if (pci_get_vendor(dev) != PCI_VENDOR_INTEL ||
+	    pci_get_device(dev) != PCI_DEVICE_SST_BDW)
+		return (ENXIO);
+
+	/*
+	 * The same DSP can appear twice: once through ACPI (INT3438)
+	 * and, after the driver clears PCICD, once on the PCI bus.
+	 * Attaching both would give two softcs fighting over the same
+	 * SHIM and BARs, so refuse the PCI instance when the ACPI one
+	 * already claimed the hardware.
+	 */
+	if (sst_acpi_instance != NULL) {
+		device_printf(dev,
+		    "already driven via %s, skipping PCI instance\n",
+		    device_get_nameunit(sst_acpi_instance));
+		return (ENXIO);
 	}
-	return (ENXIO);
+
+	device_set_desc(dev, "Intel Broadwell-U Audio DSP (PCI Mode)");
+	return (BUS_PROBE_DEFAULT);
 }
 
 /* ================================================================
@@ -253,6 +276,10 @@ sst_acpi_attach(device_t dev)
 	/* Allow boot-time override via device.hints */
 	resource_int_value(device_get_name(dev), device_get_unit(dev),
 	    "debug", &sc->debug_level);
+	if (sc->debug_level < SST_DBG_QUIET)
+		sc->debug_level = SST_DBG_QUIET;
+	else if (sc->debug_level > SST_DBG_TRACE)
+		sc->debug_level = SST_DBG_TRACE;
 
 	mtx_init(&sc->sc_mtx, "sst_sc", NULL, MTX_DEF);
 
@@ -448,8 +475,25 @@ sst_acpi_attach(device_t dev)
 		bus_space_tag_t mt = X86_BUS_SPACE_MEM;
 		bus_space_handle_t gnvs_handle;
 		int map_err;
+		int gnvs_probe = 0;
+
+		/*
+		 * PCH_GNVS_BASE is a fixed physical address taken from
+		 * one machine's DSDT.  On any other board that address
+		 * is ordinary RAM, not MMIO, so this dump is opt-in via
+		 *   hint.acpi_intel_sst.0.gnvs_probe=1
+		 * and skipped by default.
+		 */
+		resource_int_value(device_get_name(dev),
+		    device_get_unit(dev), "gnvs_probe", &gnvs_probe);
 
 		sst_dbg(sc, SST_DBG_TRACE, "=== BIOS NVS Variables ===\n");
+
+		if (gnvs_probe == 0) {
+			sst_dbg(sc, SST_DBG_TRACE,
+			    "  skipped (set hint...gnvs_probe=1 to enable)\n");
+			goto gnvs_done;
+		}
 
 		map_err = bus_space_map(mt, PCH_GNVS_BASE, PCH_GNVS_SIZE,
 		    0, &gnvs_handle);
@@ -575,10 +619,11 @@ sst_acpi_attach(device_t dev)
 			    "  Cannot map GNVS at 0x%08x: %d\n",
 			    PCH_GNVS_BASE, map_err);
 		}
+gnvs_done:
+		;
 	}
 
-	/* Restore FD to BIOS default (0x00368011) in case previous
-	 * module loads corrupted it with wrong bit offsets */
+	/* Report the LPC Function Disable register (read-only diagnostics) */
 	{
 		uint32_t rcba_reg, rcba_base, fd;
 		bus_space_tag_t mt = X86_BUS_SPACE_MEM;
@@ -606,18 +651,17 @@ sst_acpi_attach(device_t dev)
 			    (fd & PCH_FD_HDAD) ? "HDA Disabled" :
 			    "HDA Enabled");
 
-			/* Restore BIOS default if corrupted by previous
-			 * wrong-bit-offset writes */
-			if (fd != 0x00368011) {
-				sst_dbg(sc, SST_DBG_TRACE,
-				    "  Restoring FD to BIOS default 0x00368011\n");
-				bus_space_write_4(mt, rh, PCH_RCBA_FD,
-				    0x00368011);
-				DELAY(10000);
-				fd = bus_space_read_4(mt, rh, PCH_RCBA_FD);
-				sst_dbg(sc, SST_DBG_TRACE,
-				    "  FD after restore: 0x%08x\n", fd);
-			}
+			/*
+			 * Function Disable is read-only here.
+			 *
+			 * A previous version restored a hard-coded
+			 * "BIOS default" (0x00368011) taken from one
+			 * XPS 13 9343.  On any other board that value
+			 * can disable SATA, SMBus or xHCI - i.e. take
+			 * the boot disk away - and it also re-disabled
+			 * HDA right after sst_try_enable_hda() cleared
+			 * that bit.  Never write FD from this driver.
+			 */
 
 			bus_space_unmap(mt, rh, PCH_RCBA_SIZE);
 		}
@@ -1055,7 +1099,12 @@ dsp_init:
 	 * RST was already cleared in SHIM config step 5.
 	 * DCLCGE must stay disabled for MMIO writes (Linux uses DMA instead).
 	 */
-	sst_dsp_stall(sc, true);   /* Ensure STALL is set */
+	/* Firmware must not be written to a running DSP core */
+	error = sst_dsp_stall(sc, true);
+	if (error != 0) {
+		device_printf(dev, "DSP stall failed: %d\n", error);
+		goto fail;
+	}
 	{
 		uint32_t pre_csr = sst_shim_read(sc, SST_SHIM_CSR);
 		sst_dbg(sc, SST_DBG_OPS, "Pre-FW load: CSR=0x%08x (STALL=%d RST=%d)\n",
@@ -1122,7 +1171,15 @@ dsp_init:
 	}
 
 	sc->attached = true;
-	sc->state = SST_STATE_ATTACHED;
+	sst_acpi_instance = dev;
+	/*
+	 * ATTACHED means "device claimed"; RUNNING additionally means
+	 * the DSP booted and streams can be started.  Suspend/resume
+	 * keys off this, so it must be set here and not only after a
+	 * resume cycle.
+	 */
+	sc->state = (sc->fw.state == SST_FW_STATE_RUNNING) ?
+	    SST_STATE_RUNNING : SST_STATE_ATTACHED;
 	device_printf(dev, "Intel SST DSP attached successfully\n");
 	return (0);
 
@@ -1230,24 +1287,6 @@ sst_pci_attach(device_t dev)
 	sst_dbg(sc, SST_DBG_LIFE, "BAR0 test: %s\n",
 	    bar0_ok ? "ACCESSIBLE" : "DEAD (0xFFFFFFFF)");
 
-	/* Allocate IRQ */
-	sc->irq_rid = 0;
-	sc->irq_res = bus_alloc_resource_any(dev, SYS_RES_IRQ,
-	    &sc->irq_rid, RF_SHAREABLE | RF_ACTIVE);
-	if (sc->irq_res == NULL) {
-		device_printf(dev, "Failed to allocate IRQ\n");
-		/* Don't fail yet, maybe we can run without IRQ for init test */
-	} else {
-		sst_dbg(sc, SST_DBG_LIFE, "IRQ assigned\n");
-		error = bus_setup_intr(dev, sc->irq_res,
-		    INTR_TYPE_AV | INTR_MPSAFE,
-		    NULL, sst_intr, sc, &sc->irq_cookie);
-		if (error) {
-			device_printf(dev, "Failed to setup IRQ: %d\n", error);
-			sc->irq_cookie = NULL;
-		}
-	}
-
 	if (bar0_ok) {
 		/* Probe DSP memory regions */
 		sst_dbg(sc, SST_DBG_LIFE, "DSP Memory Layout (PCI):\n");
@@ -1261,11 +1300,29 @@ sst_pci_attach(device_t dev)
 		    SST_SHIM_OFFSET,
 		    bus_read_4(sc->mem_res, SST_SHIM_OFFSET));
 
-		/* Initialize IPC subsystem */
+		/* Initialize IPC subsystem BEFORE the IRQ handler exists */
 		error = sst_ipc_init(sc);
 		if (error) {
 			device_printf(dev, "IPC init failed\n");
 			goto fail;
+		}
+
+		/* Allocate IRQ (shared: ISR may fire immediately) */
+		sc->irq_rid = 0;
+		sc->irq_res = bus_alloc_resource_any(dev, SYS_RES_IRQ,
+		    &sc->irq_rid, RF_SHAREABLE | RF_ACTIVE);
+		if (sc->irq_res == NULL) {
+			device_printf(dev, "Failed to allocate IRQ\n");
+		} else {
+			sst_dbg(sc, SST_DBG_LIFE, "IRQ assigned\n");
+			error = bus_setup_intr(dev, sc->irq_res,
+			    INTR_TYPE_AV | INTR_MPSAFE,
+			    NULL, sst_intr, sc, &sc->irq_cookie);
+			if (error) {
+				device_printf(dev,
+				    "Failed to setup IRQ: %d\n", error);
+				sc->irq_cookie = NULL;
+			}
 		}
 
 		/* Initialize firmware subsystem */
@@ -1394,7 +1451,8 @@ sst_pci_attach(device_t dev)
 		}
 
 		sc->attached = true;
-		sc->state = SST_STATE_ATTACHED;
+		sc->state = (sc->fw.state == SST_FW_STATE_RUNNING) ?
+		    SST_STATE_RUNNING : SST_STATE_ATTACHED;
 		device_printf(dev, "Intel SST DSP attached successfully\n");
 	} else {
 		sst_dbg(sc, SST_DBG_LIFE, "PCI Attach: BAR0 still dead. Hardware is tough.\n");
@@ -1405,20 +1463,35 @@ sst_pci_attach(device_t dev)
 	return (0);
 
 fail:
-	if (sc->irq_res)
-		bus_release_resource(dev, SYS_RES_IRQ, sc->irq_rid, sc->irq_res);
-	if (sc->shim_res)
-		bus_release_resource(dev, SYS_RES_MEMORY, sc->shim_rid, sc->shim_res);
-	if (sc->mem_res)
-		bus_release_resource(dev, SYS_RES_MEMORY, sc->mem_rid, sc->mem_res);
-	mtx_destroy(&sc->sc_mtx);
+	/* Every *_fini() is idempotent, so a full teardown is safe here */
+	sst_pci_detach(dev);
 	return (error);
 }
 
-static int
-sst_pci_detach(device_t dev)
+/*
+ * sst_detach_common - teardown shared by the ACPI and PCI front-ends.
+ *
+ * Order matters:
+ *   1. mask DSP interrupts and tear down the (shared) IRQ handler so
+ *      the ISR can no longer touch IPC/DMA state,
+ *   2. release subsystems in reverse order of initialization,
+ *   3. power the DSP block down (re-enables clock gating),
+ *   4. release bus resources.
+ */
+static void
+sst_detach_common(device_t dev)
 {
 	struct sst_softc *sc = device_get_softc(dev);
+
+	if (sc->mem_res != NULL && sc->ipc.initialized) {
+		sst_shim_write(sc, SST_SHIM_IMRX, SST_IMC_DEFAULT);
+		sst_shim_write(sc, SST_SHIM_IMRD, SST_IMD_DEFAULT);
+	}
+
+	if (sc->irq_cookie != NULL) {
+		bus_teardown_intr(dev, sc->irq_res, sc->irq_cookie);
+		sc->irq_cookie = NULL;
+	}
 
 	/* Cleanup subsystems in reverse order of initialization */
 	sst_codec_fini(sc);
@@ -1430,26 +1503,37 @@ sst_pci_detach(device_t dev)
 	sst_fw_fini(sc);
 	sst_ipc_fini(sc);
 
-	if (sc->irq_cookie) {
-		bus_teardown_intr(dev, sc->irq_res, sc->irq_cookie);
-		sc->irq_cookie = NULL;
-	}
-	if (sc->irq_res) {
-		bus_release_resource(dev, SYS_RES_IRQ, sc->irq_rid, sc->irq_res);
+	/* Leave the DSP power-gated with clock gating restored */
+	if (sc->shim_res != NULL)
+		sst_wpt_power_down(sc);
+
+	if (sc->irq_res != NULL) {
+		bus_release_resource(dev, SYS_RES_IRQ, sc->irq_rid,
+		    sc->irq_res);
 		sc->irq_res = NULL;
 	}
-	if (sc->shim_res) {
-		bus_release_resource(dev, SYS_RES_MEMORY, sc->shim_rid, sc->shim_res);
+	if (sc->shim_res != NULL) {
+		bus_release_resource(dev, SYS_RES_MEMORY, sc->shim_rid,
+		    sc->shim_res);
 		sc->shim_res = NULL;
 	}
-	if (sc->mem_res) {
-		bus_release_resource(dev, SYS_RES_MEMORY, sc->mem_rid, sc->mem_res);
+	if (sc->mem_res != NULL) {
+		bus_release_resource(dev, SYS_RES_MEMORY, sc->mem_rid,
+		    sc->mem_res);
 		sc->mem_res = NULL;
 	}
 
 	if (mtx_initialized(&sc->sc_mtx))
 		mtx_destroy(&sc->sc_mtx);
 
+	sc->attached = false;
+	sc->state = SST_STATE_DETACHED;
+}
+
+static int
+sst_pci_detach(device_t dev)
+{
+	sst_detach_common(dev);
 	return (0);
 }
 
@@ -1460,44 +1544,12 @@ sst_pci_detach(device_t dev)
 static int
 sst_acpi_detach(device_t dev)
 {
-	struct sst_softc *sc;
+	struct sst_softc *sc = device_get_softc(dev);
 
-	sc = device_get_softc(dev);
+	sst_detach_common(dev);
 
-	sst_codec_fini(sc);
-	sst_jack_fini(sc);
-	sst_topology_fini(sc);
-	sst_pcm_fini(sc);
-	sst_ssp_fini(sc);
-	sst_dma_fini(sc);
-	sst_fw_fini(sc);
-	sst_ipc_fini(sc);
-
-	if (sc->irq_cookie != NULL) {
-		bus_teardown_intr(dev, sc->irq_res, sc->irq_cookie);
-		sc->irq_cookie = NULL;
-	}
-
-	if (sc->irq_res != NULL) {
-		bus_release_resource(dev, SYS_RES_IRQ, sc->irq_rid,
-		    sc->irq_res);
-		sc->irq_res = NULL;
-	}
-
-	if (sc->shim_res != NULL) {
-		bus_release_resource(dev, SYS_RES_MEMORY, sc->shim_rid,
-		    sc->shim_res);
-		sc->shim_res = NULL;
-	}
-
-	if (sc->mem_res != NULL) {
-		bus_release_resource(dev, SYS_RES_MEMORY, sc->mem_rid,
-		    sc->mem_res);
-		sc->mem_res = NULL;
-	}
-
-	if (mtx_initialized(&sc->sc_mtx))
-		mtx_destroy(&sc->sc_mtx);
+	if (sst_acpi_instance == dev)
+		sst_acpi_instance = NULL;
 
 	if (sc->handle != NULL)
 		acpi_pwr_switch_consumer(sc->handle, ACPI_STATE_D3);
@@ -1515,6 +1567,18 @@ sst_acpi_suspend(device_t dev)
 	struct sst_softc *sc = device_get_softc(dev);
 
 	sst_dbg(sc, SST_DBG_LIFE, "Suspending...\n");
+
+	/*
+	 * Only a fully booted DSP has anything to tear down.  Devices
+	 * left in the diagnostic state (dead BAR0, no firmware) have no
+	 * IPC/PCM/DMA state and a dead SHIM: leave them alone.
+	 */
+	if (sc->fw.state != SST_FW_STATE_RUNNING ||
+	    (sc->state != SST_STATE_ATTACHED &&
+	     sc->state != SST_STATE_RUNNING)) {
+		sst_dbg(sc, SST_DBG_LIFE, "Suspend: DSP not running, skip\n");
+		return (0);
+	}
 
 	/* 1. Stop jack detection polling */
 	sst_jack_disable(sc);
@@ -1535,12 +1599,15 @@ sst_acpi_suspend(device_t dev)
 	sc->topology.widget_count = 0;
 	sc->topology.route_count = 0;
 
-	/* 6. Reset DSP and power off */
+	/*
+	 * 6. Reset DSP and power off.  Always run the WPT power-down
+	 * sequence (VDRTCTL0/PMCS via BAR1) - ACPI D3 alone does not
+	 * gate SRAM or restore clock gating.
+	 */
 	sst_reset(sc);
+	sst_wpt_power_down(sc);
 	if (sc->handle != NULL)
 		acpi_pwr_switch_consumer(sc->handle, ACPI_STATE_D3);
-	else
-		sst_wpt_power_down(sc);
 	sc->state = SST_STATE_SUSPENDED;
 
 	sst_dbg(sc, SST_DBG_LIFE, "Suspended\n");
@@ -1555,16 +1622,30 @@ sst_acpi_resume(device_t dev)
 
 	sst_dbg(sc, SST_DBG_LIFE, "Resuming...\n");
 
-	/* 1. Power to D0 */
+	/* Nothing was suspended (see sst_acpi_suspend) */
+	if (sc->state != SST_STATE_SUSPENDED)
+		return (0);
+
+	/*
+	 * 1. Power to D0.  After S3 the BIOS leaves VDRTCTL0/PMCS at
+	 * their reset values (SRAM power-gated), so the WPT power-up
+	 * sequence is required in addition to ACPI D0 - otherwise
+	 * sst_fw_reload() writes into gated SRAM and silently loses
+	 * bytes.
+	 */
 	if (sc->handle != NULL) {
 		acpi_pwr_switch_consumer(sc->handle, ACPI_STATE_D0);
 		DELAY(10000);
-	} else {
-		sst_wpt_power_up(sc);
 	}
+	sst_wpt_power_up(sc);
+	sst_sram_sanitize(sc);
 
 	/* 2. Init SHIM (mask interrupts, reset DSP) */
-	sst_init(sc);
+	if (sst_init(sc) != 0) {
+		device_printf(dev, "Resume: DSP did not respond to reset\n");
+		sc->state = SST_STATE_ERROR;
+		return (ENXIO);
+	}
 	sc->ipc.ready = false;
 	sc->ipc.state = SST_IPC_STATE_IDLE;
 

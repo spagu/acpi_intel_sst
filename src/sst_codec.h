@@ -33,6 +33,8 @@
 #define _SST_CODEC_H_
 
 #include <sys/types.h>
+#include <sys/lock.h>
+#include <sys/mutex.h>
 #include <machine/bus.h>
 
 /*
@@ -72,6 +74,9 @@
 /* Pin Widget Control (verb 0x707 set, 0xF07 get) */
 #define RT286_SET_PIN_CTRL(nid)	(((uint32_t)(nid) << 20) | 0x70700)
 #define RT286_GET_PIN_CTRL(nid)	(((uint32_t)(nid) << 20) | 0xF0700)
+/* Pin sense (presence detect): verb 0xF09, bit 31 = jack present */
+#define RT286_GET_PIN_SENSE(nid) (((uint32_t)(nid) << 20) | 0xF0900)
+#define RT286_PIN_SENSE_PRESENT	0x80000000
 
 /* EAPD/BTL Enable (verb 0x70C set, 0xF0C get) */
 #define RT286_SET_EAPD(nid)	(((uint32_t)(nid) << 20) | 0x70C00)
@@ -175,13 +180,15 @@
  * Codec State Structure
  */
 struct sst_codec {
+	struct mtx		i2c_lock;	/* Serializes I2C transactions */
+	bool			lock_valid;	/* i2c_lock initialized */
 	bus_space_tag_t		mem_tag;	/* Memory tag for I2C */
 	bus_space_handle_t	i2c_handle;	/* I2C MMIO handle */
 	bool			i2c_mapped;	/* I2C region mapped */
 	bool			initialized;	/* Codec init complete */
 	bool			speaker_active;	/* Speaker output enabled */
 	bool			hp_active;	/* Headphone output enabled */
-	bool			mic_active;	/* Microphone input enabled */
+	int			mic_refs;	/* Active capture streams */
 	uint32_t		vendor_id;	/* Detected vendor ID */
 };
 
@@ -198,5 +205,11 @@ int	sst_codec_enable_headphone(struct sst_softc *sc);
 int	sst_codec_enable_microphone(struct sst_softc *sc);
 int	sst_codec_disable_microphone(struct sst_softc *sc);
 int	sst_codec_pll_rearm(struct sst_softc *sc);
+
+/* Jack presence detect via codec pin sense (no SHIM GPIO emulation) */
+int	sst_codec_pin_present(struct sst_softc *sc, uint32_t nid, bool *present);
+
+/* Output routing follow-up for jack events */
+int	sst_codec_set_hp_route(struct sst_softc *sc, bool hpInserted);
 
 #endif /* _SST_CODEC_H_ */
