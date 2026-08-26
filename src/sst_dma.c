@@ -175,8 +175,8 @@ dma_build_lli(struct sst_softc *sc, int ch, struct sst_dma_config *config)
 	/* Block transfer size in src_width-sized units */
 	if ((config->blk_size & ((1U << config->src_width) - 1)) != 0) {
 		device_printf(sc->dev,
-		    "DMA%d: block size %u not a multiple of the sample width\n",
-		    ch, config->blk_size);
+		    "DMA%d: block size %zu not a multiple of the sample"
+		    " width\n", ch, config->blk_size);
 		return (EINVAL);
 	}
 	block_ts = config->blk_size / (1U << config->src_width);
