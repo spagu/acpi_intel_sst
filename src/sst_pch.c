@@ -75,11 +75,10 @@ struct sst_rescan_ctx {
 };
 
 static void
-sst_rescan_task(void *arg, int pending)
+sst_rescan_task(void *arg, int pending __unused)
 {
 	struct sst_rescan_ctx *ctx = arg;
 
-	(void)pending;
 	bus_topo_lock();
 	BUS_RESCAN(ctx->pci);
 	bus_topo_unlock();

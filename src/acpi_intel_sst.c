@@ -220,12 +220,38 @@ sst_acpi_probe(device_t dev)
 static int
 sst_pci_probe(device_t dev)
 {
-	if (pci_get_vendor(dev) == PCI_VENDOR_INTEL &&
-	    pci_get_device(dev) == PCI_DEVICE_SST_BDW) {
-		device_set_desc(dev, "Intel Broadwell-U Audio DSP (PCI Mode)");
-		return (BUS_PROBE_DEFAULT);
+	devclass_t dc;
+	device_t other;
+	int unit;
+
+	if (pci_get_vendor(dev) != PCI_VENDOR_INTEL ||
+	    pci_get_device(dev) != PCI_DEVICE_SST_BDW)
+		return (ENXIO);
+
+	/*
+	 * The same DSP can appear twice: once through ACPI (INT3438)
+	 * and, after the driver clears PCICD, once on the PCI bus.
+	 * Attaching both would give two softcs fighting over the same
+	 * SHIM and BARs, so refuse the PCI instance when an ACPI one
+	 * is already attached.
+	 */
+	dc = devclass_find("acpi_intel_sst");
+	if (dc != NULL) {
+		for (unit = 0; unit <= devclass_get_maxunit(dc); unit++) {
+			other = devclass_get_device(dc, unit);
+			if (other != NULL && other != dev &&
+			    device_is_attached(other)) {
+				device_printf(dev,
+				    "already driven via %s, skipping PCI"
+				    " instance\n",
+				    device_get_nameunit(other));
+				return (ENXIO);
+			}
+		}
 	}
-	return (ENXIO);
+
+	device_set_desc(dev, "Intel Broadwell-U Audio DSP (PCI Mode)");
+	return (BUS_PROBE_DEFAULT);
 }
 
 /* ================================================================
@@ -1130,7 +1156,14 @@ dsp_init:
 	}
 
 	sc->attached = true;
-	sc->state = SST_STATE_ATTACHED;
+	/*
+	 * ATTACHED means "device claimed"; RUNNING additionally means
+	 * the DSP booted and streams can be started.  Suspend/resume
+	 * keys off this, so it must be set here and not only after a
+	 * resume cycle.
+	 */
+	sc->state = (sc->fw.state == SST_FW_STATE_RUNNING) ?
+	    SST_STATE_RUNNING : SST_STATE_ATTACHED;
 	device_printf(dev, "Intel SST DSP attached successfully\n");
 	return (0);
 
@@ -1402,7 +1435,8 @@ sst_pci_attach(device_t dev)
 		}
 
 		sc->attached = true;
-		sc->state = SST_STATE_ATTACHED;
+		sc->state = (sc->fw.state == SST_FW_STATE_RUNNING) ?
+		    SST_STATE_RUNNING : SST_STATE_ATTACHED;
 		device_printf(dev, "Intel SST DSP attached successfully\n");
 	} else {
 		sst_dbg(sc, SST_DBG_LIFE, "PCI Attach: BAR0 still dead. Hardware is tough.\n");
