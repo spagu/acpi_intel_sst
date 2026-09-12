@@ -23,8 +23,17 @@ class ReadOnly(Exception):
 
 
 def _run(args):
+    """
+    Run a command and return its result as text.
+
+    errors="replace" is not optional here: /var/log/messages carries whatever
+    a driver chose to print, and a stray non-UTF-8 byte anywhere in it would
+    otherwise raise UnicodeDecodeError and take out version detection and the
+    diagnostic report - the two things most wanted when something is wrong.
+    """
     return subprocess.run(
-        args, capture_output=True, text=True, timeout=5,
+        args, capture_output=True, timeout=15,
+        text=True, encoding="utf-8", errors="replace",
     )
 
 
