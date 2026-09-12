@@ -158,6 +158,45 @@ sst_dsp_reset(struct sst_softc *sc, bool reset)
 }
 
 /*
+ * sst_dsp_core_reset - put the DSP core through a full reset
+ *
+ * The VDRTCTL power-up sequence controls power and clock gating.  It cannot
+ * reach a core whose local memories have been detached from the bus - a state
+ * this hardware does get into, in which every VDRTCTL bit reads back exactly
+ * as intended and the SRAM still answers 0xFFFFFFFF while the SHIM does not.
+ *
+ * Stall before reset and release in the opposite order, so the core is never
+ * running against memory that is half attached.
+ */
+int
+sst_dsp_core_reset(struct sst_softc *sc)
+{
+	int error;
+
+	device_printf(sc->dev, "DSP core reset: memory unreachable, "
+	    "resetting the core\n");
+
+	error = sst_dsp_stall(sc, true);
+	if (error != 0)
+		return (error);
+
+	error = sst_dsp_reset(sc, true);
+	if (error != 0)
+		return (error);
+
+	DELAY(200);
+
+	error = sst_dsp_reset(sc, false);
+	if (error != 0)
+		return (error);
+
+	/* let the core settle before anything touches its memory */
+	DELAY(500);
+
+	return (sst_dsp_stall(sc, false));
+}
+
+/*
  * sst_dsp_set_regs_defaults - Reset SHIM registers to hardware defaults
  * Based on Linux catpt catpt_dsp_set_regs_defaults()
  *
@@ -1651,6 +1690,27 @@ sst_resume_common(struct sst_softc *sc)
 	}
 	sst_wpt_power_up(sc);
 	sst_sram_sanitize(sc);
+
+	/*
+	 * Confirm the memory is reachable before writing firmware into it.
+	 *
+	 * Without this the driver writes the whole image into a void, boots a
+	 * DSP that never received it, and only finds out much later when
+	 * ALLOC_STREAM returns "out of resources" - by which point the cause
+	 * is several layers away from the symptom.  A core reset recovers the
+	 * case where power and clock gating are already correct and the
+	 * memories are simply detached (issue #51).
+	 */
+	if (sst_sram_probe(sc) == ENXIO) {
+		if (sst_dsp_core_reset(sc) != 0 || sst_sram_probe(sc) != 0) {
+			device_printf(sc->dev,
+			    "DSP memory still unreachable after core reset; "
+			    "not loading firmware\n");
+			sc->state = SST_STATE_ERROR;
+			return (ENXIO);
+		}
+		device_printf(sc->dev, "DSP memory recovered by core reset\n");
+	}
 
 	/* 2. Init SHIM (mask interrupts, reset DSP) */
 	if (sst_init(sc) != 0) {
