@@ -41,6 +41,7 @@ The reliable indicator is the driver's own telemetry: `telemetry.peak_left` and 
 
 - Firmware written to SRAM is now read back word by word and rewritten once on mismatch; a block that still differs fails the load instead of booting a corrupt image. Every SRAM bank is read once after being ungated, as Linux catpt does, to avoid dropped bytes on the first write.
 - When a stream start is refused by the DSP or the DSP stops answering, the driver reinitializes it (the suspend/resume sequence) and restarts the stream. Watch `dev.acpi_intel_sst.0.dsp_recoveries`; a non-zero value means the recovery ran. Attempts are at least 30 s apart.
+- Before every firmware write (attach and resume) the driver probes IRAM and DRAM. A DSP whose memories answer `0xFFFFFFFF` while the SHIM on the same BAR still responds has its memory detached from the bus, a state the power-up sequence cannot fix (every VDRTCTL bit already reads as intended). The driver then resets the core once (`SRAM probe: ... memory detached from the bus`, `DSP memory recovered by core reset`) and gives up with a clear message if the memory is still unreachable, instead of writing the image into a void (v0.68.0+).
 
 ### Diagnostic Checklist
 

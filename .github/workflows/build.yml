@@ -153,6 +153,21 @@ jobs:
             firmware/acpi_intel_sst_fw.ko
           if-no-files-found: warn
 
+  gui-check:
+    name: Control Panel Check
+    runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Install gettext
+        run: sudo apt-get update && sudo apt-get install -y gettext
+
+      - name: Byte-compile the panel and verify the catalogues
+        run: make -C gui check
+
   unit-tests:
     name: Host-side Unit Tests
     runs-on: ubuntu-latest

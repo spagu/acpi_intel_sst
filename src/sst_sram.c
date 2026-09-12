@@ -62,6 +62,14 @@ sst_sram_probe(struct sst_softc *sc)
 		    "SRAM probe: IRAM and DRAM read 0xFFFFFFFF while SHIM "
 		    "answers (CSR=0x%08x) - memory detached from the bus\n",
 		    csr);
+		/* The power/clock gating state, so the log tells the story */
+		if (sc->shim_res != NULL)
+			device_printf(sc->dev,
+			    "SRAM probe: VDRTCTL0=0x%08x VDRTCTL2=0x%08x "
+			    "PMCS=0x%08x\n",
+			    bus_read_4(sc->shim_res, SST_PCI_VDRTCTL0),
+			    bus_read_4(sc->shim_res, SST_PCI_VDRTCTL2),
+			    bus_read_4(sc->shim_res, SST_PCI_PMCS));
 		return (ENXIO);
 	}
 
@@ -70,7 +78,6 @@ sst_sram_probe(struct sst_softc *sc)
 	    iram, dram, csr);
 	return (0);
 }
-
 
 /*
  * sst_sram_sanitize - Dummy readback after SRAM power-up

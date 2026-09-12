@@ -197,6 +197,33 @@ sst_dsp_core_reset(struct sst_softc *sc)
 }
 
 /*
+ * sst_dsp_ensure_memory - make sure firmware can be written at all
+ *
+ * Probe IRAM/DRAM; when they are detached while the SHIM answers, reset
+ * the core once and probe again.  Used before every firmware write
+ * (attach and resume) so a write into a void is reported here instead
+ * of surfacing minutes later as ALLOC_STREAM "out of resources".
+ */
+static int
+sst_dsp_ensure_memory(struct sst_softc *sc)
+{
+	int error;
+
+	error = sst_sram_probe(sc);
+	if (error != ENXIO)
+		return (error);
+
+	if (sst_dsp_core_reset(sc) != 0 || sst_sram_probe(sc) != 0) {
+		device_printf(sc->dev,
+		    "DSP memory still unreachable after core reset; "
+		    "not loading firmware\n");
+		return (ENXIO);
+	}
+	device_printf(sc->dev, "DSP memory recovered by core reset\n");
+	return (0);
+}
+
+/*
  * sst_dsp_set_regs_defaults - Reset SHIM registers to hardware defaults
  * Based on Linux catpt catpt_dsp_set_regs_defaults()
  *
@@ -1151,7 +1178,10 @@ dsp_init:
 		    pre_csr, !!(pre_csr & SST_CSR_STALL),
 		    !!(pre_csr & SST_CSR_RST));
 	}
-	error = sst_fw_load(sc);
+	/* Memory detached from the bus: reset the core before writing */
+	error = sst_dsp_ensure_memory(sc);
+	if (error == 0)
+		error = sst_fw_load(sc);
 	if (error) {
 		device_printf(dev, "Firmware load failed: %d\n", error);
 		error = 0;
@@ -1448,8 +1478,10 @@ sst_pci_attach(device_t dev)
 			goto fail;
 		}
 
-		/* Load firmware */
-		error = sst_fw_load(sc);
+		/* Load firmware (after checking the memory is reachable) */
+		error = sst_dsp_ensure_memory(sc);
+		if (error == 0)
+			error = sst_fw_load(sc);
 		if (error) {
 			device_printf(dev, "Firmware load failed: %d\n", error);
 			error = 0; /* Continue without firmware for debugging */
@@ -1701,15 +1733,9 @@ sst_resume_common(struct sst_softc *sc)
 	 * case where power and clock gating are already correct and the
 	 * memories are simply detached (issue #51).
 	 */
-	if (sst_sram_probe(sc) == ENXIO) {
-		if (sst_dsp_core_reset(sc) != 0 || sst_sram_probe(sc) != 0) {
-			device_printf(sc->dev,
-			    "DSP memory still unreachable after core reset; "
-			    "not loading firmware\n");
-			sc->state = SST_STATE_ERROR;
-			return (ENXIO);
-		}
-		device_printf(sc->dev, "DSP memory recovered by core reset\n");
+	if (sst_dsp_ensure_memory(sc) != 0) {
+		sc->state = SST_STATE_ERROR;
+		return (ENXIO);
 	}
 
 	/* 2. Init SHIM (mask interrupts, reset DSP) */
