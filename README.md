@@ -73,6 +73,11 @@ cat /dev/dsp0.1 > /tmp/test.raw &
 sleep 5 && kill %1
 ```
 
+```bash
+# Optional: graphical control panel (equaliser, limiter, telemetry)
+cd gui && sudo make install && sst-panel
+```
+
 > **Note:** Dell XPS 13 9343 requires a [DSDT patch](#3-dsdt-patch-dell-xps-13-9343) and
 > [loader.conf changes](#4-configure-bootloaderconf) before the driver will attach.
 > See full [Installation](#installation) below.
@@ -244,6 +249,62 @@ mixer mic 80
 cat /dev/dsp0.1 > /tmp/test.raw &
 sleep 5 && kill %1
 ```
+
+---
+
+## Control Panel
+
+A GTK3 front end to the driver's settings, in `gui/`.
+
+![Equaliser tab](docs/screenshots/en-equaliser.png)
+
+The driver exposes 26 sysctls — a parametric equaliser, a limiter, volume
+ramps, jack detection and live telemetry. They work perfectly well from a
+shell, but tuning an equaliser by typing sysctl names is miserable, and the
+peak meters only mean anything if you can watch them move.
+
+Three tabs plot what the settings actually do, updating as the sliders move:
+the combined equaliser response, the limiter's input-against-output curve, and
+the ramp shape. A "?" beside each section explains the setting in a paragraph
+and links into this documentation.
+
+| | |
+|---|---|
+| ![Limiter](docs/screenshots/en-limiter.png) | ![Diagnostics](docs/screenshots/en-diagnostics.png) |
+| Meters with peak-hold, transfer curve, clip counter | One-button report to paste into an issue |
+
+### Install
+
+```bash
+cd gui
+make check      # compile catalogues, byte-compile sources
+sudo make install
+sst-panel
+```
+
+Requires `gtk3` and `py311-pygobject` or newer. Chinese additionally needs a
+CJK font such as `noto-sans-sc`; without one the text renders as empty boxes.
+
+### Privileges
+
+Reading needs none. **Changing** a setting does, because the sysctls are
+root-writable only. The panel checks at startup and, when it cannot write,
+says so and disables the controls while leaving the telemetry and plots live —
+which is usually what you want when diagnosing something.
+
+To let a group change settings without running the whole panel as root:
+
+```
+%wheel ALL=(root) NOPASSWD: /sbin/sysctl dev.acpi_intel_sst.0.*
+```
+
+That grants exactly this driver's sysctl tree and nothing else.
+
+### Languages
+
+English (source), Polski, Deutsch, Français and 中文. The interface follows the
+user's locale and falls back to English. See [gui/README.md](gui/README.md) for
+how to add another.
 
 ---
 
@@ -467,6 +528,18 @@ These devices use the same Intel SST DSP and may work (untested):
 | [`src/sst_topology.c`](src/sst_topology.c) | Audio pipeline configuration (playback + capture pipelines) |
 | [`src/sst_regs.h`](src/sst_regs.h) | Hardware register definitions (SHIM, VDRTCTL, SSP, DMA) |
 
+### Control panel
+
+| File | Purpose |
+|:-----|:--------|
+| [`gui/sst_panel.py`](gui/sst_panel.py) | The interface: six tabs, live refresh, screenshot mode |
+| [`gui/sst_sysctl.py`](gui/sst_sysctl.py) | Access layer: reads and writes the sysctl tree, builds the diagnostic report |
+| [`gui/sst_curves.py`](gui/sst_curves.py) | Response plots: peaking biquad, high-pass, limiter transfer, ramp shape |
+| [`gui/sst_meters.py`](gui/sst_meters.py) | Peak meters with peak-hold and a rolling sparkline |
+| [`gui/sst_help.py`](gui/sst_help.py) | Inline help popovers with links into this documentation |
+| [`gui/sst_i18n.py`](gui/sst_i18n.py) | Locale detection and catalogue loading |
+| [`gui/po/`](gui/po) | Translations: Polish, German, French, Chinese |
+
 ---
 
 ## Known Issues
@@ -489,6 +562,7 @@ These devices use the same Intel SST DSP and may work (untested):
 | :microscope: | [docs/RESEARCH_FINDINGS.md](docs/RESEARCH_FINDINGS.md) | BAR0 investigation, SRAM power gating, IOBP sideband, catpt reference |
 | :control_knobs: | [docs/CONFIGURATION.md](docs/CONFIGURATION.md) | Complete configuration reference: all sysctls, boot options, audio profiles (transparent, speaker, headphone) |
 | :musical_note: | [docs/SAMPLE_RATE.md](docs/SAMPLE_RATE.md) | Sample rate behavior: 48 kHz I2S fixed rate, vchan resampling, bit-perfect playback |
+| :control_knobs: | [gui/README.md](gui/README.md) | Graphical control panel: tabs, plots, translations, building |
 | :page_facing_up: | [man/acpi_intel_sst.4](man/acpi_intel_sst.4) | FreeBSD manual page: hardware, sysctl parameters, loader tunables, examples |
 
 ---
