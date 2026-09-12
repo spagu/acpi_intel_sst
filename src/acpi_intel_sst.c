@@ -158,6 +158,116 @@ sst_dsp_reset(struct sst_softc *sc, bool reset)
 }
 
 /*
+ * sst_dsp_core_reset - put the DSP core through a full reset
+ *
+ * The VDRTCTL power-up sequence controls power and clock gating.  It cannot
+ * reach a core whose local memories have been detached from the bus - a state
+ * this hardware does get into, in which every VDRTCTL bit reads back exactly
+ * as intended and the SRAM still answers 0xFFFFFFFF while the SHIM does not.
+ *
+ * Stall before reset and release in the opposite order, so the core is never
+ * running against memory that is half attached.
+ */
+int
+sst_dsp_core_reset(struct sst_softc *sc)
+{
+	int error;
+
+	device_printf(sc->dev, "DSP core reset: memory unreachable, "
+	    "resetting the core\n");
+
+	error = sst_dsp_stall(sc, true);
+	if (error != 0)
+		return (error);
+
+	error = sst_dsp_reset(sc, true);
+	if (error != 0)
+		return (error);
+
+	DELAY(200);
+
+	error = sst_dsp_reset(sc, false);
+	if (error != 0)
+		return (error);
+
+	/* let the core settle before anything touches its memory */
+	DELAY(500);
+
+	return (sst_dsp_stall(sc, false));
+}
+
+/*
+ * sst_dsp_ensure_memory - make sure firmware can be written at all
+ *
+ * Probe IRAM/DRAM; when they are detached while the SHIM answers, reset
+ * the core once and probe again.  Used before every firmware write
+ * (attach and resume) so a write into a void is reported here instead
+ * of surfacing minutes later as ALLOC_STREAM "out of resources".
+ */
+static int
+sst_dsp_ensure_memory(struct sst_softc *sc)
+{
+	int error;
+
+	error = sst_sram_probe(sc);
+	if (error != ENXIO)
+		return (error);
+
+	if (sst_dsp_core_reset(sc) != 0 || sst_sram_probe(sc) != 0) {
+		device_printf(sc->dev,
+		    "DSP memory still unreachable after core reset; "
+		    "not loading firmware\n");
+		return (ENXIO);
+	}
+	device_printf(sc->dev, "DSP memory recovered by core reset\n");
+	return (0);
+}
+
+/*
+ * sst_dsp_post_boot - setup that follows a successful FW_READY, shared
+ * by attach and resume: version, DRAM module regions, stage
+ * capability probe, default topology.
+ */
+static void
+sst_dsp_post_boot(struct sst_softc *sc)
+{
+	sst_ipc_get_fw_version(sc, NULL);
+	sst_fw_alloc_module_regions(sc);
+	sst_ipc_probe_stage_caps(sc);
+	sst_topology_load_default(sc);
+}
+
+/*
+ * sst_dsp_load_and_boot - attach-time firmware bring-up
+ *
+ * Probes the memory, writes the image, boots the core and runs the
+ * post-boot setup.  A failure is logged and leaves the device attached
+ * without audio (fw.state != RUNNING) so the sysctl tree stays
+ * available for diagnostics.
+ */
+static void
+sst_dsp_load_and_boot(struct sst_softc *sc)
+{
+	int error;
+
+	error = sst_dsp_ensure_memory(sc);
+	if (error == 0)
+		error = sst_fw_load(sc);
+	if (error != 0) {
+		device_printf(sc->dev, "Firmware load failed: %d\n", error);
+		return;
+	}
+
+	error = sst_fw_boot(sc);
+	if (error != 0) {
+		device_printf(sc->dev, "DSP boot failed: %d\n", error);
+		return;
+	}
+
+	sst_dsp_post_boot(sc);
+}
+
+/*
  * sst_dsp_set_regs_defaults - Reset SHIM registers to hardware defaults
  * Based on Linux catpt catpt_dsp_set_regs_defaults()
  *
@@ -1112,22 +1222,7 @@ dsp_init:
 		    pre_csr, !!(pre_csr & SST_CSR_STALL),
 		    !!(pre_csr & SST_CSR_RST));
 	}
-	error = sst_fw_load(sc);
-	if (error) {
-		device_printf(dev, "Firmware load failed: %d\n", error);
-		error = 0;
-	} else {
-		error = sst_fw_boot(sc);
-		if (error) {
-			device_printf(dev, "DSP boot failed: %d\n", error);
-			error = 0;
-		} else {
-			sst_ipc_get_fw_version(sc, NULL);
-			sst_fw_alloc_module_regions(sc);
-			sst_ipc_probe_stage_caps(sc);
-			sst_topology_load_default(sc);
-		}
-	}
+	sst_dsp_load_and_boot(sc);
 
 	/*
 	 * Configure SSP device format (once, before any stream).
@@ -1409,26 +1504,8 @@ sst_pci_attach(device_t dev)
 			goto fail;
 		}
 
-		/* Load firmware */
-		error = sst_fw_load(sc);
-		if (error) {
-			device_printf(dev, "Firmware load failed: %d\n", error);
-			error = 0; /* Continue without firmware for debugging */
-		} else {
-			/* Boot DSP with loaded firmware */
-			error = sst_fw_boot(sc);
-			if (error) {
-				device_printf(dev, "DSP boot failed: %d\n", error);
-				error = 0; /* Continue for debugging */
-			} else {
-				/* Get firmware version */
-				sst_ipc_get_fw_version(sc, NULL);
-				sst_fw_alloc_module_regions(sc);
-				sst_ipc_probe_stage_caps(sc);
-				/* Load default audio topology */
-				sst_topology_load_default(sc);
-			}
-		}
+		/* Load and boot firmware; failures keep a diagnostic attach */
+		sst_dsp_load_and_boot(sc);
 
 		/* Register PCM device if firmware is running */
 		if (sc->fw.state == SST_FW_STATE_RUNNING) {
@@ -1652,6 +1729,21 @@ sst_resume_common(struct sst_softc *sc)
 	sst_wpt_power_up(sc);
 	sst_sram_sanitize(sc);
 
+	/*
+	 * Confirm the memory is reachable before writing firmware into it.
+	 *
+	 * Without this the driver writes the whole image into a void, boots a
+	 * DSP that never received it, and only finds out much later when
+	 * ALLOC_STREAM returns "out of resources" - by which point the cause
+	 * is several layers away from the symptom.  A core reset recovers the
+	 * case where power and clock gating are already correct and the
+	 * memories are simply detached (issue #51).
+	 */
+	if (sst_dsp_ensure_memory(sc) != 0) {
+		sc->state = SST_STATE_ERROR;
+		return (ENXIO);
+	}
+
 	/* 2. Init SHIM (mask interrupts, reset DSP) */
 	if (sst_init(sc) != 0) {
 		device_printf(dev, "Resume: DSP did not respond to reset\n");
@@ -1677,13 +1769,8 @@ sst_resume_common(struct sst_softc *sc)
 		return (error);
 	}
 
-	/* 4. Post-boot setup (same as initial attach) */
-	sst_ipc_get_fw_version(sc, NULL);
-	sst_fw_alloc_module_regions(sc);
-	sst_ipc_probe_stage_caps(sc);
-
-	/* 5. Rebuild audio pipeline */
-	sst_topology_load_default(sc);
+	/* 4-5. Post-boot setup and pipeline rebuild (same as attach) */
+	sst_dsp_post_boot(sc);
 
 	/* 6. SET_DEVICE_FORMATS for SSP0 */
 	{

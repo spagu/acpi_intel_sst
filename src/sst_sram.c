@@ -23,6 +23,65 @@
 #define SST_SRAM_CTRL_OFFSET	0xFB000
 
 /*
+ * sst_sram_probe - is the DSP's local memory actually reachable?
+ *
+ * Reading 0xFFFFFFFF from IRAM while the SHIM on the same BAR still returns
+ * real data means the SRAM blocks have been detached from the bus.  That is
+ * not something the VDRTCTL power-up sequence can fix: on hardware observed
+ * in this state every bit it controls was already correct - ISRAMPGE and
+ * DSRAMPGE cleared, D3PGD and D3SRAMPGD set, clock gating off, device in D0 -
+ * and the memories still did not answer.
+ *
+ * Checking the SHIM as well distinguishes "the SRAM is gone" from "the whole
+ * BAR is gone", which need different responses and would otherwise produce
+ * the same symptom.
+ *
+ * Returns 0 when the memory answers, ENXIO when it does not, and ENODEV when
+ * the BAR itself is dead.
+ */
+int
+sst_sram_probe(struct sst_softc *sc)
+{
+	uint32_t iram;
+	uint32_t dram;
+	uint32_t csr;
+
+	if (sc->mem_res == NULL)
+		return (ENODEV);
+
+	csr = sst_shim_read(sc, SST_SHIM_CSR);
+	if (csr == SST_INVALID_REG_VALUE) {
+		device_printf(sc->dev,
+		    "SRAM probe: SHIM reads 0xFFFFFFFF - BAR0 is dead\n");
+		return (ENODEV);
+	}
+
+	iram = bus_read_4(sc->mem_res, SST_IRAM_OFFSET);
+	dram = bus_read_4(sc->mem_res, SST_DRAM_OFFSET);
+
+	if (iram == SST_INVALID_REG_VALUE && dram == SST_INVALID_REG_VALUE) {
+		device_printf(sc->dev,
+		    "SRAM probe: IRAM and DRAM read 0xFFFFFFFF while SHIM "
+		    "answers (CSR=0x%08x) - memory detached from the bus\n",
+		    csr);
+		/* The power/clock gating state, so the log tells the story */
+		if (sc->shim_res != NULL)
+			device_printf(sc->dev,
+			    "SRAM probe: VDRTCTL0=0x%08x VDRTCTL2=0x%08x "
+			    "PMCS=0x%08x\n",
+			    bus_read_4(sc->shim_res, SST_PCI_VDRTCTL0),
+			    bus_read_4(sc->shim_res, SST_PCI_VDRTCTL2),
+			    bus_read_4(sc->shim_res, SST_PCI_PMCS));
+		return (ENXIO);
+	}
+
+	sst_dbg(sc, SST_DBG_OPS,
+	    "SRAM probe: IRAM=0x%08x DRAM=0x%08x CSR=0x%08x\n",
+	    iram, dram, csr);
+	return (0);
+}
+
+/*
  * sst_sram_sanitize - Dummy readback after SRAM power-up
  *
  * From Linux catpt dsp.c catpt_dsp_set_srampge():

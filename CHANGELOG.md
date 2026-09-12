@@ -5,6 +5,45 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.68.0] - 2026-09-12
+
+### Added
+
+- **`sst-panel`, a GTK3 control panel** in `gui/` for the driver's 26
+  sysctls: parametric equaliser with live response curve, limiter with
+  peak meters and transfer curve, volume ramps, jack state, telemetry,
+  a diagnostic report for issues, help popovers, and five languages
+  (en, pl, de, fr, zh). It offers to relaunch with privilege (pkexec,
+  then sudo with an askpass helper) when the sysctls are read-only.
+  Ports skeleton in `ports/sst-panel`; screenshots in
+  `docs/screenshots`. See `gui/README.md`.
+- CI byte-compiles the panel and checks its translation catalogues
+  (`make -C gui check`).
+
+### Fixed
+
+- **DSP memory detached from the bus** (the unrecoverable half of
+  issue #51: audio stops after some hours and neither the in-driver
+  recovery nor a module reload brings it back). On the wedged hardware
+  every bit the power-up sequence controls already read as intended
+  (`VDRTCTL0=0x3`, `VDRTCTL2=0xbfd`, `PMCS` in D0) while IRAM and DRAM
+  answered `0xFFFFFFFF` and the SHIM on the same BAR still worked, so
+  repeating the power cycle could not help. Before every firmware
+  write (attach and resume) `sst_sram_probe()` now checks IRAM, DRAM
+  and the SHIM; when only the memories are gone, `sst_dsp_core_reset()`
+  drives the core through stall, reset, release, unstall and the probe
+  is repeated. Still unreachable, the driver stops with one clear
+  message (including `VDRTCTL0`/`VDRTCTL2`/`PMCS`) instead of writing
+  the image into a void and failing minutes later with
+  `ALLOC_STREAM: out of resources`.
+- The WPT power-up dummy reads reuse `sst_sram_sanitize()` instead of
+  a second copy of the bank loop.
+
+### Changed
+
+- `ports/sst-panel` now tracks the `v0.68.0` tag instead of a pinned
+  commit (the first tag whose tarball contains `gui/`).
+
 ## [0.67.0] - 2026-09-12
 
 Bug-fix release for issue #51 (no audio after a cold boot until the

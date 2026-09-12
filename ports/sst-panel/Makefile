@@ -1,5 +1,6 @@
 PORTNAME=	sst-panel
-DISTVERSION=	0.67.0.20260912
+DISTVERSIONPREFIX=	v
+DISTVERSION=	0.68.0
 CATEGORIES=	audio
 
 MAINTAINER=	please@forget.me.uk
@@ -18,11 +19,7 @@ USES=		desktop-file-utils gettext-tools gnome python:run shebangfix
 USE_GITHUB=	yes
 GH_ACCOUNT=	spagu
 GH_PROJECT=	acpi_intel_sst
-# Pinned to a commit rather than a tag on purpose: the panel landed after
-# v0.67.0 was cut, so that tag's tarball has no gui/ directory at all and the
-# port would fail at the build stage. Move DISTVERSION and GH_TAGNAME onto the
-# tag once a release including the panel is published.
-GH_TAGNAME=	61d2cc79f3b1
+# v0.68.0 is the first tag whose tarball contains gui/.
 USE_GNOME=	gtk30 pygobject3
 SHEBANG_FILES=	sst_panel.py
 

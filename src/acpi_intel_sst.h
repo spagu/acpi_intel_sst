@@ -227,6 +227,7 @@ void	sst_dsp_set_regs_defaults(struct sst_softc *sc);
 
 /* acpi_intel_sst.c */
 int	sst_dsp_recover(struct sst_softc *sc);
+int	sst_dsp_core_reset(struct sst_softc *sc);
 
 /* sst_power.c */
 int	sst_reset(struct sst_softc *sc);
@@ -244,6 +245,7 @@ void	sst_dump_pch_state(struct sst_softc *sc);
 
 /* sst_sram.c */
 void	sst_sram_sanitize(struct sst_softc *sc);
+int	sst_sram_probe(struct sst_softc *sc);
 bool	sst_test_bar0(struct sst_softc *sc);
 void	sst_scan_bar0(struct sst_softc *sc);
 int	sst_enable_sram_direct(device_t dev);
