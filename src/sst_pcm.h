@@ -13,8 +13,9 @@
 
 #include <sys/types.h>
 #include <sys/callout.h>
-#include <sys/sx.h>
 #include <sys/taskqueue.h>
+
+#include "sst_trig_state.h"
 
 #include "sst_topology.h"
 
@@ -75,9 +76,14 @@ struct sst_pcm_channel {
 	uint32_t		blk_count;	/* Number of blocks */
 	volatile uint32_t	ptr;		/* Current position */
 
-	/* Serializes the trigger body, which runs without CHN_LOCK */
-	struct sx		trig_sx;
-	bool			trig_sx_valid;
+	/*
+	 * Deferred trigger: sound(4) calls channel_trigger with
+	 * non-sleepable channel mutexes held, so the IPC-heavy body
+	 * runs in sc->pcm.trig_tq (see sst_chan_trigger).
+	 */
+	struct task		trig_task;
+	bool			trig_task_valid;
+	struct sst_trig_state	trig;		/* (s) coalesced request */
 
 	/* Deferred work: IPC must not run in callout (softclock) context */
 	struct task		work_task;
@@ -194,9 +200,13 @@ struct sst_pcm {
 	bool			limiter_active;	/* Limiter currently engaging */
 	int			telem_ticks;	/* Tick count of last telemetry read */
 
+	/* Deferred trigger worker (one thread, see sst_chan_trigger) */
+	struct taskqueue	*trig_tq;
+
 	/* State */
 	bool			registered;	/* PCM device registered */
 	bool			initialized;	/* sst_pcm_init() done */
+	bool			suspended;	/* Between suspend and resume */
 };
 
 /* Forward declaration */

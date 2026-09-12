@@ -70,6 +70,10 @@ static int sst_chan_setformat(kobj_t obj, void *data, uint32_t format);
 static uint32_t sst_chan_setspeed(kobj_t obj, void *data, uint32_t speed);
 static uint32_t sst_chan_setblocksize(kobj_t obj, void *data, uint32_t blocksize);
 static int sst_chan_trigger(kobj_t obj, void *data, int go);
+static int sst_chan_trigger_unlocked(struct sst_pcm_channel *ch,
+    int go);
+static void sst_pcm_trig_task(void *arg, int pending);
+static void sst_pcm_trig_drain(struct sst_pcm_channel *ch);
 static uint32_t sst_chan_getptr(kobj_t obj, void *data);
 static struct pcmchan_caps *sst_chan_getcaps(kobj_t obj, void *data);
 
@@ -523,11 +527,13 @@ sst_chan_init(kobj_t obj, void *devinfo, struct snd_dbuf *b,
 	/* Initialize position polling callout */
 	callout_init(&ch->poll_timer, 1);
 
-	/* Serializes trigger START/STOP, which run without CHN_LOCK */
-	if (!ch->trig_sx_valid) {
-		sx_init(&ch->trig_sx, "sst_trig");
-		ch->trig_sx_valid = true;
+	/* Deferred trigger worker (see sst_chan_trigger) */
+	if (!ch->trig_task_valid) {
+		TASK_INIT(&ch->trig_task, 0, sst_pcm_trig_task, ch);
+		ch->trig_task_valid = true;
 	}
+	ch->trig.pending = false;
+	ch->trig.req = 0;
 
 	/* Deferred worker for IPC-heavy work seen from the callout */
 	if (!ch->work_task_valid) {
@@ -562,16 +568,22 @@ sst_chan_free(kobj_t obj, void *data)
 
 	sc = ch->sc;
 
+	/*
+	 * Let a queued trigger finish first: sound(4) already sent
+	 * ABORT for a running channel and, with the trigger deferred,
+	 * that ABORT may still be waiting in the worker.  Then stop
+	 * anything that is somehow still running before the buffers
+	 * it reads are freed.
+	 */
+	sst_pcm_trig_drain(ch);
+	if (ch->state == SST_PCM_STATE_RUNNING)
+		sst_chan_trigger_unlocked(ch, PCMTRIG_ABORT);
+
 	/* Stop and drain polling timer, then the deferred worker */
 	callout_drain(&ch->poll_timer);
 	if (ch->work_task_valid) {
 		taskqueue_drain(taskqueue_thread, &ch->work_task);
 		ch->work_task_valid = false;
-	}
-
-	if (ch->trig_sx_valid) {
-		sx_destroy(&ch->trig_sx);
-		ch->trig_sx_valid = false;
 	}
 
 	/* Free DSP stream if allocated */
@@ -1236,6 +1248,16 @@ sst_pcm_suspend(struct sst_softc *sc)
 {
 	int i;
 
+	/*
+	 * Refuse deferred starts from here on and let queued triggers
+	 * finish before the streams they touch are torn down.
+	 */
+	sc->pcm.suspended = true;
+	for (i = 0; i < SST_PCM_MAX_PLAY; i++)
+		sst_pcm_trig_drain(&sc->pcm.play[i]);
+	for (i = 0; i < SST_PCM_MAX_REC; i++)
+		sst_pcm_trig_drain(&sc->pcm.rec[i]);
+
 	for (i = 0; i < SST_PCM_MAX_PLAY; i++) {
 		struct sst_pcm_channel *ch = &sc->pcm.play[i];
 		/* Suspend may sleep: wait for poll and worker to finish */
@@ -1277,6 +1299,8 @@ sst_pcm_resume(struct sst_softc *sc)
 {
 	struct sst_widget *w;
 
+	sc->pcm.suspended = false;
+
 	/* Restore EQ preset to widget */
 	w = sst_topology_find_widget(sc, "HPF1.0");
 	if (w != NULL)
@@ -1304,42 +1328,100 @@ sst_pcm_resume(struct sst_softc *sc)
  * Flow:
  *   START: alloc_stream → set_device_formats → resume → set_write_pos
  *   STOP:  pause → free_stream
+ *
+ * sound(4) calls this method with non-sleepable channel mutexes held,
+ * and not only this channel's: dsp_poll() holds both the playback and
+ * the record channel while it triggers one of them, and a virtual
+ * channel's parent trigger runs with the vchan's sibling still locked.
+ * The driver cannot drop locks it does not own, so nothing here may
+ * sleep (issue #48).  The request is recorded and handed to a
+ * dedicated taskqueue thread, which runs the IPC-heavy body with no
+ * sound(4) lock held.  Requests are coalesced: the last requested
+ * state wins.
+ *
+ * The trade-off is that a failure of the deferred body cannot be
+ * returned to the caller.  It is logged, the channel stays PREPARED
+ * and no chn_intr() is ever delivered, so sound(4) reports the stream
+ * as dead through its own interrupt timeout.
  */
-static int sst_chan_trigger_unlocked(struct sst_pcm_channel *ch, int go);
-
 static int
 sst_chan_trigger(kobj_t obj, void *data, int go)
 {
 	struct sst_pcm_channel *ch = data;
-	int error;
+	struct sst_softc *sc = ch->sc;
 
-	switch (go) {
-	case PCMTRIG_START:
-	case PCMTRIG_STOP:
-	case PCMTRIG_ABORT:
-		/*
-		 * sound(4) calls trigger with the channel mutex held.
-		 * Starting/stopping a stream requires IPC round-trips
-		 * (cv_timedwait) and codec I2C delays, which must not
-		 * happen with a non-sleepable lock held.  Drop the
-		 * channel lock for the duration; ch->state is only
-		 * changed from trigger and the (drained) poll callout.
-		 */
-		CHN_UNLOCK(ch->pcm_ch);
-		if (ch->trig_sx_valid)
-			sx_xlock(&ch->trig_sx);
-		error = sst_chan_trigger_unlocked(ch, go);
-		if (ch->trig_sx_valid)
-			sx_xunlock(&ch->trig_sx);
-		CHN_LOCK(ch->pcm_ch);
-		return (error);
-	default:
+	if (go != PCMTRIG_START && go != PCMTRIG_STOP && go != PCMTRIG_ABORT)
 		return (0);
+
+	/* Cheap synchronous check: report the obvious failure now */
+	if (go == PCMTRIG_START && sc->fw.state != SST_FW_STATE_RUNNING) {
+		device_printf(sc->dev,
+		    "PCM trigger: DSP firmware not running\n");
+		return (ENXIO);
+	}
+
+	if (!ch->trig_task_valid || sc->pcm.trig_tq == NULL)
+		return (ENXIO);
+
+	mtx_lock(&sc->sc_mtx);
+	sst_trig_state_request(&ch->trig, go);
+	mtx_unlock(&sc->sc_mtx);
+	taskqueue_enqueue(sc->pcm.trig_tq, &ch->trig_task);
+	return (0);
+}
+
+/*
+ * Deferred trigger worker.  Runs in sc->pcm.trig_tq with no sound(4)
+ * lock held; the queue has a single thread, which serializes START and
+ * STOP for every channel.  Loops until no request is pending so a
+ * request that arrived while the body was running is not lost.
+ */
+static void
+sst_pcm_trig_task(void *arg, int pending __unused)
+{
+	struct sst_pcm_channel *ch = arg;
+	struct sst_softc *sc = ch->sc;
+	int go, error;
+
+	for (;;) {
+		mtx_lock(&sc->sc_mtx);
+		if (!sst_trig_state_take(&ch->trig, &go)) {
+			mtx_unlock(&sc->sc_mtx);
+			break;
+		}
+		mtx_unlock(&sc->sc_mtx);
+
+		if (go == PCMTRIG_START && sc->pcm.suspended) {
+			sst_dbg(sc, SST_DBG_LIFE,
+			    "PCM: start ignored while suspended\n");
+			continue;
+		}
+
+		error = sst_chan_trigger_unlocked(ch, go);
+		if (error)
+			device_printf(sc->dev,
+			    "PCM: deferred %s trigger 0x%x failed: %d\n",
+			    (ch->dir == PCMDIR_PLAY) ? "playback" : "capture",
+			    go, error);
 	}
 }
 
 /*
- * Trigger body, called WITHOUT the channel lock (see sst_chan_trigger).
+ * Wait for a queued or running trigger to finish.  May sleep; callers
+ * hold no sound(4) lock (channel free, suspend).
+ */
+static void
+sst_pcm_trig_drain(struct sst_pcm_channel *ch)
+{
+	struct sst_softc *sc = ch->sc;
+
+	if (ch->trig_task_valid && sc->pcm.trig_tq != NULL)
+		taskqueue_drain(sc->pcm.trig_tq, &ch->trig_task);
+}
+
+/*
+ * Trigger body, called from the trigger worker (or from channel free)
+ * with no sound(4) lock held.
  */
 static int
 sst_chan_trigger_unlocked(struct sst_pcm_channel *ch, int go)
@@ -1544,8 +1626,10 @@ sst_chan_trigger_unlocked(struct sst_pcm_channel *ch, int go)
 		/*
 		 * Stop polling and wait for a running callback: the
 		 * stream is freed below and the callback dereferences
-		 * ch->stream_id.  Safe to drain here because the
-		 * channel lock is not held (see sst_chan_trigger).
+		 * ch->stream_id.  Safe to drain here because no
+		 * sound(4) lock is held (see sst_chan_trigger), and
+		 * work_task lives on taskqueue_thread, not on the
+		 * queue this body runs in.
 		 */
 		ch->state = SST_PCM_STATE_PREPARED;
 		callout_drain(&ch->poll_timer);
@@ -1911,6 +1995,24 @@ sst_pcm_init(struct sst_softc *sc)
 	sc->pcm.after_resume = false;
 	sc->pcm.ramp_step = 0;
 	sc->pcm.ramp_steps = 0;
+	sc->pcm.suspended = false;
+
+	/*
+	 * Trigger worker: its own single-thread queue, separate from
+	 * taskqueue_thread, so the trigger body may drain work_task
+	 * without waiting on the queue it is running in.
+	 */
+	sc->pcm.trig_tq = taskqueue_create("sst_trig", M_WAITOK,
+	    taskqueue_thread_enqueue, &sc->pcm.trig_tq);
+	if (taskqueue_start_threads(&sc->pcm.trig_tq, 1, PWAIT,
+	    "%s trig", device_get_nameunit(sc->dev)) != 0) {
+		device_printf(sc->dev,
+		    "PCM: cannot start trigger worker thread\n");
+		taskqueue_free(sc->pcm.trig_tq);
+		sc->pcm.trig_tq = NULL;
+		sc->pcm.initialized = false;
+		return (ENXIO);
+	}
 
 	sst_dbg(sc, SST_DBG_LIFE, "PCM subsystem initialized: %d play, %d rec streams\n",
 	    SST_PCM_MAX_PLAY, SST_PCM_MAX_REC);
@@ -1935,6 +2037,12 @@ sst_pcm_fini(struct sst_softc *sc)
 		sc->pcm.ramp_task_valid = false;
 	}
 	sst_pcm_unregister(sc);
+
+	/* Channels are gone (chn_kill drained their triggers) */
+	if (sc->pcm.trig_tq != NULL) {
+		taskqueue_free(sc->pcm.trig_tq);
+		sc->pcm.trig_tq = NULL;
+	}
 
 	/* Delete any remaining stale pcm children */
 	sst_pcm_delete_stale_children(sc);

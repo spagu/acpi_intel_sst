@@ -41,6 +41,7 @@
 #include <sys/kernel.h>
 #include <sys/bus.h>
 #include <sys/systm.h>
+#include <sys/sysctl.h>
 
 #include <machine/bus.h>
 #include <x86/bus.h>
@@ -228,7 +229,8 @@ sst_i2c_write(struct sst_softc *sc, const uint8_t *data, int len)
 		DELAY(100);
 	}
 	if (timeout <= 0) {
-		device_printf(sc->dev, "codec: I2C write TX FIFO timeout\n");
+		sst_dbg(sc, SST_DBG_OPS,
+		    "codec: I2C write TX FIFO timeout\n");
 		return (ETIMEDOUT);
 	}
 
@@ -238,7 +240,7 @@ sst_i2c_write(struct sst_softc *sc, const uint8_t *data, int len)
 	if (abort) {
 		bus_space_read_4(codec->mem_tag, codec->i2c_handle,
 		    DW_IC_CLR_TX_ABRT);
-		device_printf(sc->dev,
+		sst_dbg(sc, SST_DBG_OPS,
 		    "codec: I2C write abort: 0x%08x\n", abort);
 		return (EIO);
 	}
@@ -298,14 +300,14 @@ sst_i2c_recv(struct sst_softc *sc, uint8_t *buf, int buf_len)
 	if (abort) {
 		bus_space_read_4(codec->mem_tag, codec->i2c_handle,
 		    DW_IC_CLR_TX_ABRT);
-		device_printf(sc->dev,
+		sst_dbg(sc, SST_DBG_OPS,
 		    "codec: I2C recv abort: 0x%08x\n", abort);
 		return (EIO);
 	}
 
 	if (timeout <= 0) {
-		device_printf(sc->dev, "codec: I2C recv timeout (rxflr=%d)\n",
-		    (int)rxflr);
+		sst_dbg(sc, SST_DBG_OPS,
+		    "codec: I2C recv timeout (rxflr=%d)\n", (int)rxflr);
 		return (ETIMEDOUT);
 	}
 
@@ -327,6 +329,68 @@ sst_i2c_recv(struct sst_softc *sc, uint8_t *buf, int buf_len)
  * Write: data[0..3] = verb bytes
  * Read:  set bit 19 of reg, write 4 bytes, read 4 bytes back
  * ================================================================ */
+
+/*
+ * sst_codec_note_result - account for the outcome of one transaction
+ *
+ * Called with i2c_lock held.  A failing bus (codec asleep, address
+ * NAK) is polled every 250 ms by jack detection, so per-attempt
+ * diagnostics stay at SST_DBG_OPS and the console sees one line when
+ * a failure streak begins and one when the bus recovers (issue #49).
+ * The cumulative count is exported as the codec.i2c_errors sysctl.
+ */
+static void
+sst_codec_note_result(struct sst_softc *sc, const char *op, uint32_t reg,
+    int error)
+{
+	struct sst_codec *codec = &sc->codec;
+	uint32_t ended;
+
+	if (error == 0) {
+		ended = sst_errstat_ok(&codec->i2c_err);
+		if (ended > 0)
+			device_printf(sc->dev,
+			    "codec: I2C recovered after %u failed "
+			    "transactions\n", ended);
+		return;
+	}
+
+	if (sst_errstat_fail(&codec->i2c_err))
+		device_printf(sc->dev,
+		    "codec: I2C %s reg=0x%08x failed: %d "
+		    "(further failures logged at debug level %d)\n",
+		    op, reg, error, SST_DBG_OPS);
+	else
+		sst_dbg(sc, SST_DBG_OPS,
+		    "codec: I2C %s reg=0x%08x failed: %d (streak %u)\n",
+		    op, reg, error, codec->i2c_err.streak);
+}
+
+/*
+ * sst_codec_sysctl_init - export codec diagnostics
+ *
+ * dev.acpi_intel_sst.N.codec.i2c_errors: cumulative failed I2C
+ * transactions since the codec was last initialized.
+ */
+int
+sst_codec_sysctl_init(struct sst_softc *sc)
+{
+	struct sysctl_ctx_list *ctx;
+	struct sysctl_oid *tree;
+	struct sysctl_oid *codec_tree;
+
+	ctx = device_get_sysctl_ctx(sc->dev);
+	tree = device_get_sysctl_tree(sc->dev);
+
+	codec_tree = SYSCTL_ADD_NODE(ctx, SYSCTL_CHILDREN(tree), OID_AUTO,
+	    "codec", CTLFLAG_RD | CTLFLAG_MPSAFE, 0, "Audio codec");
+
+	SYSCTL_ADD_UINT(ctx, SYSCTL_CHILDREN(codec_tree), OID_AUTO,
+	    "i2c_errors", CTLFLAG_RD, &sc->codec.i2c_err.total, 0,
+	    "Failed I2C transactions since codec init");
+
+	return (0);
+}
 
 /*
  * sst_codec_write - Write a verb/value to the codec
@@ -356,6 +420,7 @@ sst_codec_write(struct sst_softc *sc, uint32_t reg, uint32_t val)
 	if (codec->lock_valid)
 		mtx_lock(&codec->i2c_lock);
 	error = sst_i2c_write(sc, data, 4);
+	sst_codec_note_result(sc, "write", reg, error);
 	if (codec->lock_valid)
 		mtx_unlock(&codec->i2c_lock);
 
@@ -400,14 +465,15 @@ sst_codec_read(struct sst_softc *sc, uint32_t reg, uint32_t *val)
 		/* Step 2: Read 4-byte response - like i2c_master_recv */
 		error = sst_i2c_recv(sc, rdata, 4);
 		if (error)
-			device_printf(sc->dev,
+			sst_dbg(sc, SST_DBG_OPS,
 			    "codec: read recv-phase failed reg=0x%08x: %d\n",
 			    reg, error);
 	} else {
-		device_printf(sc->dev,
+		sst_dbg(sc, SST_DBG_OPS,
 		    "codec: read write-phase failed reg=0x%08x: %d\n",
 		    reg, error);
 	}
+	sst_codec_note_result(sc, "read", reg, error);
 
 	if (codec->lock_valid)
 		mtx_unlock(&codec->i2c_lock);

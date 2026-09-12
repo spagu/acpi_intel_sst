@@ -9,7 +9,7 @@
 [![FreeBSD](https://img.shields.io/badge/FreeBSD-15.x%20%7C%2016--CURRENT-AB2B28?style=for-the-badge&logo=freebsd&logoColor=white)](https://www.freebsd.org/)
 [![License](https://img.shields.io/badge/License-BSD--3--Clause-0078D4?style=for-the-badge)](LICENSE)
 [![Platform](https://img.shields.io/badge/Intel-Broadwell--U-0071C5?style=for-the-badge&logo=intel&logoColor=white)](https://ark.intel.com/)
-[![Status](https://img.shields.io/badge/Audio-Working!-2ea44f?style=for-the-badge&logo=headphones&logoColor=white)](#current-status-v0644)
+[![Status](https://img.shields.io/badge/Audio-Working!-2ea44f?style=for-the-badge&logo=headphones&logoColor=white)](#current-status-v0660)
 
 [![Language](https://img.shields.io/badge/C-Kernel_Module-A8B9CC?style=for-the-badge&logo=c&logoColor=white)](https://github.com/spagu/acpi_intel_sst)
 [![Firmware](https://img.shields.io/badge/Firmware-IntcSST2.bin-FF6F00?style=for-the-badge&logo=intel&logoColor=white)](firmware)
@@ -78,7 +78,7 @@ sleep 5 && kill %1
 
 ---
 
-## Current Status (v0.64.4)
+## Current Status (v0.66.0)
 
 <table>
 <tr><td>
@@ -270,9 +270,16 @@ State is persisted across suspend/resume cycles.
 
 | Sysctl | RW | Range | Default | Description |
 |:-------|:--:|:------|:--------|:------------|
-| `debug` | RW | 0-3 | 1 | Debug verbosity: 0=quiet (errors only), 1=lifecycle (attach, fw load, stream alloc), 2=operational (IPC, volume, EQ), 3=trace (polls, register dumps). |
+| `debug` | RW | 0-3 | 0 | Debug verbosity: 0=quiet (errors only), 1=lifecycle (attach, fw load, stream alloc), 2=operational (IPC, volume, EQ), 3=trace (polls, register dumps). |
 
 > Boot-time override: add `hint.acpi_intel_sst.0.debug="3"` to `/boot/device.hints`.
+> A healthy boot at the default level prints a handful of lines: attach, firmware version, codec identified, PCM registered.
+
+### Codec
+
+| Sysctl | RW | Description |
+|:-------|:--:|:------------|
+| `codec.i2c_errors` | RO | Failed I2C transactions since the codec was last initialized. A failing bus is reported on the console once when the failure streak starts and once when it recovers; per-attempt details need `debug=2`. |
 
 ### DSP Telemetry
 
@@ -464,7 +471,7 @@ These devices use the same Intel SST DSP and may work (untested):
 | | File | Description |
 |:--|:-----|:------------|
 | :book: | [docs/STATUS.md](docs/STATUS.md) | Current driver status, known issues, next steps |
-| :scroll: | [CHANGELOG.md](CHANGELOG.md) | Detailed version history (v0.1.0 - v0.64.4) |
+| :scroll: | [CHANGELOG.md](CHANGELOG.md) | Detailed version history (v0.1.0 - v0.66.0) |
 | :handshake: | [CONTRIBUTING.md](CONTRIBUTING.md) | How to contribute |
 | :wrench: | [acpi/README.md](acpi/README.md) | DSDT patch instructions for Dell XPS 13 9343 |
 | :bar_chart: | [docs/DIAGRAMS.md](docs/DIAGRAMS.md) | Architecture & process flow diagrams (Mermaid) |

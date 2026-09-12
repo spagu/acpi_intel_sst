@@ -110,21 +110,23 @@ struct sst_softc {
 	 *                     time on the DesignWare controller.
 	 * (j) jack.lock     - jack state and the poll callout.
 	 * (C) CHN_LOCK      - sound(4) per-channel lock, held by the
-	 *                     framework around channel methods.
-	 * (t) ch->trig_sx   - sleepable; serializes the trigger body,
-	 *                     which deliberately runs with CHN_LOCK
-	 *                     dropped because it issues IPC.
+	 *                     framework around channel methods.  The
+	 *                     framework may hold several of them at
+	 *                     once (dsp_poll, vchan parents), so a
+	 *                     channel method must never sleep and must
+	 *                     never drop them: channel_trigger hands its
+	 *                     body to pcm.trig_tq instead.
 	 *
 	 * Rules
 	 * -----
 	 * 1. Never call sst_ipc_*() or the codec helpers with a
 	 *    non-sleepable lock held: they sleep (cv_timedwait) or
-	 *    busy-wait for milliseconds.  Callouts must defer such work
-	 *    to taskqueue_thread.
+	 *    busy-wait for milliseconds.  Callouts and channel methods
+	 *    must defer such work to a taskqueue (taskqueue_thread, or
+	 *    pcm.trig_tq for the trigger body).
 	 * 2. Lock order when more than one is needed:
-	 *    trig_sx -> ipc.send_mtx -> ipc.lock, and sc_mtx / i2c_lock
-	 *    / jack.lock are leaves taken last and never held across a
-	 *    sleep.
+	 *    ipc.send_mtx -> ipc.lock, and sc_mtx / i2c_lock / jack.lock
+	 *    are leaves taken last and never held across a sleep.
 	 * 3. The ISR may run before attach finishes and after detach
 	 *    starts; it must check the per-subsystem "initialized"
 	 *    flags before touching their state.

@@ -35,6 +35,8 @@
 #include <sys/types.h>
 #include <sys/lock.h>
 #include <sys/mutex.h>
+
+#include "sst_errstat.h"
 #include <machine/bus.h>
 
 /*
@@ -190,6 +192,7 @@ struct sst_codec {
 	bool			hp_active;	/* Headphone output enabled */
 	int			mic_refs;	/* Active capture streams */
 	uint32_t		vendor_id;	/* Detected vendor ID */
+	struct sst_errstat	i2c_err;	/* (c) I2C failure accounting */
 };
 
 /* Forward declaration */
@@ -200,6 +203,7 @@ struct sst_softc;
  */
 int	sst_codec_init(struct sst_softc *sc);
 void	sst_codec_fini(struct sst_softc *sc);
+int	sst_codec_sysctl_init(struct sst_softc *sc);
 int	sst_codec_enable_speaker(struct sst_softc *sc);
 int	sst_codec_enable_headphone(struct sst_softc *sc);
 int	sst_codec_enable_microphone(struct sst_softc *sc);

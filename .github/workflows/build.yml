@@ -158,8 +158,11 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v7
 
-      - name: Build and run firmware parser bounds tests
+      - name: Build and run host-side unit tests
         run: make -C tests/unit test
+
+      - name: Enforce line coverage of the headers shared with the driver
+        run: make -C tests/unit coverage
 
       - name: Verify predicate mirror is in sync with the driver
         run: |

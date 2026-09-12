@@ -71,3 +71,12 @@ dump.txt
 
 # Local audit tasks (not committed)
 /audit/
+
+# Host-side unit test binaries and gcov output
+tests/unit/test_fw_bounds
+tests/unit/test_trig_state
+tests/unit/test_errstat
+tests/unit/cov/
+*.gcda
+*.gcno
+*.gcov

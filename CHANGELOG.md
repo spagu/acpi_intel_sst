@@ -5,6 +5,53 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.66.0] - 2026-09-12
+
+Bug-fix release for the two issues reported against v0.65.0 on
+FreeBSD 15.1-RELEASE (Broadwell-U, RT286).
+
+### Fixed
+
+- **Kernel panic on every graphical login with vchans enabled**
+  (issue #48). `channel_trigger` issued IPC (`cv_timedwait`) after
+  dropping *its own* channel mutex, but sound(4) may hold more than one
+  channel lock when it calls the method: `dsp_poll()` holds both the
+  playback and the record channel, and a virtual channel's parent
+  trigger runs with the sibling vchan still locked. The sleeping thread
+  therefore still owned `dsp0.virtual_play.0` and the kernel panicked
+  (`sleeping thread holds ...`). The trigger method no longer sleeps
+  and no longer drops any lock: it records the request and hands the
+  body to a dedicated single-thread taskqueue (`sst_trig`). Requests
+  are coalesced so the last requested state wins; channel free and
+  suspend drain the queue before tearing a stream down. The per-channel
+  `trig_sx` is gone.
+- **65% of the boot log came from this driver** (issue #49). The
+  `debug` sysctl now defaults to `0` (quiet), as documented, instead of
+  `1`. The codec I2C helpers printed every failed attempt with
+  `device_printf` regardless of the debug level; with jack detection
+  polling the codec every 250 ms a sleeping codec produced hundreds of
+  lines. Per-attempt diagnostics moved to debug level 2. The console now
+  gets one line when a failure streak begins and one when the bus
+  recovers, and the cumulative count is exported as the new
+  `dev.acpi_intel_sst.N.codec.i2c_errors` sysctl.
+
+### Changed
+
+- A failure inside the deferred trigger body cannot be returned to
+  sound(4) any more. It is logged, the channel stays prepared and no
+  `chn_intr()` is delivered, so sound(4) reports the stream as dead
+  through its own interrupt timeout instead of the application seeing
+  an immediate error.
+- `docs/CONFIGURATION.md` no longer describes jack detection as GPIO
+  polling (it has read the codec pin-sense verb since v0.65.0).
+
+### Added
+
+- Host-side unit tests for the two new shared headers
+  (`src/sst_trig_state.h`, `src/sst_errstat.h`): `make -C tests/unit
+  test` runs them and `make -C tests/unit coverage` enforces 96% line
+  coverage of the shared headers with gcov.
+
 ## [0.65.0] - 2026-08-26
 
 Audit release: a full source audit (see `audit/` task files) found 68

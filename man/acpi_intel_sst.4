@@ -182,7 +182,7 @@ State is preserved across suspend/resume cycles.
 .Ss Debug
 .Bl -tag -width indent
 .It Va dev.acpi_intel_sst.%d.debug
-Debug verbosity level (read-write, default 1).
+Debug verbosity level (read-write, default 0).
 .Pp
 .Bl -tag -width "3" -compact
 .It Li 0
@@ -308,6 +308,13 @@ Cumulative headphone insertion count (read-only).
 Cumulative microphone insertion count (read-only).
 .It Va dev.acpi_intel_sst.%d.jack.poll_count
 Jack polling cycle count (read-only).
+.It Va dev.acpi_intel_sst.%d.codec.i2c_errors
+Failed I2C transactions with the codec since it was last initialized
+(read-only).
+A failing bus is reported on the console once when the failure streak
+starts and once when it recovers; per-attempt diagnostics require
+.Va debug
+level 2 or higher.
 .El
 .Sh LOADER TUNABLES
 The following variables are available as boot-time tunables via
