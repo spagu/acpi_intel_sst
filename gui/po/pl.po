@@ -359,3 +359,15 @@ msgstr "Sterownik i panel: BSD 3-Clause.\nFirmware DSP (IntcSST2.bin) rozprowadz
 
 msgid "Full text"
 msgstr "Pełny tekst"
+
+msgid "Run as administrator"
+msgstr "Uruchom jako administrator"
+
+msgid "Start a second copy with the privileges needed to change settings. This one stays open until it appears."
+msgstr "Uruchamia drugą kopię z uprawnieniami potrzebnymi do zmiany ustawień. Ta zostaje otwarta, dopóki tamta się nie pojawi."
+
+msgid "Starting with administrator privileges…"
+msgstr "Uruchamianie z uprawnieniami administratora…"
+
+msgid "No way to elevate privileges was found. Run \"sudo sst-panel\" from a terminal instead."
+msgstr "Nie znaleziono sposobu na podniesienie uprawnień. Uruchom \"sudo sst-panel\" z terminala."

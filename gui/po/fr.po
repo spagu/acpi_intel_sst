@@ -359,3 +359,15 @@ msgstr "Pilote et panneau : BSD 3-Clause.\nLe micrologiciel du DSP (IntcSST2.bin
 
 msgid "Full text"
 msgstr "Texte intégral"
+
+msgid "Run as administrator"
+msgstr "Lancer en administrateur"
+
+msgid "Start a second copy with the privileges needed to change settings. This one stays open until it appears."
+msgstr "Démarre une seconde copie avec les droits nécessaires pour modifier les réglages. Celle-ci reste ouverte jusqu'à ce que l'autre apparaisse."
+
+msgid "Starting with administrator privileges…"
+msgstr "Démarrage avec les droits d'administrateur…"
+
+msgid "No way to elevate privileges was found. Run \"sudo sst-panel\" from a terminal instead."
+msgstr "Aucun moyen d'élever les privilèges n'a été trouvé. Lancez plutôt \"sudo sst-panel\" dans un terminal."

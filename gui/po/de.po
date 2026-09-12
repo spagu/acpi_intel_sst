@@ -359,3 +359,15 @@ msgstr "Treiber und Oberfläche: BSD 3-Clause.\nDie DSP-Firmware (IntcSST2.bin) 
 
 msgid "Full text"
 msgstr "Volltext"
+
+msgid "Run as administrator"
+msgstr "Als Administrator starten"
+
+msgid "Start a second copy with the privileges needed to change settings. This one stays open until it appears."
+msgstr "Startet eine zweite Kopie mit den Rechten, die zum Ändern von Einstellungen nötig sind. Diese bleibt offen, bis jene erscheint."
+
+msgid "Starting with administrator privileges…"
+msgstr "Start mit Administratorrechten…"
+
+msgid "No way to elevate privileges was found. Run \"sudo sst-panel\" from a terminal instead."
+msgstr "Es wurde kein Weg gefunden, die Rechte zu erhöhen. Starten Sie stattdessen \"sudo sst-panel\" im Terminal."

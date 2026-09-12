@@ -359,3 +359,15 @@ msgstr "驱动与面板：BSD 3-Clause。\nDSP 固件（IntcSST2.bin）由 Intel
 
 msgid "Full text"
 msgstr "完整文本"
+
+msgid "Run as administrator"
+msgstr "以管理员身份运行"
+
+msgid "Start a second copy with the privileges needed to change settings. This one stays open until it appears."
+msgstr "启动一个具备修改设置权限的副本。在新窗口出现之前，当前窗口会保持打开。"
+
+msgid "Starting with administrator privileges…"
+msgstr "正在以管理员身份启动…"
+
+msgid "No way to elevate privileges was found. Run \"sudo sst-panel\" from a terminal instead."
+msgstr "未找到提升权限的方式。请改在终端中运行 \"sudo sst-panel\"。"

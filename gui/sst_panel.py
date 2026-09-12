@@ -224,7 +224,62 @@ class Panel(Gtk.Window):
         bar.get_content_area().add(Gtk.Label(
             label=_("Viewing only — changing settings needs root privileges."),
             xalign=0))
+        btn = bar.add_button(_("Run as administrator"), Gtk.ResponseType.OK)
+        btn.set_tooltip_text(
+            _("Start a second copy with the privileges needed to change "
+              "settings. This one stays open until it appears."))
+        bar.connect("response", self._elevate)
         return bar
+
+    def _elevate(self, _bar, _response):
+        """
+        Relaunch with privilege.
+
+        pkexec first, since a polkit agent gives a proper password dialog and
+        the panel needs no setuid anything. sudo with an askpass helper is the
+        fallback for systems without polkit running.
+
+        Both need DISPLAY and XAUTHORITY passed explicitly: pkexec scrubs the
+        environment, and a GUI that inherits none of it simply fails to open a
+        window, which looks like nothing happened at all.
+        """
+        import os
+        import shutil
+        import subprocess
+
+        env = os.environ
+        disp = env.get("DISPLAY", ":0")
+        xauth = env.get("XAUTHORITY", os.path.expanduser("~/.Xauthority"))
+        target = shutil.which("sst-panel") or os.path.abspath(__file__)
+        launcher = ([target] if target.endswith("sst-panel")
+                    else ["python3", target])
+
+        attempts = []
+        if shutil.which("pkexec"):
+            attempts.append(["pkexec", "env",
+                             f"DISPLAY={disp}", f"XAUTHORITY={xauth}"]
+                            + launcher)
+        askpass = shutil.which("ksshaskpass") or shutil.which("ssh-askpass")
+        if shutil.which("sudo") and askpass:
+            attempts.append(["sudo", "-A", "-E"] + launcher)
+
+        for cmd in attempts:
+            try:
+                e = dict(env)
+                if cmd[0] == "sudo":
+                    e["SUDO_ASKPASS"] = askpass
+                    e["DISPLAY"] = disp
+                    e["XAUTHORITY"] = xauth
+                subprocess.Popen(cmd, env=e,
+                                 stdout=subprocess.DEVNULL,
+                                 stderr=subprocess.DEVNULL)
+                self._say(_("Starting with administrator privileges…"))
+                return
+            except OSError:
+                continue
+
+        self._say(_("No way to elevate privileges was found. Run "
+                    "\"sudo sst-panel\" from a terminal instead."), True)
 
     def _lang_changed(self, combo):
         code = combo.get_active_id()
