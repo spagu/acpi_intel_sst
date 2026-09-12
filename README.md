@@ -9,7 +9,7 @@
 [![FreeBSD](https://img.shields.io/badge/FreeBSD-15.x%20%7C%2016--CURRENT-AB2B28?style=for-the-badge&logo=freebsd&logoColor=white)](https://www.freebsd.org/)
 [![License](https://img.shields.io/badge/License-BSD--3--Clause-0078D4?style=for-the-badge)](LICENSE)
 [![Platform](https://img.shields.io/badge/Intel-Broadwell--U-0071C5?style=for-the-badge&logo=intel&logoColor=white)](https://ark.intel.com/)
-[![Status](https://img.shields.io/badge/Audio-Working!-2ea44f?style=for-the-badge&logo=headphones&logoColor=white)](#current-status-v0660)
+[![Status](https://img.shields.io/badge/Audio-Working!-2ea44f?style=for-the-badge&logo=headphones&logoColor=white)](#current-status-v0670)
 
 [![Language](https://img.shields.io/badge/C-Kernel_Module-A8B9CC?style=for-the-badge&logo=c&logoColor=white)](https://github.com/spagu/acpi_intel_sst)
 [![Firmware](https://img.shields.io/badge/Firmware-IntcSST2.bin-FF6F00?style=for-the-badge&logo=intel&logoColor=white)](firmware)
@@ -54,8 +54,9 @@ graph TD
 ## Quick Start
 
 ```bash
-# Build
-git clone https://github.com/spagu/acpi_intel_sst.git && cd acpi_intel_sst/src && make
+# Build the driver (src/acpi_intel_sst.ko) and the firmware module
+# (firmware/acpi_intel_sst_fw.ko, for loader.conf preloading on ZFS)
+git clone https://github.com/spagu/acpi_intel_sst.git && cd acpi_intel_sst && make
 
 # Install firmware
 sudo mkdir -p /boot/firmware/intel
@@ -64,7 +65,7 @@ cd /tmp && ar x fw.deb && tar xf data.tar.xz
 sudo cp lib/firmware/intel/IntcSST2.bin /boot/firmware/intel/
 
 # Load and play
-sudo kldload ./acpi_intel_sst.ko
+sudo kldload ./src/acpi_intel_sst.ko
 mixer vol 80 && play -n synth 3 sine 440
 
 # Record 5 seconds from microphone
@@ -78,7 +79,7 @@ sleep 5 && kill %1
 
 ---
 
-## Current Status (v0.66.0)
+## Current Status (v0.67.0)
 
 <table>
 <tr><td>
@@ -196,7 +197,10 @@ hw.acpi.install_interface="Windows 2012"
 # Disable GPU HDMI audio controller (conflicts with SST IRQ)
 hint.hdac.0.disabled="1"
 
-# Load SST driver at boot
+# Load SST driver at boot.  The firmware module must come first: on a
+# ZFS root /boot/firmware is not readable when loader-loaded modules
+# attach, so the driver would fail with "could not load firmware image".
+acpi_intel_sst_fw_load="YES"
 acpi_intel_sst_load="YES"
 
 # Disable ig4 I2C driver (SST driver accesses I2C0 directly for codec control)
@@ -213,6 +217,7 @@ hint.ig4.1.disabled="1"
 | `acpi_dsdt_*` | Custom DSDT forces ADSP device enabled |
 | `hw.acpi.install_interface` | DSDT requires OSYS >= 0x07DC to route memory to BAR0 |
 | `hint.hdac.0.disabled` | Disables Intel GPU audio (hdac0 at pci0:0:3:0, 8086:160c) |
+| `acpi_intel_sst_fw_load` | Preloads `IntcSST2.bin` as a kernel module so `firmware_get(9)` finds it before the root filesystem is mounted (ZFS root). Not needed when the driver is loaded after boot via `kld_list` in `/etc/rc.conf` or `kldload`; then `/boot/firmware/intel/IntcSST2.bin` is used. |
 | `acpi_intel_sst_load` | Auto-load SST driver at boot |
 | `ig4_load` / `hint.ig4.*` | Prevents ig4 driver from claiming I2C0, which SST uses directly for RT286 codec |
 
@@ -280,6 +285,12 @@ State is persisted across suspend/resume cycles.
 | Sysctl | RW | Description |
 |:-------|:--:|:------------|
 | `codec.i2c_errors` | RO | Failed I2C transactions since the codec was last initialized. A failing bus is reported on the console once when the failure streak starts and once when it recovers; per-attempt details need `debug=2`. |
+
+### DSP Self-Recovery
+
+| Sysctl | RW | Description |
+|:-------|:--:|:------------|
+| `dsp_recoveries` | RO | Times the driver reinitialized the DSP at runtime because it refused a stream allocation (`out of resources`) or stopped answering. Recovery repeats the suspend/resume cycle (power, firmware, topology, codec) and restarts the affected stream, at most once per 30 s. Seen on the first attach after a cold boot; see [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md#no-audio-after-cold-boot). |
 
 ### DSP Telemetry
 
@@ -471,7 +482,7 @@ These devices use the same Intel SST DSP and may work (untested):
 | | File | Description |
 |:--|:-----|:------------|
 | :book: | [docs/STATUS.md](docs/STATUS.md) | Current driver status, known issues, next steps |
-| :scroll: | [CHANGELOG.md](CHANGELOG.md) | Detailed version history (v0.1.0 - v0.66.0) |
+| :scroll: | [CHANGELOG.md](CHANGELOG.md) | Detailed version history (v0.1.0 - v0.67.0) |
 | :handshake: | [CONTRIBUTING.md](CONTRIBUTING.md) | How to contribute |
 | :wrench: | [acpi/README.md](acpi/README.md) | DSDT patch instructions for Dell XPS 13 9343 |
 | :bar_chart: | [docs/DIAGRAMS.md](docs/DIAGRAMS.md) | Architecture & process flow diagrams (Mermaid) |

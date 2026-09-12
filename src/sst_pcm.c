@@ -74,6 +74,8 @@ static int sst_chan_trigger_unlocked(struct sst_pcm_channel *ch,
     int go);
 static void sst_pcm_trig_task(void *arg, int pending);
 static void sst_pcm_trig_drain(struct sst_pcm_channel *ch);
+static void sst_pcm_recover_task(void *arg, int pending);
+static void sst_pcm_request_recovery(struct sst_softc *sc, int error);
 static uint32_t sst_chan_getptr(kobj_t obj, void *data);
 static struct pcmchan_caps *sst_chan_getcaps(kobj_t obj, void *data);
 
@@ -534,6 +536,7 @@ sst_chan_init(kobj_t obj, void *devinfo, struct snd_dbuf *b,
 	}
 	ch->trig.pending = false;
 	ch->trig.req = 0;
+	ch->trig_want = 0;
 
 	/* Deferred worker for IPC-heavy work seen from the callout */
 	if (!ch->work_task_valid) {
@@ -827,9 +830,8 @@ sst_pcm_alloc_dsp_stream(struct sst_softc *sc, struct sst_pcm_channel *ch)
 	/* Allocate stream on DSP */
 	error = sst_ipc_alloc_stream(sc, &req, &mod, 1, &rsp);
 	if (error) {
-		device_printf(sc->dev,
-		    "DSP stream alloc failed: %d (status=INVALID_PARAM?)\n",
-		    error);
+		device_printf(sc->dev, "DSP stream alloc failed: %d (%s)\n",
+		    error, sst_ipc_status_name(error));
 		return (error);
 	}
 
@@ -1244,19 +1246,23 @@ sst_pcm_ramp_cb(void *arg)
  * Called from sst_acpi_suspend() before DSP reset.
  */
 void
-sst_pcm_suspend(struct sst_softc *sc)
+sst_pcm_suspend(struct sst_softc *sc, bool drain_triggers)
 {
 	int i;
 
 	/*
 	 * Refuse deferred starts from here on and let queued triggers
-	 * finish before the streams they touch are torn down.
+	 * finish before the streams they touch are torn down.  The
+	 * recovery task already runs on trig_tq, where nothing else can
+	 * be executing, and must not wait for that queue.
 	 */
 	sc->pcm.suspended = true;
-	for (i = 0; i < SST_PCM_MAX_PLAY; i++)
-		sst_pcm_trig_drain(&sc->pcm.play[i]);
-	for (i = 0; i < SST_PCM_MAX_REC; i++)
-		sst_pcm_trig_drain(&sc->pcm.rec[i]);
+	if (drain_triggers) {
+		for (i = 0; i < SST_PCM_MAX_PLAY; i++)
+			sst_pcm_trig_drain(&sc->pcm.play[i]);
+		for (i = 0; i < SST_PCM_MAX_REC; i++)
+			sst_pcm_trig_drain(&sc->pcm.rec[i]);
+	}
 
 	for (i = 0; i < SST_PCM_MAX_PLAY; i++) {
 		struct sst_pcm_channel *ch = &sc->pcm.play[i];
@@ -1364,6 +1370,7 @@ sst_chan_trigger(kobj_t obj, void *data, int go)
 		return (ENXIO);
 
 	mtx_lock(&sc->sc_mtx);
+	ch->trig_want = go;
 	sst_trig_state_request(&ch->trig, go);
 	mtx_unlock(&sc->sc_mtx);
 	taskqueue_enqueue(sc->pcm.trig_tq, &ch->trig_task);
@@ -1398,11 +1405,74 @@ sst_pcm_trig_task(void *arg, int pending __unused)
 		}
 
 		error = sst_chan_trigger_unlocked(ch, go);
-		if (error)
+		if (error) {
 			device_printf(sc->dev,
 			    "PCM: deferred %s trigger 0x%x failed: %d\n",
 			    (ch->dir == PCMDIR_PLAY) ? "playback" : "capture",
 			    go, error);
+			if (go == PCMTRIG_START)
+				sst_pcm_request_recovery(sc, error);
+		}
+	}
+}
+
+/*
+ * A stream start was refused by the DSP (or the DSP did not answer).
+ * Schedule a reinitialization unless one ran recently (issue #51).
+ * Host-side errors (ENOMEM, EINVAL, ...) are not the DSP's fault and
+ * are left alone.
+ */
+static void
+sst_pcm_request_recovery(struct sst_softc *sc, int error)
+{
+	if (!sst_recover_wanted(error) || !sc->pcm.recover_task_valid)
+		return;
+
+	if (!sst_recover_allowed(&sc->pcm.recover, ticks,
+	    SST_RECOVER_MIN_SECS * hz)) {
+		device_printf(sc->dev,
+		    "DSP still refusing streams (%s); next recovery "
+		    "attempt after %d s\n", sst_ipc_status_name(error),
+		    SST_RECOVER_MIN_SECS);
+		return;
+	}
+
+	taskqueue_enqueue(sc->pcm.trig_tq, &sc->pcm.recover_task);
+}
+
+/*
+ * Reinitialize the DSP, then restart every stream sound(4) still
+ * considers running.  Runs on trig_tq, so no channel trigger body can
+ * execute concurrently; the pending triggers queued behind this task
+ * run afterwards and see the fresh DSP.
+ */
+static void
+sst_pcm_recover_task(void *arg, int pending __unused)
+{
+	struct sst_softc *sc = arg;
+	struct sst_pcm_channel *ch;
+	int i;
+
+	if (sst_dsp_recover(sc) != 0)
+		return;
+
+	for (i = 0; i < SST_PCM_MAX_PLAY + SST_PCM_MAX_REC; i++) {
+		ch = (i < SST_PCM_MAX_PLAY) ? &sc->pcm.play[i] :
+		    &sc->pcm.rec[i - SST_PCM_MAX_PLAY];
+		if (!ch->allocated || !ch->trig_task_valid)
+			continue;
+		mtx_lock(&sc->sc_mtx);
+		if (ch->trig_want == PCMTRIG_START &&
+		    ch->state != SST_PCM_STATE_RUNNING) {
+			sst_trig_state_request(&ch->trig, PCMTRIG_START);
+			mtx_unlock(&sc->sc_mtx);
+			sst_dbg(sc, SST_DBG_LIFE,
+			    "PCM: restarting %s after DSP recovery\n",
+			    (ch->dir == PCMDIR_PLAY) ? "playback" : "capture");
+			taskqueue_enqueue(sc->pcm.trig_tq, &ch->trig_task);
+		} else {
+			mtx_unlock(&sc->sc_mtx);
+		}
 	}
 }
 
@@ -1996,6 +2066,10 @@ sst_pcm_init(struct sst_softc *sc)
 	sc->pcm.ramp_step = 0;
 	sc->pcm.ramp_steps = 0;
 	sc->pcm.suspended = false;
+	sc->pcm.recover.count = 0;
+	sc->pcm.recover.last_ticks = 0;
+	TASK_INIT(&sc->pcm.recover_task, 0, sst_pcm_recover_task, sc);
+	sc->pcm.recover_task_valid = true;
 
 	/*
 	 * Trigger worker: its own single-thread queue, separate from
@@ -2039,6 +2113,7 @@ sst_pcm_fini(struct sst_softc *sc)
 	sst_pcm_unregister(sc);
 
 	/* Channels are gone (chn_kill drained their triggers) */
+	sc->pcm.recover_task_valid = false;
 	if (sc->pcm.trig_tq != NULL) {
 		taskqueue_free(sc->pcm.trig_tq);
 		sc->pcm.trig_tq = NULL;

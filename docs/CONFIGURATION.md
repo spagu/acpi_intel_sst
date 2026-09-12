@@ -121,6 +121,16 @@ A failing codec bus is reported once when the failure streak begins (`codec: I2C
 
 **Source:** `sst_codec.c`, `sst_errstat.h`
 
+### DSP Self-Recovery
+
+| Sysctl | RW | Type | Description |
+|:-------|:--:|:-----|:------------|
+| `dsp_recoveries` | RO | uint | Runtime DSP reinitializations after a refused stream allocation |
+
+When a stream start is refused by the DSP (any catpt reply status, typically `out of resources`) or the DSP stops answering IPC, the driver runs the same sequence as suspend/resume from inside its trigger worker: power down, WPT power-up, firmware rewrite with full readback verification, DSP boot, topology, codec re-init, then restarts every stream sound(4) still considers running. Attempts are spaced at least `SST_RECOVER_MIN_SECS` (30 s) apart; a refused start in between is logged with the DSP status.
+
+**Source:** `sst_pcm.c` (`sst_pcm_recover_task`), `acpi_intel_sst.c` (`sst_dsp_recover`), `sst_recover_policy.h`
+
 ### DSP Audio Parameters
 
 #### EQ Preset

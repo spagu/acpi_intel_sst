@@ -23,6 +23,40 @@ Attach this file when opening an issue on GitHub.
  
 #### 1. Enable Verbose Logging
 
+## No Audio After Cold Boot
+
+### Symptom
+
+Everything reports success after the first attach of a cold boot (`pcm0` registered, mixer at 100%, writes to `/dev/dsp0` return the expected byte count) but nothing is audible, and the driver prints:
+
+```
+acpi_intel_sst0: IPC: Stream alloc send failed: 3 (out of resources)
+acpi_intel_sst0: DSP stream alloc failed: 3 (out of resources)
+acpi_intel_sst0: PCM: deferred playback trigger 0x1 failed: 3
+```
+
+The reliable indicator is the driver's own telemetry: `telemetry.peak_left` and `telemetry.peak_right` stay at 0 during playback. Unloading and reloading the module after startup has finished fixes it (issue #51).
+
+### What the driver does about it (v0.67.0+)
+
+- Firmware written to SRAM is now read back word by word and rewritten once on mismatch; a block that still differs fails the load instead of booting a corrupt image. Every SRAM bank is read once after being ungated, as Linux catpt does, to avoid dropped bytes on the first write.
+- When a stream start is refused by the DSP or the DSP stops answering, the driver reinitializes it (the suspend/resume sequence) and restarts the stream. Watch `dev.acpi_intel_sst.0.dsp_recoveries`; a non-zero value means the recovery ran. Attempts are at least 30 s apart.
+
+### Diagnostic Checklist
+
+```bash
+sysctl dev.acpi_intel_sst.0.dsp_recoveries        # recoveries so far
+sysctl dev.acpi_intel_sst.0.telemetry.peak_left   # must move during playback
+sysctl dev.acpi_intel_sst.0.codec.i2c_errors      # codec bus health
+dmesg | grep -E "block at 0x|DSP recovery"         # firmware readback / recovery
+```
+
+If the recovery itself fails, a `kldunload`/`kldload` cycle after startup is the manual equivalent; please attach `scripts/sst_report.sh` output to the issue.
+
+### Loading from loader.conf on a ZFS root
+
+`acpi_intel_sst_load="YES"` alone fails with `could not load firmware image, error 8`: the driver attaches before `/boot/firmware` is readable. Add `acpi_intel_sst_fw_load="YES"` before it (the firmware module built from `firmware/`), or load the driver after boot with `kld_list="acpi_intel_sst"` in `/etc/rc.conf`.
+
 ## DSP Stream Stall During Volume Adjustment
 
 ### Symptom

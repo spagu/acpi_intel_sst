@@ -606,7 +606,7 @@ sst_ipc_alloc_stream(struct sst_softc *sc, struct sst_alloc_stream_req *req,
 	    paysize, off, arrsz);
 
 	/* Debug: dump full payload in 16-byte lines */
-	{
+	if (sc->debug_level >= SST_DBG_TRACE) {
 		size_t j;
 		for (j = 0; j < paysize; j += 16) {
 			size_t end = j + 16;
@@ -622,8 +622,8 @@ sst_ipc_alloc_stream(struct sst_softc *sc, struct sst_alloc_stream_req *req,
 
 	error = sst_ipc_send(sc, header, payload, paysize);
 	if (error) {
-		device_printf(sc->dev, "IPC: Stream alloc send failed: %d\n",
-		    error);
+		device_printf(sc->dev, "IPC: Stream alloc send failed: %d (%s)\n",
+		    error, sst_ipc_status_name(error));
 		return (error);
 	}
 
@@ -676,6 +676,28 @@ sst_ipc_alloc_stream(struct sst_softc *sc, struct sst_alloc_stream_req *req,
 	    rsp->pres_pos_regaddr);
 
 	return (0);
+}
+
+/*
+ * Name of an error code as returned by sst_ipc_send(): the catpt reply
+ * status is passed through verbatim, so 1-7 are DSP verdicts and
+ * anything else is a host errno.
+ */
+const char *
+sst_ipc_status_name(int error)
+{
+	switch (error) {
+	case SST_IPC_REPLY_SUCCESS:		return ("success");
+	case SST_IPC_REPLY_ERROR_INVALID:	return ("invalid parameter");
+	case SST_IPC_REPLY_UNKNOWN_MSG:		return ("unknown message");
+	case SST_IPC_REPLY_OUT_OF_RES:		return ("out of resources");
+	case SST_IPC_REPLY_BUSY:		return ("busy");
+	case SST_IPC_REPLY_PENDING:		return ("pending");
+	case SST_IPC_REPLY_FAILURE:		return ("failure");
+	case SST_IPC_REPLY_INVALID_REQ:		return ("invalid request");
+	case ETIMEDOUT:				return ("no reply");
+	default:				return ("host error");
+	}
 }
 
 /*

@@ -16,6 +16,7 @@
 #include <sys/taskqueue.h>
 
 #include "sst_trig_state.h"
+#include "sst_recover_policy.h"
 
 #include "sst_topology.h"
 
@@ -84,6 +85,7 @@ struct sst_pcm_channel {
 	struct task		trig_task;
 	bool			trig_task_valid;
 	struct sst_trig_state	trig;		/* (s) coalesced request */
+	int			trig_want;	/* (s) last PCMTRIG_* from sound(4) */
 
 	/* Deferred work: IPC must not run in callout (softclock) context */
 	struct task		work_task;
@@ -203,6 +205,11 @@ struct sst_pcm {
 	/* Deferred trigger worker (one thread, see sst_chan_trigger) */
 	struct taskqueue	*trig_tq;
 
+	/* DSP self-recovery, runs on trig_tq (see sst_pcm_recover_task) */
+	struct task		recover_task;
+	bool			recover_task_valid;
+	struct sst_recover_state recover;
+
 	/* State */
 	bool			registered;	/* PCM device registered */
 	bool			initialized;	/* sst_pcm_init() done */
@@ -217,7 +224,7 @@ struct sst_softc;
  */
 int	sst_pcm_init(struct sst_softc *sc);
 void	sst_pcm_fini(struct sst_softc *sc);
-void	sst_pcm_suspend(struct sst_softc *sc);
+void	sst_pcm_suspend(struct sst_softc *sc, bool drain_triggers);
 void	sst_pcm_resume(struct sst_softc *sc);
 int	sst_pcm_register(struct sst_softc *sc);
 void	sst_pcm_unregister(struct sst_softc *sc);
