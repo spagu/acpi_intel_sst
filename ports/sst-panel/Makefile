@@ -22,7 +22,7 @@ GH_PROJECT=	acpi_intel_sst
 # v0.67.0 was cut, so that tag's tarball has no gui/ directory at all and the
 # port would fail at the build stage. Move DISTVERSION and GH_TAGNAME onto the
 # tag once a release including the panel is published.
-GH_TAGNAME=	4c875054618b
+GH_TAGNAME=	61d2cc79f3b1
 USE_GNOME=	gtk30 pygobject3
 SHEBANG_FILES=	sst_panel.py
 
