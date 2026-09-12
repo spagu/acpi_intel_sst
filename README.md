@@ -66,7 +66,7 @@ sudo cp lib/firmware/intel/IntcSST2.bin /boot/firmware/intel/
 
 # Load and play
 sudo kldload ./src/acpi_intel_sst.ko
-mixer vol 80 && play -n synth 3 sine 440
+mixer vol=0.8 && play -n synth 3 sine 440
 
 # Record 5 seconds from microphone
 cat /dev/dsp0.1 > /tmp/test.raw &
@@ -241,11 +241,11 @@ sudo shutdown -p now
 
 # After boot:
 cat /dev/sndstat
-mixer vol 80
+mixer vol=0.8
 play -n synth 3 sine 440  # requires audio/sox
 
 # Test capture (microphone):
-mixer mic 80
+mixer mic=0.8
 cat /dev/dsp0.1 > /tmp/test.raw &
 sleep 5 && kill %1
 ```

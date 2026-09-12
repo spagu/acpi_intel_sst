@@ -15,6 +15,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   kmod port extracts to the archive root, so the port stopped with
   `Missing license file for BSD3CLAUSE`. Both paths now resolve inside
   `WRKSRC`.
+- **Documentation used the pre-FreeBSD 15 `mixer(8)` syntax.** `mixer vol 80`
+  now fails with `mixer: 80: no such device`, and the rewritten tool takes a
+  0.0-1.0 float, so even `mixer vol=80` silently clamps to full scale. The
+  examples in `README.md`, `acpi_intel_sst(4)` and the kmod `pkg-message`
+  now read `mixer vol=0.8`. The driver only supports FreeBSD 15.0+, so there
+  is no older syntax to keep.
 
 ## [0.68.0] - 2026-09-12
 

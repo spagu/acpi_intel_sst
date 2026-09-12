@@ -64,7 +64,7 @@ Intel SST Audio Driver - Post-Install Configuration
 5. VERIFY
 
        cat /dev/sndstat
-       mixer vol 80
+       mixer vol=0.8
        play -n synth 3 sine 440
 
    See acpi_intel_sst(4) for full documentation.
