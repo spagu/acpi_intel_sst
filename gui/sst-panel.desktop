@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Intel SST Audio
+Name[pl]=Intel SST — dźwięk
+Comment=Equaliser, limiter and telemetry for the Intel SST audio driver
+Comment[pl]=Korektor, limiter i telemetria sterownika dźwięku Intel SST
+Exec=sst-panel
+Icon=audio-card
+Terminal=false
+Categories=AudioVideo;Audio;Settings;HardwareSettings;
+Keywords=audio;equaliser;equalizer;limiter;sst;
