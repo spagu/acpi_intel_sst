@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **`acpi_intel_sst-kmod` port failed to build**: `LICENSE_FILE_BSD3CLAUSE`
+  and `LICENSE_FILE_INTEL_FW` pointed one directory above `WRKSRC`. That
+  path is right for `sst-panel`, which sets `WRKSRC_SUBDIR=gui`, but the
+  kmod port extracts to the archive root, so the port stopped with
+  `Missing license file for BSD3CLAUSE`. Both paths now resolve inside
+  `WRKSRC`.
+
 ## [0.68.0] - 2026-09-12
 
 ### Added

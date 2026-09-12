@@ -11,8 +11,8 @@ WWW=		https://github.com/spagu/acpi_intel_sst
 LICENSE=	BSD3CLAUSE INTEL_FW
 LICENSE_COMB=	multi
 LICENSE_NAME_INTEL_FW=	Intel Binary Firmware Release License
-LICENSE_FILE_BSD3CLAUSE=	${WRKSRC}/../LICENSE
-LICENSE_FILE_INTEL_FW=	${WRKSRC}/../firmware/ubuntu/LICENSE.IntcSST2
+LICENSE_FILE_BSD3CLAUSE=	${WRKSRC}/LICENSE
+LICENSE_FILE_INTEL_FW=	${WRKSRC}/firmware/ubuntu/LICENSE.IntcSST2
 LICENSE_PERMS_INTEL_FW=	dist-mirror no-dist-sell pkg-mirror no-pkg-sell auto-accept
 
 ONLY_FOR_ARCHS=	amd64
