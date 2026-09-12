@@ -6,6 +6,7 @@ lib/sst-panel/sst_i18n.py
 lib/sst-panel/sst_meters.py
 lib/sst-panel/sst_panel.py
 lib/sst-panel/sst_sysctl.py
+lib/sst-panel/sst_testtone.py
 lib/sst-panel/locale/de/LC_MESSAGES/sst-panel.mo
 lib/sst-panel/locale/fr/LC_MESSAGES/sst-panel.mo
 lib/sst-panel/locale/pl/LC_MESSAGES/sst-panel.mo

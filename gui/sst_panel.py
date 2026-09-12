@@ -27,6 +27,7 @@ import sst_help as help_  # noqa: E402
 import sst_i18n as i18n  # noqa: E402
 import sst_meters as meters  # noqa: E402
 import sst_sysctl as sysctl  # noqa: E402
+import sst_testtone as tone  # noqa: E402
 
 _ = i18n._
 
@@ -136,6 +137,9 @@ class Panel(Gtk.Window):
 
         self.can_write = sysctl.writable()
         self._loading = True
+        self._player = None
+        self._comparing = False
+        self._saved_preset = None
 
         self._css()
 
@@ -280,6 +284,34 @@ class Panel(Gtk.Window):
         h.get_style_context().add_class("sst-hint")
         c2.pack_start(h, False, False, 0)
         p.pack_start(c2, False, False, 0)
+
+        c3 = card(_("Listen"))
+        lh = Gtk.Label(xalign=0, label=_(
+            "A sweep from 40 Hz to 16 kHz. It visits every band in turn, so a "
+            "boost is audible as the sweep passes through it rather than "
+            "hidden behind whatever a piece of music happens to be doing."))
+        lh.get_style_context().add_class("sst-hint")
+        lh.set_line_wrap(True)
+        c3.pack_start(lh, False, False, 0)
+
+        tb = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        self.btn_play = Gtk.Button(label=_("Play sweep"))
+        self.btn_play.connect("clicked", self._play_once)
+        tb.pack_start(self.btn_play, False, False, 0)
+
+        self.btn_compare = Gtk.Button(label=_("Compare all presets"))
+        self.btn_compare.connect("clicked", self._compare_presets)
+        self.btn_compare.set_sensitive(self.can_write)
+        if not self.can_write:
+            self.btn_compare.set_tooltip_text(
+                _("Switching presets needs root privileges"))
+        tb.pack_start(self.btn_compare, False, False, 0)
+
+        self.play_state = Gtk.Label(xalign=0)
+        self.play_state.get_style_context().add_class("sst-reading")
+        tb.pack_end(self.play_state, False, False, 0)
+        c3.pack_start(tb, False, False, 0)
+        p.pack_start(c3, False, False, 0)
 
         self._bind(self.eq_preset, "eq_preset", combo=True)
         self._bind(self.peq_freq, "peq_freq")
@@ -594,6 +626,96 @@ class Panel(Gtk.Window):
             except sysctl.ReadOnly as e:
                 self._say(_("could not write {0}: {1}").format(name, e), True)
         widget.connect("changed" if combo else "value-changed", changed)
+
+    def _play_once(self, _btn=None):
+        """Play the sweep with whatever is set right now."""
+        if self._player and self._player.poll() is None:
+            self._player.terminate()
+            self._player = None
+            self.play_state.set_text("")
+            self.btn_play.set_label(_("Play sweep"))
+            return
+        try:
+            self._player = tone.play_async()
+        except OSError as e:
+            self._say(str(e), True)
+            return
+        self.btn_play.set_label(_("Stop"))
+        self.play_state.set_text(_("playing…"))
+        GLib.timeout_add(tone.duration_ms() + 200, self._play_finished)
+
+    def _play_finished(self):
+        self._player = None
+        self.btn_play.set_label(_("Play sweep"))
+        self.play_state.set_text("")
+        return False
+
+    def _compare_presets(self, _btn):
+        """
+        Play the sweep once per preset, announcing each as it starts.
+
+        Stepped through with timeouts rather than a loop so the interface
+        stays responsive and the preset name on screen matches what is coming
+        out of the speakers.
+        """
+        if self._comparing:
+            self._comparing = False
+            if self._player and self._player.poll() is None:
+                self._player.terminate()
+            self._restore_preset()
+            return
+
+        self._comparing = True
+        self._saved_preset = sysctl.get_int("eq_preset")
+        self.btn_compare.set_label(_("Stop"))
+        self.btn_play.set_sensitive(False)
+        GLib.idle_add(self._compare_step, 0)
+
+    def _compare_step(self, index):
+        names = _preset_names()
+        if not self._comparing or index >= len(names):
+            self._restore_preset()
+            return False
+
+        try:
+            sysctl.set_int("eq_preset", index)
+        except sysctl.ReadOnly as e:
+            self._say(str(e), True)
+            self._restore_preset()
+            return False
+
+        self._loading = True
+        self.eq_preset.set_active(index)
+        self._loading = False
+        self.play_state.set_text(f"{index + 1}/{len(names)}  {names[index]}")
+
+        try:
+            self._player = tone.play_async()
+        except OSError as e:
+            self._say(str(e), True)
+            self._restore_preset()
+            return False
+
+        # a breath between presets, so the ear can tell them apart
+        GLib.timeout_add(tone.duration_ms() + 600, self._compare_step, index + 1)
+        return False
+
+    def _restore_preset(self):
+        """Put the preset back where it was before the comparison started."""
+        self._comparing = False
+        self._player = None
+        self.btn_compare.set_label(_("Compare all presets"))
+        self.btn_play.set_sensitive(True)
+        self.play_state.set_text("")
+        if self._saved_preset is not None and self.can_write:
+            try:
+                sysctl.set_int("eq_preset", self._saved_preset)
+                self._loading = True
+                self.eq_preset.set_active(self._saved_preset)
+                self._loading = False
+            except sysctl.ReadOnly:
+                pass
+        self._saved_preset = None
 
     def _jack_toggled(self, _sw, state):
         # set_active() during _load() emits state-set just as a click does.
