@@ -371,3 +371,24 @@ msgstr "Uruchamianie z uprawnieniami administratora…"
 
 msgid "No way to elevate privileges was found. Run \"sudo sst-panel\" from a terminal instead."
 msgstr "Nie znaleziono sposobu na podniesienie uprawnień. Uruchom \"sudo sst-panel\" z terminala."
+
+msgid "Viewing only — this account cannot gain the root privileges that changing settings needs."
+msgstr "Tylko podgląd — to konto nie może uzyskać uprawnień roota wymaganych do zmiany ustawień."
+
+msgid "Asking for your password…"
+msgstr "Pytanie o hasło…"
+
+msgid "Could not start the elevated panel: {}"
+msgstr "Nie udało się uruchomić panelu z uprawnieniami: {}"
+
+msgid "The elevated panel stopped immediately."
+msgstr "Panel z uprawnieniami zakończył się natychmiast."
+
+msgid "Flat (bypass)"
+msgstr "Płaski (bez zmian)"
+
+msgid "Stock speaker (150 Hz high-pass)"
+msgstr "Głośnik fabryczny (górnoprzepustowy 150 Hz)"
+
+msgid "Modified speaker (100 Hz high-pass)"
+msgstr "Głośnik zmodyfikowany (górnoprzepustowy 100 Hz)"

@@ -371,3 +371,24 @@ msgstr "Démarrage avec les droits d'administrateur…"
 
 msgid "No way to elevate privileges was found. Run \"sudo sst-panel\" from a terminal instead."
 msgstr "Aucun moyen d'élever les privilèges n'a été trouvé. Lancez plutôt \"sudo sst-panel\" dans un terminal."
+
+msgid "Viewing only — this account cannot gain the root privileges that changing settings needs."
+msgstr "Lecture seule — ce compte ne peut pas obtenir les privilèges root nécessaires à la modification des réglages."
+
+msgid "Asking for your password…"
+msgstr "Demande du mot de passe…"
+
+msgid "Could not start the elevated panel: {}"
+msgstr "Impossible de démarrer le panneau avec privilèges : {}"
+
+msgid "The elevated panel stopped immediately."
+msgstr "Le panneau avec privilèges s'est arrêté immédiatement."
+
+msgid "Flat (bypass)"
+msgstr "Neutre (contournement)"
+
+msgid "Stock speaker (150 Hz high-pass)"
+msgstr "Haut-parleur d'origine (passe-haut 150 Hz)"
+
+msgid "Modified speaker (100 Hz high-pass)"
+msgstr "Haut-parleur modifié (passe-haut 100 Hz)"

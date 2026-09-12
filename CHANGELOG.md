@@ -21,6 +21,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   examples in `README.md`, `acpi_intel_sst(4)` and the kmod `pkg-message`
   now read `mixer vol=0.8`. The driver only supports FreeBSD 15.0+, so there
   is no older syntax to keep.
+- **The panel window opened taller than the screen.** Each notebook page now
+  sits in its own scroller, so the notebook's minimum height no longer pins
+  the window to the tallest page's natural height (1047 points, against the
+  973 the target machine's 3200x1800 display leaves at scale 2).
+  `set_default_size` could not help: GTK never shrinks a window below its
+  minimum.
+- **"Run as administrator" did nothing at all.** The handler treated
+  `Popen()` returning as success, which only means the binary could be
+  executed, so it printed "Starting with administrator privileges..." and
+  returned while nothing had started - and it never reached its own `sudo`
+  fallback. The child's stderr went to `/dev/null`, so the reason was
+  invisible: `pkexec`, finding no registered graphical polkit agent for the
+  session, falls back to a *textual* agent, and a panel started from a
+  desktop menu has no controlling terminal to put one on. The elevated child
+  is now given two seconds and, if it is already gone, its own last line of
+  stderr is what the panel reports. `sudo` is tried first as well, since
+  `sudo -n` needs no interaction at all on an account with NOPASSWD.
+- **The button was offered where nothing could possibly work.** It now
+  appears only when some route to root exists at all; with neither `sudo`
+  nor `pkexec` installed the bar says so instead of showing a button that
+  cannot do anything. Membership of `sudoers` deliberately cannot be probed
+  in advance - `sudo -n -l` answers "a password is required" both for an
+  account that merely needs to type one and for an account that may not run
+  `sudo` at all - so an account without rights still sees the button, and now
+  gets sudo's own refusal on screen rather than silence.
+- **The sample player leaked a process on every play.** `_play_finished()`
+  dropped the handle without ending the child, on the assumption that the
+  player exits when the sample runs out. With `--ao=oss` it does not: it
+  blocks on the device once the DSP stops draining, which is the very state
+  this panel is for. Seven players were found alive on the target machine,
+  two of them over an hour and a half old, each holding `/dev/dsp0`. The
+  handle is now terminated, killed if it ignores that, and reaped - from
+  `_play_finished()`, from each step of the preset comparison, from
+  `_restore_preset()`, and when the window closes.
+- **The equaliser preset list was fiction.** The panel offered "Flat, Bass
+  boost, Voice boost, Treble boost, Custom" - a tone control this driver has
+  never had. `enum sst_eq_preset_id` has exactly three entries: a bypass and
+  two speaker-protection high-pass filters at 150 Hz and 100 Hz. Indexes 3 and
+  4 do not exist, so choosing either, or letting "Compare all presets" run
+  past the third, put the kernel's own `Invalid argument` in the status bar.
+  The list now names what the driver actually implements.
 
 ## [0.68.0] - 2026-09-12
 

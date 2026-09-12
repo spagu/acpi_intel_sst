@@ -371,3 +371,24 @@ msgstr "正在以管理员身份启动…"
 
 msgid "No way to elevate privileges was found. Run \"sudo sst-panel\" from a terminal instead."
 msgstr "未找到提升权限的方式。请改在终端中运行 \"sudo sst-panel\"。"
+
+msgid "Viewing only — this account cannot gain the root privileges that changing settings needs."
+msgstr "仅查看 — 此账户无法获得更改设置所需的 root 权限。"
+
+msgid "Asking for your password…"
+msgstr "正在请求密码…"
+
+msgid "Could not start the elevated panel: {}"
+msgstr "无法以管理员权限启动面板：{}"
+
+msgid "The elevated panel stopped immediately."
+msgstr "以管理员权限启动的面板立即退出。"
+
+msgid "Flat (bypass)"
+msgstr "平直（旁路）"
+
+msgid "Stock speaker (150 Hz high-pass)"
+msgstr "原装扬声器（150 Hz 高通）"
+
+msgid "Modified speaker (100 Hz high-pass)"
+msgstr "改装扬声器（100 Hz 高通）"

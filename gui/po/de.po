@@ -371,3 +371,24 @@ msgstr "Start mit Administratorrechten…"
 
 msgid "No way to elevate privileges was found. Run \"sudo sst-panel\" from a terminal instead."
 msgstr "Es wurde kein Weg gefunden, die Rechte zu erhöhen. Starten Sie stattdessen \"sudo sst-panel\" im Terminal."
+
+msgid "Viewing only — this account cannot gain the root privileges that changing settings needs."
+msgstr "Nur Ansicht — dieses Konto kann die zum Ändern der Einstellungen nötigen Root-Rechte nicht erlangen."
+
+msgid "Asking for your password…"
+msgstr "Passwort wird abgefragt …"
+
+msgid "Could not start the elevated panel: {}"
+msgstr "Das Panel mit erhöhten Rechten konnte nicht gestartet werden: {}"
+
+msgid "The elevated panel stopped immediately."
+msgstr "Das Panel mit erhöhten Rechten wurde sofort beendet."
+
+msgid "Flat (bypass)"
+msgstr "Neutral (Bypass)"
+
+msgid "Stock speaker (150 Hz high-pass)"
+msgstr "Serienlautsprecher (Hochpass 150 Hz)"
+
+msgid "Modified speaker (100 Hz high-pass)"
+msgstr "Modifizierter Lautsprecher (Hochpass 100 Hz)"

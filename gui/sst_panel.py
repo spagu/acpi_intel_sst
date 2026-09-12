@@ -65,8 +65,19 @@ CSS = b"""
 
 
 def _preset_names():
-    return [_("Flat"), _("Bass boost"), _("Voice boost"),
-            _("Treble boost"), _("Custom")]
+    """
+    The presets the driver actually has, in its own order.
+
+    These are `enum sst_eq_preset_id` in src/sst_topology.h: a bypass and two
+    high-pass filters that protect the speaker. The list used to read "Flat,
+    Bass boost, Voice boost, Treble boost, Custom", which described a tone
+    control this driver has never had - and the last two indexes do not exist,
+    so selecting either, or running the preset comparison past the third,
+    failed with "Invalid argument" straight from the kernel.
+    """
+    return [_("Flat (bypass)"),
+            _("Stock speaker (150 Hz high-pass)"),
+            _("Modified speaker (100 Hz high-pass)")]
 
 
 def _curve_names():
@@ -130,12 +141,30 @@ def page():
     return b
 
 
+def _scrolled(page):
+    """
+    Give a notebook page its own scroller.
+
+    Without one the notebook's minimum height is the tallest page's natural
+    height, and GTK never shrinks a window below its minimum - set_default_size
+    cannot override it. The tallest page asks for 1047 points, measured with
+    get_allocation() on the target machine, whose 3200x1800 display at scale 2
+    leaves 973 points of height. The window therefore opened taller than the
+    screen it was on.
+    """
+    sw = Gtk.ScrolledWindow()
+    sw.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+    sw.add(page)
+    return sw
+
+
 class Panel(Gtk.Window):
     def __init__(self):
         super().__init__(title=_("Intel SST Audio"))
         self.set_default_size(620, 580)
 
         self.can_write = sysctl.writable()
+        self._elevation = False   # not probed yet; None = no route
         self._loading = True
         self._player = None
         self._comparing = False
@@ -153,12 +182,18 @@ class Panel(Gtk.Window):
         nb = self.notebook = Gtk.Notebook()
         nb.set_scrollable(True)
         outer.pack_start(nb, True, True, 0)
-        nb.append_page(self._page_eq(), Gtk.Label(label=_("Equaliser")))
-        nb.append_page(self._page_limiter(), Gtk.Label(label=_("Limiter")))
-        nb.append_page(self._page_ramps(), Gtk.Label(label=_("Ramps")))
-        nb.append_page(self._page_jack(), Gtk.Label(label=_("Jack")))
-        nb.append_page(self._page_diag(), Gtk.Label(label=_("Diagnostics")))
-        nb.append_page(self._page_info(), Gtk.Label(label=_("Info")))
+        nb.append_page(_scrolled(self._page_eq()),
+                       Gtk.Label(label=_("Equaliser")))
+        nb.append_page(_scrolled(self._page_limiter()),
+                       Gtk.Label(label=_("Limiter")))
+        nb.append_page(_scrolled(self._page_ramps()),
+                       Gtk.Label(label=_("Ramps")))
+        nb.append_page(_scrolled(self._page_jack()),
+                       Gtk.Label(label=_("Jack")))
+        nb.append_page(_scrolled(self._page_diag()),
+                       Gtk.Label(label=_("Diagnostics")))
+        nb.append_page(_scrolled(self._page_info()),
+                       Gtk.Label(label=_("Info")))
 
         self.status = Gtk.Label(xalign=0)
         self.status.get_style_context().add_class("sst-status")
@@ -166,6 +201,8 @@ class Panel(Gtk.Window):
         self.status.set_margin_end(16)
         self.status.set_margin_bottom(10)
         outer.pack_start(self.status, False, False, 0)
+
+        self.connect("destroy", lambda *_a: self._stop_player())
 
         self._load()
         self._refresh_curves()
@@ -221,65 +258,148 @@ class Panel(Gtk.Window):
 
     def _readonly_bar(self):
         bar = Gtk.InfoBar(message_type=Gtk.MessageType.INFO)
+        can_elevate = self._elevation_command() is not None
         bar.get_content_area().add(Gtk.Label(
-            label=_("Viewing only — changing settings needs root privileges."),
+            label=(_("Viewing only — changing settings needs root "
+                     "privileges.") if can_elevate else
+                   _("Viewing only — this account cannot gain the root "
+                     "privileges that changing settings needs.")),
             xalign=0))
-        btn = bar.add_button(_("Run as administrator"), Gtk.ResponseType.OK)
-        btn.set_tooltip_text(
-            _("Start a second copy with the privileges needed to change "
-              "settings. This one stays open until it appears."))
-        bar.connect("response", self._elevate)
+        if can_elevate:
+            btn = bar.add_button(_("Run as administrator"),
+                                 Gtk.ResponseType.OK)
+            btn.set_tooltip_text(
+                _("Start a second copy with the privileges needed to change "
+                  "settings. This one stays open until it appears."))
+            bar.connect("response", self._elevate)
         return bar
 
-    def _elevate(self, _bar, _response):
+    # The elevated panel keeps running, so "still alive" is the success
+    # signal; a refused elevation exits almost at once.
+    ELEVATE_SETTLE_S = 2.0
+
+    def _elevation_command(self):
         """
-        Relaunch with privilege.
+        The first command that can actually raise privilege, or None.
 
-        pkexec first, since a polkit agent gives a proper password dialog and
-        the panel needs no setuid anything. sudo with an askpass helper is the
-        fallback for systems without polkit running.
+        Order matters:
 
-        Both need DISPLAY and XAUTHORITY passed explicitly: pkexec scrubs the
-        environment, and a GUI that inherits none of it simply fails to open a
-        window, which looks like nothing happened at all.
+        sudo -n   asks for nothing when the account has NOPASSWD, which is
+                  the usual arrangement on an administrator's own laptop.
+        sudo -A   pops a password dialog through an askpass helper.
+        pkexec    comes last. When it finds no registered graphical polkit
+                  agent for the caller's session it falls back to a *textual*
+                  agent, and a panel started from a desktop menu has no
+                  controlling terminal to put that on: it dies with "Error
+                  opening current controlling terminal", having asked for
+                  nothing and started nothing.
+
+        Returns (argv, extra environment, whether it prompts), or None when
+        no route exists - an account outside sudoers with no polkit rights
+        is better off without a button that cannot do anything.
         """
         import os
         import shutil
         import subprocess
 
-        env = os.environ
-        disp = env.get("DISPLAY", ":0")
-        xauth = env.get("XAUTHORITY", os.path.expanduser("~/.Xauthority"))
+        if self._elevation is not False:
+            return self._elevation
+
         target = shutil.which("sst-panel") or os.path.abspath(__file__)
         launcher = ([target] if target.endswith("sst-panel")
                     else ["python3", target])
 
-        attempts = []
-        if shutil.which("pkexec"):
-            attempts.append(["pkexec", "env",
-                             f"DISPLAY={disp}", f"XAUTHORITY={xauth}"]
-                            + launcher)
-        askpass = shutil.which("ksshaskpass") or shutil.which("ssh-askpass")
-        if shutil.which("sudo") and askpass:
-            attempts.append(["sudo", "-A", "-E"] + launcher)
-
-        for cmd in attempts:
+        found = None
+        sudo = shutil.which("sudo")
+        if sudo:
             try:
-                e = dict(env)
-                if cmd[0] == "sudo":
-                    e["SUDO_ASKPASS"] = askpass
-                    e["DISPLAY"] = disp
-                    e["XAUTHORITY"] = xauth
-                subprocess.Popen(cmd, env=e,
-                                 stdout=subprocess.DEVNULL,
-                                 stderr=subprocess.DEVNULL)
-                self._say(_("Starting with administrator privileges…"))
-                return
-            except OSError:
-                continue
+                free = subprocess.run([sudo, "-n", "true"],
+                                      stdout=subprocess.DEVNULL,
+                                      stderr=subprocess.DEVNULL,
+                                      timeout=5).returncode == 0
+            except (OSError, subprocess.SubprocessError):
+                free = False
+            if free:
+                found = ([sudo, "-n", "-E"] + launcher, {}, False)
+            else:
+                askpass = (shutil.which("ksshaskpass")
+                           or shutil.which("ssh-askpass"))
+                if askpass:
+                    found = ([sudo, "-A", "-E"] + launcher,
+                             {"SUDO_ASKPASS": askpass}, True)
+        if found is None and shutil.which("pkexec"):
+            disp = os.environ.get("DISPLAY", ":0")
+            xauth = os.environ.get("XAUTHORITY",
+                                   os.path.expanduser("~/.Xauthority"))
+            found = (["pkexec", "env", f"DISPLAY={disp}",
+                      f"XAUTHORITY={xauth}"] + launcher, {}, True)
 
-        self._say(_("No way to elevate privileges was found. Run "
-                    "\"sudo sst-panel\" from a terminal instead."), True)
+        self._elevation = found
+        return found
+
+    def _elevate(self, _bar, _response):
+        """
+        Relaunch with privilege, then check that it actually happened.
+
+        The first version of this treated Popen() returning as success. That
+        only means the binary could be executed, so a pkexec that gave up at
+        once still left "Starting with administrator privileges..." on screen
+        while nothing started, its explanation thrown away with stderr. The
+        child now gets a moment, and if it is already gone its own last line
+        of stderr is what the user is shown.
+        """
+        import os
+        import subprocess
+        import tempfile
+
+        chosen = self._elevation_command()
+        if chosen is None:
+            self._say(_("No way to elevate privileges was found. Run "
+                        "\"sudo sst-panel\" from a terminal instead."), True)
+            return
+        cmd, extra, prompts = chosen
+
+        env = dict(os.environ)
+        env["DISPLAY"] = os.environ.get("DISPLAY", ":0")
+        env["XAUTHORITY"] = os.environ.get(
+            "XAUTHORITY", os.path.expanduser("~/.Xauthority"))
+        env.update(extra)
+
+        log = tempfile.NamedTemporaryFile(prefix="sst-panel-elevate-",
+                                          suffix=".log", delete=False)
+        try:
+            child = subprocess.Popen(cmd, env=env,
+                                     stdout=subprocess.DEVNULL, stderr=log)
+        except OSError as exc:
+            log.close()
+            os.unlink(log.name)
+            self._say(_("Could not start the elevated panel: {}")
+                      .format(exc), True)
+            return
+
+        self._say(_("Asking for your password…") if prompts
+                  else _("Starting with administrator privileges…"))
+        GLib.timeout_add(int(self.ELEVATE_SETTLE_S * 1000),
+                         self._elevation_settled, child, log.name)
+
+    def _elevation_settled(self, child, logname):
+        import os
+
+        if child.poll() is None:
+            return False        # running: it took, or a dialog is still open
+        try:
+            with open(logname, encoding="utf-8", errors="replace") as fh:
+                lines = [ln.strip() for ln in fh if ln.strip()]
+        except OSError:
+            lines = []
+        finally:
+            try:
+                os.unlink(logname)
+            except OSError:
+                pass
+        self._say(lines[-1] if lines
+                  else _("The elevated panel stopped immediately."), True)
+        return False
 
     def _lang_changed(self, combo):
         code = combo.get_active_id()
@@ -682,11 +802,37 @@ class Panel(Gtk.Window):
                 self._say(_("could not write {0}: {1}").format(name, e), True)
         widget.connect("changed" if combo else "value-changed", changed)
 
+    def _stop_player(self):
+        """
+        End the sample player and reap it.
+
+        Dropping the handle is not enough. The player is meant to exit when
+        the sample runs out, but with --ao=oss it blocks on the device rather
+        than exiting as soon as the DSP stops draining - exactly the state
+        this panel exists to diagnose. Every play then left one more process
+        holding /dev/dsp0 for good; seven were found alive after an afternoon,
+        two of them over an hour and a half old.
+        """
+        import subprocess
+
+        proc, self._player = self._player, None
+        if proc is None:
+            return
+        if proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=1)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+        try:
+            proc.wait(timeout=1)
+        except subprocess.TimeoutExpired:
+            pass
+
     def _play_once(self, _btn=None):
         """Play the sweep with whatever is set right now."""
         if self._player and self._player.poll() is None:
-            self._player.terminate()
-            self._player = None
+            self._stop_player()
             self.play_state.set_text("")
             self.btn_play.set_label(_("Play sweep"))
             return
@@ -700,7 +846,7 @@ class Panel(Gtk.Window):
         GLib.timeout_add(tone.duration_ms() + 200, self._play_finished)
 
     def _play_finished(self):
-        self._player = None
+        self._stop_player()
         self.btn_play.set_label(_("Play sweep"))
         self.play_state.set_text("")
         return False
@@ -744,6 +890,7 @@ class Panel(Gtk.Window):
         self._loading = False
         self.play_state.set_text(f"{index + 1}/{len(names)}  {names[index]}")
 
+        self._stop_player()     # the previous preset's player, if it hung
         try:
             self._player = tone.play_async()
         except OSError as e:
@@ -758,7 +905,7 @@ class Panel(Gtk.Window):
     def _restore_preset(self):
         """Put the preset back where it was before the comparison started."""
         self._comparing = False
-        self._player = None
+        self._stop_player()
         self.btn_compare.set_label(_("Compare all presets"))
         self.btn_play.set_sensitive(True)
         self.play_state.set_text("")
