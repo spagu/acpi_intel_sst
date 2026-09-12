@@ -1,0 +1,21 @@
+[
+{ type: install
+  message: <<EOM
+Start the panel from the desktop menu as "Intel SST Audio", or run:
+
+	sst-panel
+
+Reading the driver's settings needs no privilege. CHANGING one does, because
+the sysctls are root-writable only. The panel notices and shows a live
+read-only view instead of refusing to start.
+
+To change settings without running the whole panel as root, allow the sysctl
+writes for a group - this grants exactly this driver's tree and nothing else:
+
+	%wheel ALL=(root) NOPASSWD: /sbin/sysctl dev.acpi_intel_sst.0.*
+
+The Chinese translation needs a CJK font present, for example
+x11-fonts/noto-sans-sc. Without one the text renders as empty boxes.
+EOM
+}
+]

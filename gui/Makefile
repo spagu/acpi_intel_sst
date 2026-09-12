@@ -11,6 +11,11 @@ LANGS=		pl de fr zh
 PY=		sst_panel.py sst_sysctl.py sst_i18n.py sst_meters.py sst_curves.py \
 		sst_help.py
 
+# Default target builds the catalogues and nothing else. It deliberately does
+# NOT run the panel: a port's build stage calls the default target, and
+# launching a GUI there would hang the build.
+all: mo
+
 mo:
 	@for l in $(LANGS); do \
 		mkdir -p locale/$$l/LC_MESSAGES; \

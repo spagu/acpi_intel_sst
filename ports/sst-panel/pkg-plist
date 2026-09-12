@@ -1,0 +1,13 @@
+bin/sst-panel
+lib/sst-panel/FreeBSD_SST_Audio.png
+lib/sst-panel/sst_curves.py
+lib/sst-panel/sst_help.py
+lib/sst-panel/sst_i18n.py
+lib/sst-panel/sst_meters.py
+lib/sst-panel/sst_panel.py
+lib/sst-panel/sst_sysctl.py
+lib/sst-panel/locale/de/LC_MESSAGES/sst-panel.mo
+lib/sst-panel/locale/fr/LC_MESSAGES/sst-panel.mo
+lib/sst-panel/locale/pl/LC_MESSAGES/sst-panel.mo
+lib/sst-panel/locale/zh/LC_MESSAGES/sst-panel.mo
+share/applications/sst-panel.desktop

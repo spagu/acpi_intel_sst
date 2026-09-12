@@ -1,0 +1,19 @@
+A GTK3 control panel for the Intel SST audio driver.
+
+The driver exposes twenty-six sysctls: a parametric equaliser, a limiter,
+volume ramps, jack detection and live telemetry. They are perfectly usable
+from a shell, but tuning an equaliser by typing sysctl names is miserable, and
+the peak meters only mean anything if you can watch them move.
+
+Three tabs plot what the settings actually do, updating as the sliders move:
+the combined equaliser response, the limiter's input-against-output curve, and
+the ramp shape. Inline help explains each setting in a paragraph and links
+into the project documentation. A diagnostics tab gathers everything worth
+attaching to a bug report into one copyable block.
+
+Reading needs no privilege. Changing a setting does, since the sysctls are
+root-writable only; the panel degrades to a live read-only view rather than
+demanding to be run as root.
+
+Interface in English, Polish, German, French and Chinese, following the user's
+locale.

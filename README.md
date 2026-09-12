@@ -275,6 +275,15 @@ and links into this documentation.
 
 ### Install
 
+From the ports skeleton in [`ports/sst-panel`](ports/sst-panel):
+
+```bash
+cp -R ports/sst-panel /usr/ports/audio/
+cd /usr/ports/audio/sst-panel && make install clean
+```
+
+Or straight from the checkout:
+
 ```bash
 cd gui
 make check      # compile catalogues, byte-compile sources
