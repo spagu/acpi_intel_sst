@@ -1,0 +1,250 @@
+msgid ""
+msgstr ""
+"Project-Id-Version: sst-panel 1.0\n"
+"Report-Msgid-Bugs-To: please@forget.me.uk\n"
+"POT-Creation-Date: 2026-09-12\n"
+"PO-Revision-Date: 2026-09-12\n"
+"Language: zh\n"
+"Last-Translator: Rafal Rabczuk <please@forget.me.uk>\n"
+"Language-Team: none\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=1; plural=0;\n"
+
+msgid "Flat"
+msgstr "平直"
+
+msgid "Bass boost"
+msgstr "低音增强"
+
+msgid "Voice boost"
+msgstr "人声增强"
+
+msgid "Treble boost"
+msgstr "高音增强"
+
+msgid "Custom"
+msgstr "自定义"
+
+msgid "Linear"
+msgstr "线性"
+
+msgid "Exponential"
+msgstr "指数"
+
+msgid "Logarithmic"
+msgstr "对数"
+
+msgid "Intel SST Audio"
+msgstr "Intel SST 音频"
+
+msgid "Equaliser"
+msgstr "均衡器"
+
+msgid "Limiter"
+msgstr "限幅器"
+
+msgid "Ramps"
+msgstr "渐变"
+
+msgid "Jack"
+msgstr "插孔"
+
+msgid "Diagnostics"
+msgstr "诊断"
+
+msgid "Broadwell-U DSP"
+msgstr "Broadwell-U 音频处理器"
+
+msgid "Broadwell-U DSP — read only"
+msgstr "Broadwell-U 音频处理器 — 只读"
+
+msgid "Interface language"
+msgstr "界面语言"
+
+msgid "Viewing only — changing settings needs root privileges."
+msgstr "仅供查看 — 修改设置需要 root 权限。"
+
+msgid "Restart the panel to apply the new language."
+msgstr "请重新启动面板以应用新语言。"
+
+msgid "Response"
+msgstr "频率响应"
+
+msgid "Combined response of the parametric band and the high-pass filter. Follows the sliders below."
+msgstr "参数频段与高通滤波器的合成响应，随下方滑块实时变化。"
+
+msgid "Parametric band"
+msgstr "参数频段"
+
+msgid "Preset"
+msgstr "预设"
+
+msgid "A ready-made set of equaliser settings"
+msgstr "一组现成的均衡器设置"
+
+msgid "Centre frequency"
+msgstr "中心频率"
+
+msgid "Hz"
+msgstr "赫兹"
+
+msgid "Middle of the band the parametric filter acts on"
+msgstr "参数滤波器作用频段的中心"
+
+msgid "Gain"
+msgstr "增益"
+
+msgid "dB"
+msgstr "分贝"
+
+msgid "Boost or cut applied within that band"
+msgstr "在该频段内的提升或衰减"
+
+msgid "Q factor"
+msgstr "Q 值"
+
+msgid "×0.01"
+msgstr "×0.01"
+
+msgid "Bandwidth: a higher Q affects a narrower range"
+msgstr "带宽 — Q 值越高，作用范围越窄"
+
+msgid "High-pass filter"
+msgstr "高通滤波器"
+
+msgid "Cutoff"
+msgstr "截止频率"
+
+msgid "Removes the lowest frequencies that small laptop speakers cannot reproduce anyway, which relieves them at high volume"
+msgstr "滤掉笔记本小喇叭本来就无法还原的极低频，可在大音量时减轻负担"
+
+msgid "0 disables the filter."
+msgstr "设为 0 可关闭滤波器。"
+
+msgid "Output level"
+msgstr "输出电平"
+
+msgid "Left"
+msgstr "左"
+
+msgid "Right"
+msgstr "右"
+
+msgid "Last few seconds"
+msgstr "最近几秒"
+
+msgid "Input against output. The dashed line is what you would get with no limiter at all."
+msgstr "输入与输出的关系。虚线表示完全不使用限幅器时的情况。"
+
+msgid "Threshold"
+msgstr "阈值"
+
+msgid "Level above which the limiter starts attenuating"
+msgstr "超过此电平后限幅器开始衰减"
+
+msgid "Release"
+msgstr "释放时间"
+
+msgid "ms"
+msgstr "毫秒"
+
+msgid "How quickly it lets go once the peak has passed"
+msgstr "峰值过后恢复的快慢"
+
+msgid "idle"
+msgstr "空闲"
+
+msgid "Reset counter"
+msgstr "重置计数"
+
+msgid "Volume ramps"
+msgstr "音量渐变"
+
+msgid "Volume over the length of the ramp."
+msgstr "渐变过程中的音量变化。"
+
+msgid "Ramp time"
+msgstr "渐变时长"
+
+msgid "Ease into a new volume instead of jumping to it"
+msgstr "平滑过渡到新音量，而不是突然跳变"
+
+msgid "After resume"
+msgstr "唤醒之后"
+
+msgid "The same after waking from sleep, where longer usually suits"
+msgstr "从睡眠唤醒后同理，通常设长一些更合适"
+
+msgid "Shape"
+msgstr "曲线"
+
+msgid "How the volume travels over the ramp"
+msgstr "音量在渐变过程中的变化方式"
+
+msgid "Jack detection"
+msgstr "插孔检测"
+
+msgid "Enabled"
+msgstr "启用"
+
+msgid "Switch to headphones when they are plugged in"
+msgstr "插入耳机时自动切换"
+
+msgid "Headphones"
+msgstr "耳机"
+
+msgid "Microphone"
+msgstr "麦克风"
+
+msgid "Counters"
+msgstr "计数器"
+
+msgid "Headphone insertions"
+msgstr "耳机插入次数"
+
+msgid "Polls"
+msgstr "轮询次数"
+
+msgid "Rises for as long as detection is running"
+msgstr "只要检测在运行就会增加"
+
+msgid "Driver"
+msgstr "驱动"
+
+msgid "Debug level"
+msgstr "调试级别"
+
+msgid "0 errors only, 3 full tracing. The higher levels can flood the system log"
+msgstr "0 仅记录错误，3 为完整跟踪。级别越高越可能淹没系统日志"
+
+msgid "Codec I2C errors"
+msgstr "编解码器 I2C 错误"
+
+msgid "Failed exchanges with the RT286 codec over I2C"
+msgstr "与 RT286 编解码器的 I2C 通信失败"
+
+msgid "could not write {0}: {1}"
+msgstr "无法写入 {0}：{1}"
+
+msgid "Clip counter reset."
+msgstr "削波计数已重置。"
+
+msgid "limiting"
+msgstr "限幅中"
+
+msgid "clipped {0}×"
+msgstr "削波 {0} 次"
+
+msgid "connected"
+msgstr "已连接"
+
+msgid "not connected"
+msgstr "未连接"
+
+msgid "The acpi_intel_sst driver is not loaded."
+msgstr "acpi_intel_sst 驱动未加载。"
+
+msgid "Load it with  kldload acpi_intel_sst  and start the panel again."
+msgstr "请使用  kldload acpi_intel_sst  加载后重新启动面板。"

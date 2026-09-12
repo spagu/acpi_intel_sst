@@ -1,0 +1,250 @@
+msgid ""
+msgstr ""
+"Project-Id-Version: sst-panel 1.0\n"
+"Report-Msgid-Bugs-To: please@forget.me.uk\n"
+"POT-Creation-Date: 2026-09-12\n"
+"PO-Revision-Date: 2026-09-12\n"
+"Language: pl\n"
+"Last-Translator: Rafal Rabczuk <please@forget.me.uk>\n"
+"Language-Team: none\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=3; plural=(n==1 ? 0 : n%10>=2 && n%10<=4 && (n%100<10 || n%100>=20) ? 1 : 2);\n"
+
+msgid "Flat"
+msgstr "Płaska"
+
+msgid "Bass boost"
+msgstr "Wzmocniony bas"
+
+msgid "Voice boost"
+msgstr "Wzmocniona mowa"
+
+msgid "Treble boost"
+msgstr "Wzmocniona góra"
+
+msgid "Custom"
+msgstr "Własna"
+
+msgid "Linear"
+msgstr "Liniowa"
+
+msgid "Exponential"
+msgstr "Wykładnicza"
+
+msgid "Logarithmic"
+msgstr "Logarytmiczna"
+
+msgid "Intel SST Audio"
+msgstr "Intel SST — dźwięk"
+
+msgid "Equaliser"
+msgstr "Korektor"
+
+msgid "Limiter"
+msgstr "Limiter"
+
+msgid "Ramps"
+msgstr "Rampy"
+
+msgid "Jack"
+msgstr "Gniazdo"
+
+msgid "Diagnostics"
+msgstr "Diagnostyka"
+
+msgid "Broadwell-U DSP"
+msgstr "Procesor dźwięku Broadwell-U"
+
+msgid "Broadwell-U DSP — read only"
+msgstr "Procesor dźwięku Broadwell-U — tylko podgląd"
+
+msgid "Interface language"
+msgstr "Język interfejsu"
+
+msgid "Viewing only — changing settings needs root privileges."
+msgstr "Tylko podgląd — zmiana ustawień wymaga uprawnień roota."
+
+msgid "Restart the panel to apply the new language."
+msgstr "Uruchom panel ponownie, aby zmienić język."
+
+msgid "Response"
+msgstr "Charakterystyka"
+
+msgid "Combined response of the parametric band and the high-pass filter. Follows the sliders below."
+msgstr "Łączna charakterystyka pasma parametrycznego i filtru górnoprzepustowego. Reaguje na suwaki poniżej."
+
+msgid "Parametric band"
+msgstr "Pasmo parametryczne"
+
+msgid "Preset"
+msgstr "Zestaw"
+
+msgid "A ready-made set of equaliser settings"
+msgstr "Gotowy zestaw ustawień korektora"
+
+msgid "Centre frequency"
+msgstr "Częstotliwość środkowa"
+
+msgid "Hz"
+msgstr "Hz"
+
+msgid "Middle of the band the parametric filter acts on"
+msgstr "Środek pasma, na które działa filtr parametryczny"
+
+msgid "Gain"
+msgstr "Wzmocnienie"
+
+msgid "dB"
+msgstr "dB"
+
+msgid "Boost or cut applied within that band"
+msgstr "Podbicie lub stłumienie w tym paśmie"
+
+msgid "Q factor"
+msgstr "Dobroć Q"
+
+msgid "×0.01"
+msgstr "×0,01"
+
+msgid "Bandwidth: a higher Q affects a narrower range"
+msgstr "Szerokość pasma — wyższe Q działa na węższy zakres"
+
+msgid "High-pass filter"
+msgstr "Filtr górnoprzepustowy"
+
+msgid "Cutoff"
+msgstr "Częstotliwość odcięcia"
+
+msgid "Removes the lowest frequencies that small laptop speakers cannot reproduce anyway, which relieves them at high volume"
+msgstr "Odcina najniższe częstotliwości, których małe głośniki laptopa i tak nie odtworzą — odciąża je przy dużej głośności"
+
+msgid "0 disables the filter."
+msgstr "Wartość 0 wyłącza filtr."
+
+msgid "Output level"
+msgstr "Poziom wyjścia"
+
+msgid "Left"
+msgstr "Lewy"
+
+msgid "Right"
+msgstr "Prawy"
+
+msgid "Last few seconds"
+msgstr "Ostatnie kilka sekund"
+
+msgid "Input against output. The dashed line is what you would get with no limiter at all."
+msgstr "Wejście względem wyjścia. Linia przerywana to przebieg bez limitera."
+
+msgid "Threshold"
+msgstr "Próg"
+
+msgid "Level above which the limiter starts attenuating"
+msgstr "Poziom, powyżej którego limiter zaczyna tłumić"
+
+msgid "Release"
+msgstr "Czas zwolnienia"
+
+msgid "ms"
+msgstr "ms"
+
+msgid "How quickly it lets go once the peak has passed"
+msgstr "Jak szybko puszcza sygnał po ustąpieniu szczytu"
+
+msgid "idle"
+msgstr "bezczynny"
+
+msgid "Reset counter"
+msgstr "Wyzeruj licznik"
+
+msgid "Volume ramps"
+msgstr "Rampy głośności"
+
+msgid "Volume over the length of the ramp."
+msgstr "Głośność na przestrzeni rampy."
+
+msgid "Ramp time"
+msgstr "Czas rampy"
+
+msgid "Ease into a new volume instead of jumping to it"
+msgstr "Płynne dojście do nowej głośności zamiast skoku"
+
+msgid "After resume"
+msgstr "Po wybudzeniu"
+
+msgid "The same after waking from sleep, where longer usually suits"
+msgstr "To samo po wyjściu z uśpienia, gdzie zwykle lepiej dłużej"
+
+msgid "Shape"
+msgstr "Kształt"
+
+msgid "How the volume travels over the ramp"
+msgstr "Jak głośność narasta w czasie rampy"
+
+msgid "Jack detection"
+msgstr "Wykrywanie gniazda"
+
+msgid "Enabled"
+msgstr "Włączone"
+
+msgid "Switch to headphones when they are plugged in"
+msgstr "Przełącz na słuchawki po ich podłączeniu"
+
+msgid "Headphones"
+msgstr "Słuchawki"
+
+msgid "Microphone"
+msgstr "Mikrofon"
+
+msgid "Counters"
+msgstr "Liczniki"
+
+msgid "Headphone insertions"
+msgstr "Podłączenia słuchawek"
+
+msgid "Polls"
+msgstr "Odpytania"
+
+msgid "Rises for as long as detection is running"
+msgstr "Rośnie, dopóki wykrywanie działa"
+
+msgid "Driver"
+msgstr "Sterownik"
+
+msgid "Debug level"
+msgstr "Poziom diagnostyki"
+
+msgid "0 errors only, 3 full tracing. The higher levels can flood the system log"
+msgstr "0 to tylko błędy, 3 to pełne śledzenie. Wyższe poziomy potrafią zalać dziennik systemowy"
+
+msgid "Codec I2C errors"
+msgstr "Błędy I2C kodeka"
+
+msgid "Failed exchanges with the RT286 codec over I2C"
+msgstr "Nieudane wymiany z kodekiem RT286 po magistrali I2C"
+
+msgid "could not write {0}: {1}"
+msgstr "nie udało się zapisać {0}: {1}"
+
+msgid "Clip counter reset."
+msgstr "Licznik przesterowań wyzerowany."
+
+msgid "limiting"
+msgstr "tłumi"
+
+msgid "clipped {0}×"
+msgstr "przesterowań: {0}"
+
+msgid "connected"
+msgstr "podłączone"
+
+msgid "not connected"
+msgstr "odłączone"
+
+msgid "The acpi_intel_sst driver is not loaded."
+msgstr "Sterownik acpi_intel_sst nie jest załadowany."
+
+msgid "Load it with  kldload acpi_intel_sst  and start the panel again."
+msgstr "Załaduj go poleceniem  kldload acpi_intel_sst  i uruchom panel ponownie."

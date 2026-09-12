@@ -34,6 +34,53 @@ this driver's tree and nothing else:
 %wheel ALL=(root) NOPASSWD: /sbin/sysctl dev.acpi_intel_sst.0.*
 ```
 
+## Plots
+
+Three of the tabs draw what the settings actually do, updating as the sliders
+move:
+
+- **Equaliser** — the combined magnitude response of the parametric band and
+  the high-pass filter, plotted against log frequency. An RBJ peaking biquad
+  and a second-order Butterworth, evaluated at drawing resolution. These are
+  pictures of the intent, not measurements of the DSP.
+- **Limiter** — input against output, with the knee at the threshold and a
+  dashed reference line showing the no-limiter case.
+- **Ramps** — volume over the length of the ramp, in the selected shape.
+
+The plots follow the *controls*, not the sysctls, so an unprivileged user can
+still see what a setting would do before deciding it is worth becoming root
+for.
+
+The Limiter tab also carries live peak meters with peak-hold and a rolling
+sparkline of the last few seconds — useful for telling whether the limiter is
+catching occasional peaks or riding the signal continuously.
+
+## Languages
+
+The interface follows the user's locale and falls back to English, which is
+also the language the source strings are written in — so an untranslated
+string stays readable rather than turning into a msgid.
+
+| code | language |
+|---|---|
+| `en` | English (source) |
+| `pl` | Polski |
+| `de` | Deutsch |
+| `fr` | Français |
+| `zh` | 中文 |
+
+All 79 strings are translated in each. There is a selector in the header bar;
+changing it asks for a restart, because GTK widgets are built with their
+labels already in place.
+
+**Chinese needs a CJK font installed** — `noto-sans-sc` or similar. Without
+one the text renders as empty boxes, which looks like a bug in the panel and
+is not.
+
+To add a language: copy `po/pl.po` to the new code, translate the `msgstr`
+lines, add the code to `LANGS` in the Makefile and to `LANGUAGES` in
+`sst_i18n.py`.
+
 ## What is on each tab
 
 | tab | contents |
@@ -57,6 +104,18 @@ startup and written when you move a control.
 
 | file | role |
 |---|---|
-| `sst_sysctl.py` | access layer - reads and writes the sysctl tree |
+| `sst_sysctl.py` | access layer — reads and writes the sysctl tree |
+| `sst_i18n.py` | locale detection and catalogue loading |
+| `sst_meters.py` | peak meters and sparkline, drawn with Cairo |
+| `sst_curves.py` | response plots for the equaliser, limiter and ramps |
 | `sst_panel.py` | the interface |
 | `sst-panel.desktop` | menu entry |
+| `po/*.po` | translations |
+
+## Building
+
+```sh
+make check     # compile the catalogues, byte-compile the sources
+make install   # into /usr/local
+make run       # from the checkout, without installing
+```
