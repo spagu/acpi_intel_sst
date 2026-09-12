@@ -248,3 +248,114 @@ msgstr "Sterownik acpi_intel_sst nie jest załadowany."
 
 msgid "Load it with  kldload acpi_intel_sst  and start the panel again."
 msgstr "Załaduj go poleceniem  kldload acpi_intel_sst  i uruchom panel ponownie."
+
+msgid "Parametric equaliser"
+msgstr "Korektor parametryczny"
+
+msgid "A parametric band boosts or cuts one region of the spectrum. Three numbers describe it: the centre frequency, how much to boost or cut there, and Q — how wide a region is affected. A low Q touches a broad range and sounds gentle; a high Q is surgical and is what you want for removing a single resonance.\n\nGain of 0 dB disables the band whatever the other settings say."
+msgstr "Pasmo parametryczne podbija lub tłumi jeden fragment pasma. Opisują je trzy liczby: częstotliwość środkowa, wielkość podbicia lub stłumienia oraz Q — jak szeroki fragment zostanie objęty. Niskie Q obejmuje szeroki zakres i brzmi łagodnie; wysokie działa chirurgicznie i nadaje się do usunięcia pojedynczego rezonansu.\n\nWzmocnienie 0 dB wyłącza pasmo niezależnie od pozostałych ustawień."
+
+msgid "Removes everything below the cutoff. Laptop speakers cannot reproduce deep bass, but the amplifier still tries, which wastes headroom and makes the speaker distort earlier than it needs to.\n\nCutting what cannot be heard anyway leaves more room for what can. Somewhere between 100 and 200 Hz suits most small speakers. Set 0 to disable."
+msgstr "Odcina wszystko poniżej częstotliwości granicznej. Głośniki laptopa nie odtworzą niskiego basu, ale wzmacniacz i tak próbuje — marnuje zapas mocy i doprowadza głośnik do zniekształceń wcześniej, niż to konieczne.\n\nOdcięcie tego, czego i tak nie słychać, zostawia więcej miejsca na resztę. Dla małych głośników zwykle pasuje 100–200 Hz. Wartość 0 wyłącza filtr."
+
+msgid "A limiter stops the signal exceeding a level, however loud the input gets. Below the threshold nothing happens; above it, the output stops rising.\n\nRelease is how quickly it lets go once the peak has passed. Too short and loud passages pump audibly; too long and one transient ducks everything after it.\n\nWatch the meters: a limiter that engages on occasional peaks is doing its job, one that never lets go is set too low."
+msgstr "Limiter nie pozwala sygnałowi przekroczyć zadanego poziomu, niezależnie od tego, jak głośne jest wejście. Poniżej progu nie dzieje się nic; powyżej wyjście przestaje rosnąć.\n\nCzas zwolnienia to szybkość puszczania sygnału po ustąpieniu szczytu. Zbyt krótki sprawia, że głośne fragmenty słyszalnie pulsują; zbyt długi powoduje, że jeden impuls przygasza wszystko po sobie.\n\nPatrz na mierniki: limiter reagujący na sporadyczne szczyty robi swoje, taki, który nigdy nie puszcza, jest ustawiony za nisko."
+
+msgid "Peak meters"
+msgstr "Mierniki szczytu"
+
+msgid "Output level in decibels below full scale, so 0 dB is the loudest the hardware can represent and everything else is negative.\n\nThe bright line is peak-hold: where the signal reached a moment ago, which is easier to read than a bar that moves too fast to follow. Amber starts at -12 dB and red at -3 dB.\n\nThe strip below plots the last few seconds, which distinguishes occasional peaks from a signal riding at the limit."
+msgstr "Poziom wyjścia w decybelach względem pełnej skali, więc 0 dB to najgłośniej, jak sprzęt potrafi, a wszystko inne jest ujemne.\n\nJasna kreska to podtrzymanie szczytu: miejsce, w którym sygnał był przed chwilą — łatwiej to odczytać niż pasek ruszający się zbyt szybko. Bursztyn zaczyna się przy −12 dB, czerwień przy −3 dB.\n\nPasek poniżej pokazuje ostatnie kilka sekund, co pozwala odróżnić sporadyczne szczyty od sygnału jadącego po granicy."
+
+msgid "Applying a volume change instantly produces a click, because the waveform jumps. A ramp moves to the new level over a few milliseconds instead, which is inaudible.\n\nThe resume ramp is separate and usually longer: coming out of sleep the codec needs a moment to settle, and a slow fade-in hides the noise it makes while doing so.\n\nShape decides how the travel is distributed over that time."
+msgstr "Natychmiastowa zmiana głośności daje trzask, bo przebieg skacze. Rampa przechodzi na nowy poziom przez kilka milisekund i jest niesłyszalna.\n\nRampa po wybudzeniu jest osobna i zwykle dłuższa: po wyjściu z uśpienia kodek potrzebuje chwili na ustabilizowanie, a powolne narastanie ukrywa szumy, które przy tym wydaje.\n\nKształt decyduje, jak przebieg rozkłada się w czasie."
+
+msgid "The codec reports whether something is plugged into the headphone socket, and the driver switches output accordingly.\n\nDetection here is by polling rather than interrupt, so the poll counter rises steadily whenever it is enabled — that is normal, and a counter that has stopped means detection is not running."
+msgstr "Kodek zgłasza, czy coś jest podłączone do gniazda słuchawkowego, a sterownik odpowiednio przełącza wyjście.\n\nWykrywanie działa przez odpytywanie, nie przez przerwania, więc licznik odpytań rośnie równomiernie, dopóki jest włączone — to normalne, a licznik, który stanął, oznacza, że wykrywanie nie działa."
+
+msgid "How much the driver writes to the system log. 0 is errors and attach messages only, which is the right setting for normal use. 3 traces everything and will flood the log.\n\nRaise it when reproducing a problem, and put it back afterwards."
+msgstr "Ile sterownik zapisuje do dziennika systemowego. 0 to tylko błędy i komunikaty podłączenia, czyli właściwe ustawienie do normalnej pracy. 3 śledzi wszystko i zaleje dziennik.\n\nPodnieś przy odtwarzaniu problemu i przywróć po wszystkim."
+
+msgid "Failed exchanges with the RT286 codec over the I2C bus. The codec is not on the audio path itself — it is the chip the driver configures to route and amplify — so errors here show up as settings that do not take effect rather than as silence.\n\nA handful during startup is common. A counter that keeps climbing is worth investigating."
+msgstr "Nieudane wymiany z kodekiem RT286 po magistrali I2C. Kodek nie leży na samej ścieżce dźwięku — to układ, który sterownik konfiguruje do trasowania i wzmacniania — więc błędy objawiają się ustawieniami, które nie wchodzą w życie, a nie ciszą.\n\nKilka przy starcie to norma. Licznik, który stale rośnie, wart jest zbadania."
+
+msgid "What is this?"
+msgstr "Co to jest?"
+
+msgid "Documentation on GitHub"
+msgstr "Dokumentacja na GitHubie"
+
+msgid "Info"
+msgstr "Info"
+
+msgid "DSP recoveries"
+msgstr "Odzyskania DSP"
+
+msgid "Times the driver reset a DSP that had stopped accepting streams. Occasional entries are the self-recovery doing its job; a number that climbs steadily is worth reporting"
+msgstr "Ile razy sterownik zresetował DSP, który przestał przyjmować strumienie. Pojedyncze wpisy to działające samonaprawianie; stale rosnąca liczba warta jest zgłoszenia"
+
+msgid "Report"
+msgstr "Zgłoszenie"
+
+msgid "Everything worth pasting into a bug report, gathered in one place so you do not have to guess which sysctl matters."
+msgstr "Wszystko, co warto wkleić do zgłoszenia błędu, zebrane w jednym miejscu — nie musisz zgadywać, który sysctl ma znaczenie."
+
+msgid "Collect"
+msgstr "Zbierz"
+
+msgid "Copy to clipboard"
+msgstr "Kopiuj do schowka"
+
+msgid "Open an issue"
+msgstr "Zgłoś problem"
+
+msgid "Collected. Copy it into the issue."
+msgstr "Zebrane. Wklej do zgłoszenia."
+
+msgid "Copied to clipboard."
+msgstr "Skopiowano do schowka."
+
+msgid "About"
+msgstr "O programie"
+
+msgid "Analog audio on Intel Broadwell-U laptops, where sound is routed through the SST DSP rather than standard HDA. This panel is the graphical front end to the driver's settings."
+msgstr "Dźwięk analogowy na laptopach Intel Broadwell-U, gdzie sygnał idzie przez procesor SST, a nie przez zwykłe HDA. Ten panel to graficzna nakładka na ustawienia sterownika."
+
+msgid "unknown"
+msgstr "nieznana"
+
+msgid "Driver version"
+msgstr "Wersja sterownika"
+
+msgid "Taken from the message the driver prints when it attaches"
+msgstr "Odczytana z komunikatu, który sterownik wypisuje przy podłączeniu"
+
+msgid "GTK 3 / Python"
+msgstr "GTK 3 / Python"
+
+msgid "Panel"
+msgstr "Panel"
+
+msgid "Project"
+msgstr "Projekt"
+
+msgid "Source code and documentation"
+msgstr "Kod źródłowy i dokumentacja"
+
+msgid "Report a problem"
+msgstr "Zgłoś problem"
+
+msgid "Configuration reference"
+msgstr "Opis konfiguracji"
+
+msgid "Open"
+msgstr "Otwórz"
+
+msgid "Licence"
+msgstr "Licencja"
+
+msgid "Driver and panel: BSD 3-Clause.\nDSP firmware (IntcSST2.bin) is distributed by Intel under its own binary licence and is not covered by the above."
+msgstr "Sterownik i panel: BSD 3-Clause.\nFirmware DSP (IntcSST2.bin) rozprowadza Intel na własnej licencji binarnej i nie obejmuje go powyższa."
+
+msgid "Full text"
+msgstr "Pełny tekst"

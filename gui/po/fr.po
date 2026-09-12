@@ -248,3 +248,114 @@ msgstr "Le pilote acpi_intel_sst n'est pas chargé."
 
 msgid "Load it with  kldload acpi_intel_sst  and start the panel again."
 msgstr "Chargez-le avec  kldload acpi_intel_sst  puis relancez le panneau."
+
+msgid "Parametric equaliser"
+msgstr "Égaliseur paramétrique"
+
+msgid "A parametric band boosts or cuts one region of the spectrum. Three numbers describe it: the centre frequency, how much to boost or cut there, and Q — how wide a region is affected. A low Q touches a broad range and sounds gentle; a high Q is surgical and is what you want for removing a single resonance.\n\nGain of 0 dB disables the band whatever the other settings say."
+msgstr "Une bande paramétrique accentue ou atténue une région du spectre. Trois nombres la décrivent : la fréquence centrale, l'ampleur de l'accentuation ou de l'atténuation, et Q — la largeur de la région concernée. Un Q faible agit largement et sonne en douceur ; un Q élevé agit chirurgicalement et convient pour supprimer une résonance isolée.\n\nUn gain de 0 dB désactive la bande, quels que soient les autres réglages."
+
+msgid "Removes everything below the cutoff. Laptop speakers cannot reproduce deep bass, but the amplifier still tries, which wastes headroom and makes the speaker distort earlier than it needs to.\n\nCutting what cannot be heard anyway leaves more room for what can. Somewhere between 100 and 200 Hz suits most small speakers. Set 0 to disable."
+msgstr "Retire tout ce qui se trouve sous la fréquence de coupure. Les haut-parleurs d'un portable ne restituent pas les graves profonds, mais l'amplificateur essaie quand même : cela gaspille de la marge et fait distordre le haut-parleur plus tôt que nécessaire.\n\nCouper ce qui reste inaudible laisse plus de place au reste. Entre 100 et 200 Hz convient à la plupart des petits haut-parleurs. 0 désactive le filtre."
+
+msgid "A limiter stops the signal exceeding a level, however loud the input gets. Below the threshold nothing happens; above it, the output stops rising.\n\nRelease is how quickly it lets go once the peak has passed. Too short and loud passages pump audibly; too long and one transient ducks everything after it.\n\nWatch the meters: a limiter that engages on occasional peaks is doing its job, one that never lets go is set too low."
+msgstr "Un limiteur empêche le signal de dépasser un niveau, quelle que soit la force de l'entrée. Sous le seuil, rien ne se passe ; au-dessus, la sortie cesse de monter.\n\nLe temps de rétablissement détermine la vitesse de relâchement après la crête. Trop court, les passages forts pompent de façon audible ; trop long, un seul transitoire écrase tout ce qui suit.\n\nSurveillez les indicateurs : un limiteur qui intervient sur des crêtes occasionnelles fait son travail ; un limiteur qui ne relâche jamais est réglé trop bas."
+
+msgid "Peak meters"
+msgstr "Indicateurs de crête"
+
+msgid "Output level in decibels below full scale, so 0 dB is the loudest the hardware can represent and everything else is negative.\n\nThe bright line is peak-hold: where the signal reached a moment ago, which is easier to read than a bar that moves too fast to follow. Amber starts at -12 dB and red at -3 dB.\n\nThe strip below plots the last few seconds, which distinguishes occasional peaks from a signal riding at the limit."
+msgstr "Niveau de sortie en décibels sous la pleine échelle : 0 dB est le plus fort que le matériel puisse représenter, tout le reste est négatif.\n\nLa ligne claire est la mémoire de crête : là où le signal se trouvait il y a un instant, plus lisible qu'une barre qui bouge trop vite. L'ambre commence à -12 dB et le rouge à -3 dB.\n\nLa bande du dessous trace les dernières secondes, ce qui distingue des crêtes occasionnelles d'un signal collé à la limite."
+
+msgid "Applying a volume change instantly produces a click, because the waveform jumps. A ramp moves to the new level over a few milliseconds instead, which is inaudible.\n\nThe resume ramp is separate and usually longer: coming out of sleep the codec needs a moment to settle, and a slow fade-in hides the noise it makes while doing so.\n\nShape decides how the travel is distributed over that time."
+msgstr "Un changement de volume instantané produit un clic, car la forme d'onde saute. Une rampe rejoint le nouveau niveau en quelques millisecondes, ce qui reste inaudible.\n\nLa rampe de reprise est distincte et généralement plus longue : au sortir de veille, le codec a besoin d'un instant pour se stabiliser, et une montée lente masque le bruit qu'il produit alors.\n\nLa forme décide de la répartition du trajet sur cette durée."
+
+msgid "The codec reports whether something is plugged into the headphone socket, and the driver switches output accordingly.\n\nDetection here is by polling rather than interrupt, so the poll counter rises steadily whenever it is enabled — that is normal, and a counter that has stopped means detection is not running."
+msgstr "Le codec signale si quelque chose est branché dans la prise casque, et le pilote bascule la sortie en conséquence.\n\nLa détection procède par interrogation et non par interruption : le compteur augmente donc régulièrement tant qu'elle est active — c'est normal, et un compteur figé signifie que la détection ne tourne pas."
+
+msgid "How much the driver writes to the system log. 0 is errors and attach messages only, which is the right setting for normal use. 3 traces everything and will flood the log.\n\nRaise it when reproducing a problem, and put it back afterwards."
+msgstr "Ce que le pilote écrit dans le journal système. 0 se limite aux erreurs et aux messages de rattachement, le bon réglage pour un usage courant. 3 trace tout et noiera le journal.\n\nAugmentez-le pour reproduire un problème, puis remettez-le en place."
+
+msgid "Failed exchanges with the RT286 codec over the I2C bus. The codec is not on the audio path itself — it is the chip the driver configures to route and amplify — so errors here show up as settings that do not take effect rather than as silence.\n\nA handful during startup is common. A counter that keeps climbing is worth investigating."
+msgstr "Échanges échoués avec le codec RT286 sur le bus I2C. Le codec n'est pas sur le chemin audio lui-même — c'est la puce que le pilote configure pour l'aiguillage et l'amplification — les erreurs se manifestent donc par des réglages sans effet plutôt que par du silence.\n\nQuelques-unes au démarrage sont courantes. Un compteur qui grimpe sans cesse mérite un examen."
+
+msgid "What is this?"
+msgstr "Qu'est-ce que c'est ?"
+
+msgid "Documentation on GitHub"
+msgstr "Documentation sur GitHub"
+
+msgid "Info"
+msgstr "Infos"
+
+msgid "DSP recoveries"
+msgstr "Reprises du DSP"
+
+msgid "Times the driver reset a DSP that had stopped accepting streams. Occasional entries are the self-recovery doing its job; a number that climbs steadily is worth reporting"
+msgstr "Nombre de fois où le pilote a réinitialisé un DSP qui n'acceptait plus de flux. Quelques occurrences montrent l'auto-réparation à l'œuvre ; un compteur qui grimpe régulièrement mérite un signalement"
+
+msgid "Report"
+msgstr "Rapport"
+
+msgid "Everything worth pasting into a bug report, gathered in one place so you do not have to guess which sysctl matters."
+msgstr "Tout ce qu'il faut coller dans un rapport de bogue, réuni au même endroit — inutile de deviner quel sysctl compte."
+
+msgid "Collect"
+msgstr "Rassembler"
+
+msgid "Copy to clipboard"
+msgstr "Copier dans le presse-papiers"
+
+msgid "Open an issue"
+msgstr "Signaler un problème"
+
+msgid "Collected. Copy it into the issue."
+msgstr "Rassemblé. Collez-le dans le rapport."
+
+msgid "Copied to clipboard."
+msgstr "Copié dans le presse-papiers."
+
+msgid "About"
+msgstr "À propos"
+
+msgid "Analog audio on Intel Broadwell-U laptops, where sound is routed through the SST DSP rather than standard HDA. This panel is the graphical front end to the driver's settings."
+msgstr "Audio analogique sur les portables Intel Broadwell-U, où le son passe par le DSP SST plutôt que par le HDA classique. Ce panneau est l'interface graphique des réglages du pilote."
+
+msgid "unknown"
+msgstr "inconnue"
+
+msgid "Driver version"
+msgstr "Version du pilote"
+
+msgid "Taken from the message the driver prints when it attaches"
+msgstr "Reprise du message que le pilote affiche à son rattachement"
+
+msgid "GTK 3 / Python"
+msgstr "GTK 3 / Python"
+
+msgid "Panel"
+msgstr "Panneau"
+
+msgid "Project"
+msgstr "Projet"
+
+msgid "Source code and documentation"
+msgstr "Code source et documentation"
+
+msgid "Report a problem"
+msgstr "Signaler un problème"
+
+msgid "Configuration reference"
+msgstr "Référence de configuration"
+
+msgid "Open"
+msgstr "Ouvrir"
+
+msgid "Licence"
+msgstr "Licence"
+
+msgid "Driver and panel: BSD 3-Clause.\nDSP firmware (IntcSST2.bin) is distributed by Intel under its own binary licence and is not covered by the above."
+msgstr "Pilote et panneau : BSD 3-Clause.\nLe micrologiciel du DSP (IntcSST2.bin) est distribué par Intel sous sa propre licence binaire et n'est pas couvert par ce qui précède."
+
+msgid "Full text"
+msgstr "Texte intégral"

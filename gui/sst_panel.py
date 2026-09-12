@@ -23,6 +23,7 @@ gi.require_version("Gdk", "3.0")
 from gi.repository import Gdk, GLib, Gtk  # noqa: E402
 
 import sst_curves as curves  # noqa: E402
+import sst_help as help_  # noqa: E402
 import sst_i18n as i18n  # noqa: E402
 import sst_meters as meters  # noqa: E402
 import sst_sysctl as sysctl  # noqa: E402
@@ -32,7 +33,9 @@ _ = i18n._
 REFRESH_MS = 250
 
 CSS = b"""
+.sst-title { font-size: 125%; font-weight: bold; }
 .sst-header-sub { font-size: 90%; opacity: 0.65; }
+.sst-titlebar { border-bottom: 1px solid alpha(@theme_fg_color, 0.10); }
 .sst-card {
     background: alpha(@theme_fg_color, 0.04);
     border: 1px solid alpha(@theme_fg_color, 0.10);
@@ -50,6 +53,13 @@ CSS = b"""
 .sst-badge-on  { background: alpha(#e67e22, 0.22); }
 .sst-badge-off { background: alpha(@theme_fg_color, 0.10); }
 .sst-status { font-size: 90%; opacity: 0.75; }
+.sst-help {
+    padding: 0; min-height: 22px; min-width: 22px;
+    opacity: 0.5; font-weight: bold;
+    border-radius: 999px;
+    background: alpha(@theme_fg_color, 0.10);
+}
+.sst-help:hover { opacity: 1.0; }
 """
 
 
@@ -62,10 +72,18 @@ def _curve_names():
     return [_("Linear"), _("Exponential"), _("Logarithmic")]
 
 
-def card(title=None):
+def card(title=None, topic=None):
+    """
+    A titled group of controls.
+
+    Passing a topic puts a "?" beside the title; the explanation behind it is
+    the place for anything that needs more than a tooltip.
+    """
     box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
     box.get_style_context().add_class("sst-card")
-    if title:
+    if title and topic:
+        box.pack_start(help_.section(title, topic), False, False, 0)
+    elif title:
         lab = Gtk.Label(label=title, xalign=0)
         lab.get_style_context().add_class("sst-section")
         box.pack_start(lab, False, False, 0)
@@ -120,15 +138,15 @@ class Panel(Gtk.Window):
         self._loading = True
 
         self._css()
-        self.set_titlebar(self._header())
 
         outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         self.add(outer)
+        outer.pack_start(self._header(), False, False, 0)
 
         if not self.can_write:
             outer.pack_start(self._readonly_bar(), False, False, 0)
 
-        nb = Gtk.Notebook()
+        nb = self.notebook = Gtk.Notebook()
         nb.set_scrollable(True)
         outer.pack_start(nb, True, True, 0)
         nb.append_page(self._page_eq(), Gtk.Label(label=_("Equaliser")))
@@ -136,6 +154,7 @@ class Panel(Gtk.Window):
         nb.append_page(self._page_ramps(), Gtk.Label(label=_("Ramps")))
         nb.append_page(self._page_jack(), Gtk.Label(label=_("Jack")))
         nb.append_page(self._page_diag(), Gtk.Label(label=_("Diagnostics")))
+        nb.append_page(self._page_info(), Gtk.Label(label=_("Info")))
 
         self.status = Gtk.Label(xalign=0)
         self.status.get_style_context().add_class("sst-status")
@@ -159,11 +178,32 @@ class Panel(Gtk.Window):
             Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
 
     def _header(self):
-        hb = Gtk.HeaderBar()
-        hb.set_show_close_button(True)
-        hb.set_title(_("Intel SST Audio"))
-        hb.set_subtitle(_("Broadwell-U DSP") if self.can_write
+        """
+        The title strip.
+
+        Deliberately an ordinary widget inside the window rather than a
+        GtkHeaderBar set as the titlebar. Client-side decorations gave no
+        close, minimise or maximise buttons at all under this window manager,
+        whatever gtk-decoration-layout said - and a window you cannot close
+        with the mouse is a worse outcome than a slightly plainer frame.
+        Leaving the frame to the window manager gets the usual buttons back.
+        """
+        bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        bar.get_style_context().add_class("sst-titlebar")
+        bar.set_margin_top(10)
+        bar.set_margin_bottom(10)
+        bar.set_margin_start(16)
+        bar.set_margin_end(16)
+
+        titles = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        t = Gtk.Label(label=_("Intel SST Audio"), xalign=0)
+        t.get_style_context().add_class("sst-title")
+        titles.pack_start(t, False, False, 0)
+        sub = Gtk.Label(xalign=0, label=_("Broadwell-U DSP") if self.can_write
                         else _("Broadwell-U DSP — read only"))
+        sub.get_style_context().add_class("sst-header-sub")
+        titles.pack_start(sub, False, False, 0)
+        bar.pack_start(titles, False, False, 0)
 
         combo = Gtk.ComboBoxText()
         for code, name in i18n.LANGUAGES.items():
@@ -171,8 +211,9 @@ class Panel(Gtk.Window):
         combo.set_active_id(self._current_lang)
         combo.set_tooltip_text(_("Interface language"))
         combo.connect("changed", self._lang_changed)
-        hb.pack_end(combo)
-        return hb
+        combo.set_valign(Gtk.Align.CENTER)
+        bar.pack_end(combo, False, False, 0)
+        return bar
 
     def _readonly_bar(self):
         bar = Gtk.InfoBar(message_type=Gtk.MessageType.INFO)
@@ -198,7 +239,7 @@ class Panel(Gtk.Window):
     def _page_eq(self):
         p = page()
 
-        c = card(_("Response"))
+        c = card(_("Response"), "eq")
         self.eq_curve = curves.EqCurve()
         c.pack_start(self.eq_curve, False, False, 0)
         hint = Gtk.Label(xalign=0, label=_(
@@ -209,7 +250,7 @@ class Panel(Gtk.Window):
         c.pack_start(hint, False, False, 0)
         p.pack_start(c, False, False, 0)
 
-        c = card(_("Parametric band"))
+        c = card(_("Parametric band"), "eq")
         g = grid()
         self.eq_preset = Gtk.ComboBoxText()
         for n in _preset_names():
@@ -228,7 +269,7 @@ class Panel(Gtk.Window):
         c.pack_start(g, False, False, 0)
         p.pack_start(c, False, False, 0)
 
-        c2 = card(_("High-pass filter"))
+        c2 = card(_("High-pass filter"), "hpf")
         g2 = grid()
         self.hpf = scale(0, 500, 10)
         row(g2, 0, _("Cutoff"), self.hpf, _("Hz"),
@@ -250,7 +291,7 @@ class Panel(Gtk.Window):
     def _page_limiter(self):
         p = page()
 
-        c = card(_("Output level"))
+        c = card(_("Output level"), "meters")
         self.meter_l = meters.PeakMeter()
         self.meter_r = meters.PeakMeter()
         for lbl, m in ((_("Left"), self.meter_l), (_("Right"), self.meter_r)):
@@ -272,7 +313,7 @@ class Panel(Gtk.Window):
         c.pack_start(sh, False, False, 0)
         p.pack_start(c, False, False, 0)
 
-        c2 = card(_("Limiter"))
+        c2 = card(_("Limiter"), "limiter")
         self.lim_curve = curves.LimiterCurve()
         c2.pack_start(self.lim_curve, False, False, 0)
         lh = Gtk.Label(xalign=0, label=_(
@@ -310,7 +351,7 @@ class Panel(Gtk.Window):
 
     def _page_ramps(self):
         p = page()
-        c = card(_("Volume ramps"))
+        c = card(_("Volume ramps"), "ramps")
         self.ramp_curve_plot = curves.RampCurve()
         c.pack_start(self.ramp_curve_plot, False, False, 0)
         rh = Gtk.Label(xalign=0, label=_("Volume over the length of the ramp."))
@@ -338,7 +379,7 @@ class Panel(Gtk.Window):
 
     def _page_jack(self):
         p = page()
-        c = card(_("Jack detection"))
+        c = card(_("Jack detection"), "jack")
         g = grid()
         self.jack_on = Gtk.Switch(halign=Gtk.Align.START)
         row(g, 0, _("Enabled"), self.jack_on,
@@ -350,7 +391,7 @@ class Panel(Gtk.Window):
         c.pack_start(g, False, False, 0)
         p.pack_start(c, False, False, 0)
 
-        c2 = card(_("Counters"))
+        c2 = card(_("Counters"), "jack")
         g2 = grid()
         self.jack_hp_n = Gtk.Label(xalign=0)
         row(g2, 0, _("Headphone insertions"), self.jack_hp_n)
@@ -366,18 +407,159 @@ class Panel(Gtk.Window):
 
     def _page_diag(self):
         p = page()
-        c = card(_("Driver"))
+        c = card(_("Driver"), "debug")
         g = grid()
         self.debug = scale(0, 3)
         row(g, 0, _("Debug level"), self.debug, None,
             _("0 errors only, 3 full tracing. The higher levels can flood "
               "the system log"))
+        self.recoveries = Gtk.Label(xalign=0)
+        row(g, 2, _("DSP recoveries"), self.recoveries,
+            hint=_("Times the driver reset a DSP that had stopped accepting "
+                   "streams. Occasional entries are the self-recovery doing "
+                   "its job; a number that climbs steadily is worth reporting"))
+
         self.i2c_err = Gtk.Label(xalign=0)
-        row(g, 1, _("Codec I2C errors"), self.i2c_err,
+        i2c_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        i2c_box.pack_start(self.i2c_err, False, False, 0)
+        i2c_box.pack_start(help_.HelpButton("i2c"), False, False, 0)
+        row(g, 1, _("Codec I2C errors"), i2c_box,
             hint=_("Failed exchanges with the RT286 codec over I2C"))
         c.pack_start(g, False, False, 0)
         p.pack_start(c, False, False, 0)
+
+        c2 = card(_("Report"))
+        hint = Gtk.Label(xalign=0, label=_(
+            "Everything worth pasting into a bug report, gathered in one "
+            "place so you do not have to guess which sysctl matters."))
+        hint.get_style_context().add_class("sst-hint")
+        hint.set_line_wrap(True)
+        c2.pack_start(hint, False, False, 0)
+
+        sw = Gtk.ScrolledWindow()
+        sw.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        sw.set_size_request(-1, 190)
+        self.dump_view = Gtk.TextView()
+        self.dump_view.set_editable(False)
+        self.dump_view.set_monospace(True)
+        self.dump_view.set_wrap_mode(Gtk.WrapMode.NONE)
+        sw.add(self.dump_view)
+        c2.pack_start(sw, True, True, 0)
+
+        bb = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        gen = Gtk.Button(label=_("Collect"))
+        gen.connect("clicked", self._collect_dump)
+        bb.pack_start(gen, False, False, 0)
+        cp = Gtk.Button(label=_("Copy to clipboard"))
+        cp.connect("clicked", self._copy_dump)
+        bb.pack_start(cp, False, False, 0)
+        issues = Gtk.LinkButton.new_with_label(
+            help_.REPO + "/issues/new", _("Open an issue"))
+        bb.pack_end(issues, False, False, 0)
+        c2.pack_start(bb, False, False, 0)
+        p.pack_start(c2, True, True, 0)
+
         self._bind(self.debug, "debug")
+        return p
+
+    def _collect_dump(self, _btn=None):
+        self.dump_view.get_buffer().set_text(sysctl.dump())
+        self._say(_("Collected. Copy it into the issue."))
+
+    def _copy_dump(self, _btn):
+        buf = self.dump_view.get_buffer()
+        text = buf.get_text(buf.get_start_iter(), buf.get_end_iter(), False)
+        if not text.strip():
+            self._collect_dump()
+            buf = self.dump_view.get_buffer()
+            text = buf.get_text(buf.get_start_iter(), buf.get_end_iter(), False)
+        Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD).set_text(text, -1)
+        self._say(_("Copied to clipboard."))
+
+    def _page_info(self):
+        import os
+
+        p = page()
+        sc = Gtk.ScrolledWindow()
+        sc.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        inner = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14)
+        sc.add(inner)
+        p.pack_start(sc, True, True, 0)
+
+        # Project image, if it was installed alongside the panel. Absence is
+        # not worth an error - the tab is still useful without it.
+        for cand in (os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                  "FreeBSD_SST_Audio.png"),
+                     "/usr/local/lib/sst-panel/FreeBSD_SST_Audio.png"):
+            if os.path.exists(cand):
+                try:
+                    from gi.repository import GdkPixbuf
+                    # Deliberately small. At full width the artwork pushes
+                    # everything else in the tab below the fold, which makes
+                    # an information tab that shows no information.
+                    pb = GdkPixbuf.Pixbuf.new_from_file_at_scale(
+                        cand, 240, -1, True)
+                    img = Gtk.Image.new_from_pixbuf(pb)
+                    img.set_halign(Gtk.Align.CENTER)
+                    frame = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+                    frame.get_style_context().add_class("sst-card")
+                    frame.pack_start(img, False, False, 0)
+                    inner.pack_start(frame, False, False, 0)
+                except GLib.Error:
+                    pass
+                break
+
+        c = card(_("About"))
+        about = Gtk.Label(xalign=0, label=_(
+            "Analog audio on Intel Broadwell-U laptops, where sound is routed "
+            "through the SST DSP rather than standard HDA. This panel is the "
+            "graphical front end to the driver's settings."))
+        about.set_line_wrap(True)
+        about.set_max_width_chars(60)
+        c.pack_start(about, False, False, 0)
+
+        vg = grid()
+        dv = sysctl.driver_version()
+        v1 = Gtk.Label(xalign=0, label=dv or _("unknown"))
+        v1.get_style_context().add_class("sst-reading")
+        row(vg, 0, _("Driver version"), v1,
+            hint=_("Taken from the message the driver prints when it attaches"))
+        v2 = Gtk.Label(xalign=0, label=_("GTK 3 / Python"))
+        row(vg, 1, _("Panel"), v2)
+        c.pack_start(vg, False, False, 0)
+        inner.pack_start(c, False, False, 0)
+
+        c2 = card(_("Project"))
+        for label, url in (
+            (_("Source code and documentation"), help_.REPO),
+            (_("Report a problem"), help_.REPO + "/issues"),
+            (_("Configuration reference"),
+             help_.REPO + "#sysctl-configuration-reference"),
+        ):
+            b = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+            la = Gtk.Label(label=label, xalign=0)
+            la.set_size_request(220, -1)
+            b.pack_start(la, False, False, 0)
+            link = Gtk.LinkButton.new_with_label(url, _("Open"))
+            link.set_halign(Gtk.Align.START)
+            b.pack_start(link, False, False, 0)
+            c2.pack_start(b, False, False, 0)
+        inner.pack_start(c2, False, False, 0)
+
+        c3 = card(_("Licence"))
+        lic = Gtk.Label(xalign=0, label=_(
+            "Driver and panel: BSD 3-Clause.\n"
+            "DSP firmware (IntcSST2.bin) is distributed by Intel under its "
+            "own binary licence and is not covered by the above."))
+        lic.set_line_wrap(True)
+        lic.set_max_width_chars(60)
+        c3.pack_start(lic, False, False, 0)
+        liclink = Gtk.LinkButton.new_with_label(
+            help_.REPO + "/blob/main/LICENSE", _("Full text"))
+        liclink.set_halign(Gtk.Align.START)
+        c3.pack_start(liclink, False, False, 0)
+        inner.pack_start(c3, False, False, 0)
+
         return p
 
     # --------------------------------------------------------------- plumbing
@@ -414,6 +596,12 @@ class Panel(Gtk.Window):
         widget.connect("changed" if combo else "value-changed", changed)
 
     def _jack_toggled(self, _sw, state):
+        # set_active() during _load() emits state-set just as a click does.
+        # Without this guard the panel tries to write on startup and, when it
+        # cannot, greets an unprivileged user with a permission error they did
+        # nothing to cause.
+        if self._loading or not self.can_write:
+            return False
         try:
             sysctl.set_int("jack.enabled", 1 if state else 0)
         except sysctl.ReadOnly as e:
@@ -471,11 +659,69 @@ class Panel(Gtk.Window):
         self.jack_hp_n.set_text(str(sysctl.get_int("jack.hp_insertions")))
         self.jack_polls.set_text(str(sysctl.get_int("jack.poll_count")))
         self.i2c_err.set_text(str(sysctl.get_int("codec.i2c_errors")))
+        self.recoveries.set_text(str(sysctl.get_int("dsp_recoveries")))
         return True
 
 
+# Tab order, for --screenshot. Kept next to the code that builds them so the
+# two cannot drift apart unnoticed.
+TAB_NAMES = ("equaliser", "limiter", "ramps", "jack", "diagnostics",
+             "info")
+
+
+def _shoot(window, directory, lang):
+    """
+    Capture each tab to a PNG.
+
+    GTK photographs its own window, which avoids depending on a screenshot
+    tool being installed - there is none on the target machine. Each tab is
+    given a turn through the main loop before capture, otherwise the
+    screenshot catches the previous page still drawn.
+    """
+    import os
+    from gi.repository import GdkPixbuf  # noqa: F401  (registers the type)
+
+    os.makedirs(directory, exist_ok=True)
+    shots = []
+
+    def step(index):
+        if index >= len(TAB_NAMES):
+            Gtk.main_quit()
+            return False
+        window.notebook.set_current_page(index)
+        # let the switch settle, then let one refresh tick populate the meters
+        GLib.timeout_add(700, capture, index)
+        return False
+
+    def capture(index):
+        gw = window.get_window()
+        w, h = gw.get_width(), gw.get_height()
+        pb = Gdk.pixbuf_get_from_window(gw, 0, 0, w, h)
+        path = os.path.join(directory, f"{lang}-{TAB_NAMES[index]}.png")
+        pb.savev(path, "png", [], [])
+        shots.append(path)
+        print(path)
+        GLib.timeout_add(120, step, index + 1)
+        return False
+
+    GLib.timeout_add(900, step, 0)
+    return shots
+
+
 def main():
-    Panel._current_lang = i18n.activate()
+    import argparse
+
+    ap = argparse.ArgumentParser(
+        description="Control panel for the acpi_intel_sst driver")
+    ap.add_argument("--lang", choices=sorted(i18n.LANGUAGES),
+                    help="override the interface language")
+    ap.add_argument("--tab", type=int, metavar="N",
+                    help="open on this tab, counting from 0")
+    ap.add_argument("--screenshot", metavar="DIR",
+                    help="write a PNG of every tab to DIR and exit")
+    args = ap.parse_args()
+
+    Panel._current_lang = i18n.activate(args.lang)
 
     if not sysctl.available():
         d = Gtk.MessageDialog(
@@ -490,6 +736,12 @@ def main():
     w = Panel()
     w.connect("destroy", Gtk.main_quit)
     w.show_all()
+
+    if args.tab is not None:
+        w.notebook.set_current_page(args.tab)
+    if args.screenshot:
+        _shoot(w, args.screenshot, Panel._current_lang)
+
     Gtk.main()
     return 0
 

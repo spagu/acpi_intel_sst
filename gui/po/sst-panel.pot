@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sst-panel 1.0\n"
 "Report-Msgid-Bugs-To: please@forget.me.uk\n"
-"POT-Creation-Date: 2026-09-12 20:57+0100\n"
+"POT-Creation-Date: 2026-09-12 21:16+0100\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -17,327 +17,544 @@ msgstr ""
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
 
-#: sst_panel.py:54
+#: sst_panel.py:65
 msgid "Flat"
 msgstr ""
 
-#: sst_panel.py:54
+#: sst_panel.py:65
 msgid "Bass boost"
 msgstr ""
 
-#: sst_panel.py:54
+#: sst_panel.py:65
 msgid "Voice boost"
 msgstr ""
 
-#: sst_panel.py:55
+#: sst_panel.py:66
 msgid "Treble boost"
 msgstr ""
 
-#: sst_panel.py:55
+#: sst_panel.py:66
 msgid "Custom"
 msgstr ""
 
-#: sst_panel.py:59
+#: sst_panel.py:70
 msgid "Linear"
 msgstr ""
 
-#: sst_panel.py:59
+#: sst_panel.py:70
 msgid "Exponential"
 msgstr ""
 
-#: sst_panel.py:59
+#: sst_panel.py:70
 msgid "Logarithmic"
 msgstr ""
 
-#: sst_panel.py:113 sst_panel.py:161
+#: sst_panel.py:132 sst_panel.py:185
 msgid "Intel SST Audio"
 msgstr ""
 
-#: sst_panel.py:131
+#: sst_panel.py:150
 msgid "Equaliser"
 msgstr ""
 
-#: sst_panel.py:132 sst_panel.py:272
+#: sst_panel.py:151 sst_panel.py:296 sst_help.py:60
 msgid "Limiter"
 msgstr ""
 
-#: sst_panel.py:133
+#: sst_panel.py:152
 msgid "Ramps"
 msgstr ""
 
-#: sst_panel.py:134
+#: sst_panel.py:153
 msgid "Jack"
 msgstr ""
 
-#: sst_panel.py:135
+#: sst_panel.py:154
 msgid "Diagnostics"
 msgstr ""
 
-#: sst_panel.py:162
+#: sst_panel.py:155
+msgid "Info"
+msgstr ""
+
+#: sst_panel.py:186
 msgid "Broadwell-U DSP"
 msgstr ""
 
-#: sst_panel.py:163
+#: sst_panel.py:187
 msgid "Broadwell-U DSP — read only"
 msgstr ""
 
-#: sst_panel.py:169
+#: sst_panel.py:193
 msgid "Interface language"
 msgstr ""
 
-#: sst_panel.py:177
+#: sst_panel.py:201
 msgid "Viewing only — changing settings needs root privileges."
 msgstr ""
 
-#: sst_panel.py:189
+#: sst_panel.py:213
 msgid "Restart the panel to apply the new language."
 msgstr ""
 
-#: sst_panel.py:198
+#: sst_panel.py:222
 msgid "Response"
 msgstr ""
 
-#: sst_panel.py:202
+#: sst_panel.py:226
 msgid ""
 "Combined response of the parametric band and the high-pass filter. Follows "
 "the sliders below."
 msgstr ""
 
-#: sst_panel.py:209
+#: sst_panel.py:233
 msgid "Parametric band"
 msgstr ""
 
-#: sst_panel.py:214
+#: sst_panel.py:238
 msgid "Preset"
 msgstr ""
 
-#: sst_panel.py:215
+#: sst_panel.py:239
 msgid "A ready-made set of equaliser settings"
 msgstr ""
 
-#: sst_panel.py:217
+#: sst_panel.py:241
 msgid "Centre frequency"
 msgstr ""
 
-#: sst_panel.py:217 sst_panel.py:231
+#: sst_panel.py:241 sst_panel.py:255
 msgid "Hz"
 msgstr ""
 
-#: sst_panel.py:218
+#: sst_panel.py:242
 msgid "Middle of the band the parametric filter acts on"
 msgstr ""
 
-#: sst_panel.py:220
+#: sst_panel.py:244
 msgid "Gain"
 msgstr ""
 
-#: sst_panel.py:220 sst_panel.py:283
+#: sst_panel.py:244 sst_panel.py:307
 msgid "dB"
 msgstr ""
 
-#: sst_panel.py:221
+#: sst_panel.py:245
 msgid "Boost or cut applied within that band"
 msgstr ""
 
-#: sst_panel.py:223
+#: sst_panel.py:247
 msgid "Q factor"
 msgstr ""
 
-#: sst_panel.py:223
+#: sst_panel.py:247
 msgid "×0.01"
 msgstr ""
 
-#: sst_panel.py:224
+#: sst_panel.py:248
 msgid "Bandwidth: a higher Q affects a narrower range"
 msgstr ""
 
-#: sst_panel.py:228
+#: sst_panel.py:252 sst_help.py:49
 msgid "High-pass filter"
 msgstr ""
 
-#: sst_panel.py:231
+#: sst_panel.py:255
 msgid "Cutoff"
 msgstr ""
 
-#: sst_panel.py:232
+#: sst_panel.py:256
 msgid ""
 "Removes the lowest frequencies that small laptop speakers cannot reproduce "
 "anyway, which relieves them at high volume"
 msgstr ""
 
-#: sst_panel.py:235
+#: sst_panel.py:259
 msgid "0 disables the filter."
 msgstr ""
 
-#: sst_panel.py:250
+#: sst_panel.py:274
 msgid "Output level"
 msgstr ""
 
-#: sst_panel.py:253
+#: sst_panel.py:277
 msgid "Left"
 msgstr ""
 
-#: sst_panel.py:253
+#: sst_panel.py:277
 msgid "Right"
 msgstr ""
 
-#: sst_panel.py:267
+#: sst_panel.py:291
 msgid "Last few seconds"
 msgstr ""
 
-#: sst_panel.py:276
+#: sst_panel.py:300
 msgid ""
 "Input against output. The dashed line is what you would get with no limiter "
 "at all."
 msgstr ""
 
-#: sst_panel.py:283
+#: sst_panel.py:307
 msgid "Threshold"
 msgstr ""
 
-#: sst_panel.py:284
+#: sst_panel.py:308
 msgid "Level above which the limiter starts attenuating"
 msgstr ""
 
-#: sst_panel.py:286
+#: sst_panel.py:310
 msgid "Release"
 msgstr ""
 
-#: sst_panel.py:286 sst_panel.py:318 sst_panel.py:321
+#: sst_panel.py:310 sst_panel.py:342 sst_panel.py:345
 msgid "ms"
 msgstr ""
 
-#: sst_panel.py:287
+#: sst_panel.py:311
 msgid "How quickly it lets go once the peak has passed"
 msgstr ""
 
-#: sst_panel.py:291 sst_panel.py:455
+#: sst_panel.py:315 sst_panel.py:614
 msgid "idle"
 msgstr ""
 
-#: sst_panel.py:297
+#: sst_panel.py:321
 msgid "Reset counter"
 msgstr ""
 
-#: sst_panel.py:310
+#: sst_panel.py:334 sst_help.py:84
 msgid "Volume ramps"
 msgstr ""
 
-#: sst_panel.py:313
+#: sst_panel.py:337
 msgid "Volume over the length of the ramp."
 msgstr ""
 
-#: sst_panel.py:318
+#: sst_panel.py:342
 msgid "Ramp time"
 msgstr ""
 
-#: sst_panel.py:319
+#: sst_panel.py:343
 msgid "Ease into a new volume instead of jumping to it"
 msgstr ""
 
-#: sst_panel.py:321
+#: sst_panel.py:345
 msgid "After resume"
 msgstr ""
 
-#: sst_panel.py:322
+#: sst_panel.py:346
 msgid "The same after waking from sleep, where longer usually suits"
 msgstr ""
 
-#: sst_panel.py:326
+#: sst_panel.py:350
 msgid "Shape"
 msgstr ""
 
-#: sst_panel.py:327
+#: sst_panel.py:351
 msgid "How the volume travels over the ramp"
 msgstr ""
 
-#: sst_panel.py:338
+#: sst_panel.py:362 sst_help.py:95
 msgid "Jack detection"
 msgstr ""
 
-#: sst_panel.py:341
+#: sst_panel.py:365
 msgid "Enabled"
 msgstr ""
 
-#: sst_panel.py:342
+#: sst_panel.py:366
 msgid "Switch to headphones when they are plugged in"
 msgstr ""
 
-#: sst_panel.py:344
+#: sst_panel.py:368
 msgid "Headphones"
 msgstr ""
 
-#: sst_panel.py:346
+#: sst_panel.py:370
 msgid "Microphone"
 msgstr ""
 
-#: sst_panel.py:350
+#: sst_panel.py:374
 msgid "Counters"
 msgstr ""
 
-#: sst_panel.py:353
+#: sst_panel.py:377
 msgid "Headphone insertions"
 msgstr ""
 
-#: sst_panel.py:355
+#: sst_panel.py:379
 msgid "Polls"
 msgstr ""
 
-#: sst_panel.py:356
+#: sst_panel.py:380
 msgid "Rises for as long as detection is running"
 msgstr ""
 
-#: sst_panel.py:366
+#: sst_panel.py:390
 msgid "Driver"
 msgstr ""
 
-#: sst_panel.py:369
+#: sst_panel.py:393 sst_help.py:105
 msgid "Debug level"
 msgstr ""
 
-#: sst_panel.py:370
+#: sst_panel.py:394
 msgid ""
 "0 errors only, 3 full tracing. The higher levels can flood the system log"
 msgstr ""
 
-#: sst_panel.py:373
+#: sst_panel.py:397
+msgid "DSP recoveries"
+msgstr ""
+
+#: sst_panel.py:398
+msgid ""
+"Times the driver reset a DSP that had stopped accepting streams. Occasional "
+"entries are the self-recovery doing its job; a number that climbs steadily "
+"is worth reporting"
+msgstr ""
+
+#: sst_panel.py:406 sst_help.py:114
 msgid "Codec I2C errors"
 msgstr ""
 
-#: sst_panel.py:374
+#: sst_panel.py:407
 msgid "Failed exchanges with the RT286 codec over I2C"
 msgstr ""
 
-#: sst_panel.py:410
+#: sst_panel.py:411
+msgid "Report"
+msgstr ""
+
+#: sst_panel.py:413
+msgid ""
+"Everything worth pasting into a bug report, gathered in one place so you do "
+"not have to guess which sysctl matters."
+msgstr ""
+
+#: sst_panel.py:430
+msgid "Collect"
+msgstr ""
+
+#: sst_panel.py:433
+msgid "Copy to clipboard"
+msgstr ""
+
+#: sst_panel.py:437
+msgid "Open an issue"
+msgstr ""
+
+#: sst_panel.py:447
+msgid "Collected. Copy it into the issue."
+msgstr ""
+
+#: sst_panel.py:457
+msgid "Copied to clipboard."
+msgstr ""
+
+#: sst_panel.py:486
+msgid "About"
+msgstr ""
+
+#: sst_panel.py:488
+msgid ""
+"Analog audio on Intel Broadwell-U laptops, where sound is routed through the "
+"SST DSP rather than standard HDA. This panel is the graphical front end to "
+"the driver's settings."
+msgstr ""
+
+#: sst_panel.py:497
+msgid "unknown"
+msgstr ""
+
+#: sst_panel.py:499
+msgid "Driver version"
+msgstr ""
+
+#: sst_panel.py:500
+msgid "Taken from the message the driver prints when it attaches"
+msgstr ""
+
+#: sst_panel.py:501
+msgid "GTK 3 / Python"
+msgstr ""
+
+#: sst_panel.py:502
+msgid "Panel"
+msgstr ""
+
+#: sst_panel.py:506
+msgid "Project"
+msgstr ""
+
+#: sst_panel.py:508
+msgid "Source code and documentation"
+msgstr ""
+
+#: sst_panel.py:509
+msgid "Report a problem"
+msgstr ""
+
+#: sst_panel.py:510
+msgid "Configuration reference"
+msgstr ""
+
+#: sst_panel.py:517
+msgid "Open"
+msgstr ""
+
+#: sst_panel.py:523
+msgid "Licence"
+msgstr ""
+
+#: sst_panel.py:525
+msgid ""
+"Driver and panel: BSD 3-Clause.\n"
+"DSP firmware (IntcSST2.bin) is distributed by Intel under its own binary "
+"licence and is not covered by the above."
+msgstr ""
+
+#: sst_panel.py:532
+msgid "Full text"
+msgstr ""
+
+#: sst_panel.py:569
 #, python-brace-format
 msgid "could not write {0}: {1}"
 msgstr ""
 
-#: sst_panel.py:423
+#: sst_panel.py:582
 msgid "Clip counter reset."
 msgstr ""
 
-#: sst_panel.py:455
+#: sst_panel.py:614
 msgid "limiting"
 msgstr ""
 
-#: sst_panel.py:460
+#: sst_panel.py:619
 #, python-brace-format
 msgid "clipped {0}×"
 msgstr ""
 
-#: sst_panel.py:463 sst_panel.py:466
+#: sst_panel.py:622 sst_panel.py:625
 msgid "connected"
 msgstr ""
 
-#: sst_panel.py:464 sst_panel.py:467
+#: sst_panel.py:623 sst_panel.py:626
 msgid "not connected"
 msgstr ""
 
-#: sst_panel.py:480
+#: sst_panel.py:697
 msgid "The acpi_intel_sst driver is not loaded."
 msgstr ""
 
-#: sst_panel.py:482
+#: sst_panel.py:699
 msgid "Load it with  kldload acpi_intel_sst  and start the panel again."
+msgstr ""
+
+#: sst_help.py:39
+msgid "Parametric equaliser"
+msgstr ""
+
+#: sst_help.py:40
+msgid ""
+"A parametric band boosts or cuts one region of the spectrum. Three numbers "
+"describe it: the centre frequency, how much to boost or cut there, and Q — "
+"how wide a region is affected. A low Q touches a broad range and sounds "
+"gentle; a high Q is surgical and is what you want for removing a single "
+"resonance.\n"
+"\n"
+"Gain of 0 dB disables the band whatever the other settings say."
+msgstr ""
+
+#: sst_help.py:50
+msgid ""
+"Removes everything below the cutoff. Laptop speakers cannot reproduce deep "
+"bass, but the amplifier still tries, which wastes headroom and makes the "
+"speaker distort earlier than it needs to.\n"
+"\n"
+"Cutting what cannot be heard anyway leaves more room for what can. Somewhere "
+"between 100 and 200 Hz suits most small speakers. Set 0 to disable."
+msgstr ""
+
+#: sst_help.py:61
+msgid ""
+"A limiter stops the signal exceeding a level, however loud the input gets. "
+"Below the threshold nothing happens; above it, the output stops rising.\n"
+"\n"
+"Release is how quickly it lets go once the peak has passed. Too short and "
+"loud passages pump audibly; too long and one transient ducks everything "
+"after it.\n"
+"\n"
+"Watch the meters: a limiter that engages on occasional peaks is doing its "
+"job, one that never lets go is set too low."
+msgstr ""
+
+#: sst_help.py:72
+msgid "Peak meters"
+msgstr ""
+
+#: sst_help.py:73
+msgid ""
+"Output level in decibels below full scale, so 0 dB is the loudest the "
+"hardware can represent and everything else is negative.\n"
+"\n"
+"The bright line is peak-hold: where the signal reached a moment ago, which "
+"is easier to read than a bar that moves too fast to follow. Amber starts at "
+"-12 dB and red at -3 dB.\n"
+"\n"
+"The strip below plots the last few seconds, which distinguishes occasional "
+"peaks from a signal riding at the limit."
+msgstr ""
+
+#: sst_help.py:85
+msgid ""
+"Applying a volume change instantly produces a click, because the waveform "
+"jumps. A ramp moves to the new level over a few milliseconds instead, which "
+"is inaudible.\n"
+"\n"
+"The resume ramp is separate and usually longer: coming out of sleep the "
+"codec needs a moment to settle, and a slow fade-in hides the noise it makes "
+"while doing so.\n"
+"\n"
+"Shape decides how the travel is distributed over that time."
+msgstr ""
+
+#: sst_help.py:96
+msgid ""
+"The codec reports whether something is plugged into the headphone socket, "
+"and the driver switches output accordingly.\n"
+"\n"
+"Detection here is by polling rather than interrupt, so the poll counter "
+"rises steadily whenever it is enabled — that is normal, and a counter that "
+"has stopped means detection is not running."
+msgstr ""
+
+#: sst_help.py:106
+msgid ""
+"How much the driver writes to the system log. 0 is errors and attach "
+"messages only, which is the right setting for normal use. 3 traces "
+"everything and will flood the log.\n"
+"\n"
+"Raise it when reproducing a problem, and put it back afterwards."
+msgstr ""
+
+#: sst_help.py:115
+msgid ""
+"Failed exchanges with the RT286 codec over the I2C bus. The codec is not on "
+"the audio path itself — it is the chip the driver configures to route and "
+"amplify — so errors here show up as settings that do not take effect rather "
+"than as silence.\n"
+"\n"
+"A handful during startup is common. A counter that keeps climbing is worth "
+"investigating."
+msgstr ""
+
+#: sst_help.py:134
+msgid "What is this?"
+msgstr ""
+
+#: sst_help.py:161
+msgid "Documentation on GitHub"
 msgstr ""

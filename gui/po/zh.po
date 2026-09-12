@@ -248,3 +248,114 @@ msgstr "acpi_intel_sst 驱动未加载。"
 
 msgid "Load it with  kldload acpi_intel_sst  and start the panel again."
 msgstr "请使用  kldload acpi_intel_sst  加载后重新启动面板。"
+
+msgid "Parametric equaliser"
+msgstr "参数均衡器"
+
+msgid "A parametric band boosts or cuts one region of the spectrum. Three numbers describe it: the centre frequency, how much to boost or cut there, and Q — how wide a region is affected. A low Q touches a broad range and sounds gentle; a high Q is surgical and is what you want for removing a single resonance.\n\nGain of 0 dB disables the band whatever the other settings say."
+msgstr "参数频段用于提升或衰减频谱中的某一段。它由三个数值决定：中心频率、提升或衰减的幅度，以及 Q 值——受影响范围的宽窄。Q 值低时作用范围宽、听感柔和；Q 值高时非常精准，适合消除单一共振。\n\n增益为 0 dB 时该频段即被关闭，与其他设置无关。"
+
+msgid "Removes everything below the cutoff. Laptop speakers cannot reproduce deep bass, but the amplifier still tries, which wastes headroom and makes the speaker distort earlier than it needs to.\n\nCutting what cannot be heard anyway leaves more room for what can. Somewhere between 100 and 200 Hz suits most small speakers. Set 0 to disable."
+msgstr "滤掉截止频率以下的全部内容。笔记本喇叭本来就无法还原低频，但功放仍会尝试推送，既浪费动态余量，又让喇叭比必要时更早失真。\n\n把听不到的部分切掉，就为听得到的部分留出了空间。多数小喇叭适合设在 100 至 200 赫兹之间。设为 0 可关闭。"
+
+msgid "A limiter stops the signal exceeding a level, however loud the input gets. Below the threshold nothing happens; above it, the output stops rising.\n\nRelease is how quickly it lets go once the peak has passed. Too short and loud passages pump audibly; too long and one transient ducks everything after it.\n\nWatch the meters: a limiter that engages on occasional peaks is doing its job, one that never lets go is set too low."
+msgstr "限幅器可确保信号不超过设定电平，无论输入多大。低于阈值时不作处理；超过后输出便不再上升。\n\n释放时间决定峰值过后恢复的快慢。太短会让大音量段落出现明显的起伏感；太长则一次瞬态就会压低其后的全部声音。\n\n请观察电平表：偶尔触发的限幅器工作正常，而始终不释放则说明阈值设得过低。"
+
+msgid "Peak meters"
+msgstr "峰值电平表"
+
+msgid "Output level in decibels below full scale, so 0 dB is the loudest the hardware can represent and everything else is negative.\n\nThe bright line is peak-hold: where the signal reached a moment ago, which is easier to read than a bar that moves too fast to follow. Amber starts at -12 dB and red at -3 dB.\n\nThe strip below plots the last few seconds, which distinguishes occasional peaks from a signal riding at the limit."
+msgstr "输出电平以低于满量程的分贝表示，因此 0 dB 是硬件所能表示的最大值，其余均为负值。\n\n亮线是峰值保持，显示信号刚才到达的位置，比快速跳动的条形更易读取。琥珀色自 −12 dB 开始，红色自 −3 dB 开始。\n\n下方色带绘制最近几秒的变化，可区分偶发峰值与长期贴近上限的信号。"
+
+msgid "Applying a volume change instantly produces a click, because the waveform jumps. A ramp moves to the new level over a few milliseconds instead, which is inaudible.\n\nThe resume ramp is separate and usually longer: coming out of sleep the codec needs a moment to settle, and a slow fade-in hides the noise it makes while doing so.\n\nShape decides how the travel is distributed over that time."
+msgstr "瞬间改变音量会产生咔哒声，因为波形发生了跳变。渐变则在几毫秒内过渡到新电平，听不出来。\n\n唤醒渐变是独立的，通常更长：从睡眠恢复时编解码器需要片刻稳定，缓慢淡入可掩盖此时产生的噪声。\n\n曲线决定这段时间内的变化方式。"
+
+msgid "The codec reports whether something is plugged into the headphone socket, and the driver switches output accordingly.\n\nDetection here is by polling rather than interrupt, so the poll counter rises steadily whenever it is enabled — that is normal, and a counter that has stopped means detection is not running."
+msgstr "编解码器会报告耳机插孔是否插入设备，驱动据此切换输出。\n\n此处采用轮询而非中断进行检测，因此只要功能开启，轮询计数就会稳定增长——这是正常现象；计数停止则说明检测未在运行。"
+
+msgid "How much the driver writes to the system log. 0 is errors and attach messages only, which is the right setting for normal use. 3 traces everything and will flood the log.\n\nRaise it when reproducing a problem, and put it back afterwards."
+msgstr "驱动向系统日志写入的信息量。0 仅记录错误与挂载消息，适合日常使用。3 会记录全部过程并淹没日志。\n\n复现问题时调高，事后请调回。"
+
+msgid "Failed exchanges with the RT286 codec over the I2C bus. The codec is not on the audio path itself — it is the chip the driver configures to route and amplify — so errors here show up as settings that do not take effect rather than as silence.\n\nA handful during startup is common. A counter that keeps climbing is worth investigating."
+msgstr "通过 I2C 总线与 RT286 编解码器通信失败的次数。编解码器本身并不在音频通路上——它是驱动用来配置路由和放大的芯片——因此这里的错误表现为设置不生效，而不是没有声音。\n\n启动时出现少量属于正常。若计数持续攀升则值得排查。"
+
+msgid "What is this?"
+msgstr "这是什么？"
+
+msgid "Documentation on GitHub"
+msgstr "GitHub 上的文档"
+
+msgid "Info"
+msgstr "信息"
+
+msgid "DSP recoveries"
+msgstr "DSP 恢复次数"
+
+msgid "Times the driver reset a DSP that had stopped accepting streams. Occasional entries are the self-recovery doing its job; a number that climbs steadily is worth reporting"
+msgstr "驱动重置无法再接受音频流的 DSP 的次数。偶尔出现说明自恢复机制正在起作用；若持续增长则值得反馈"
+
+msgid "Report"
+msgstr "问题报告"
+
+msgid "Everything worth pasting into a bug report, gathered in one place so you do not have to guess which sysctl matters."
+msgstr "提交问题时值得附上的全部信息，已集中在此——无需猜测哪一项 sysctl 重要。"
+
+msgid "Collect"
+msgstr "收集"
+
+msgid "Copy to clipboard"
+msgstr "复制到剪贴板"
+
+msgid "Open an issue"
+msgstr "提交问题"
+
+msgid "Collected. Copy it into the issue."
+msgstr "已收集，请粘贴到问题中。"
+
+msgid "Copied to clipboard."
+msgstr "已复制到剪贴板。"
+
+msgid "About"
+msgstr "关于"
+
+msgid "Analog audio on Intel Broadwell-U laptops, where sound is routed through the SST DSP rather than standard HDA. This panel is the graphical front end to the driver's settings."
+msgstr "用于 Intel Broadwell-U 笔记本的模拟音频，其声音经由 SST 数字信号处理器而非标准 HDA。本面板是驱动设置的图形界面。"
+
+msgid "unknown"
+msgstr "未知"
+
+msgid "Driver version"
+msgstr "驱动版本"
+
+msgid "Taken from the message the driver prints when it attaches"
+msgstr "取自驱动挂载时输出的信息"
+
+msgid "GTK 3 / Python"
+msgstr "GTK 3 / Python"
+
+msgid "Panel"
+msgstr "面板"
+
+msgid "Project"
+msgstr "项目"
+
+msgid "Source code and documentation"
+msgstr "源代码与文档"
+
+msgid "Report a problem"
+msgstr "反馈问题"
+
+msgid "Configuration reference"
+msgstr "配置参考"
+
+msgid "Open"
+msgstr "打开"
+
+msgid "Licence"
+msgstr "许可证"
+
+msgid "Driver and panel: BSD 3-Clause.\nDSP firmware (IntcSST2.bin) is distributed by Intel under its own binary licence and is not covered by the above."
+msgstr "驱动与面板：BSD 3-Clause。\nDSP 固件（IntcSST2.bin）由 Intel 按其自有的二进制许可证分发，不在上述范围内。"
+
+msgid "Full text"
+msgstr "完整文本"

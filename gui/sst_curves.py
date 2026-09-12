@@ -153,12 +153,16 @@ class EqCurve(Plot):
         cr.set_line_width(2)
         cr.stroke()
 
-        cr.move_to(pts[0][0], h)
+        # Fill between the curve and the 0 dB line rather than down to the
+        # bottom of the plot: what matters is the departure from flat, and a
+        # fill to the floor turns a flat response into a solid block.
+        zero = self._y(0.0, h)
+        cr.move_to(pts[0][0], zero)
         for x, y in pts:
             cr.line_to(x, y)
-        cr.line_to(pts[-1][0], h)
+        cr.line_to(pts[-1][0], zero)
         cr.close_path()
-        cr.set_source_rgba(*ACCENT, 0.16)
+        cr.set_source_rgba(*ACCENT, 0.20)
         cr.fill()
 
 

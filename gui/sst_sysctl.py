@@ -97,3 +97,69 @@ def writable():
 def snapshot(names):
     """Read several values in one go, for the periodic refresh."""
     return {n: get(n) for n in names}
+
+
+def driver_version():
+    """
+    Version of the loaded driver.
+
+    Taken from the line it prints on attach, because the driver exposes no
+    version sysctl. dmesg is preferred over the log file: after a long uptime
+    the ring buffer may have wrapped, and the log then still has it.
+    """
+    for cmd in (["dmesg"], ["cat", "/var/log/messages"]):
+        r = _run(cmd)
+        if r.returncode != 0:
+            continue
+        hits = [ln for ln in r.stdout.splitlines()
+                if "Intel SST Driver v" in ln]
+        if hits:
+            return hits[-1].split("Intel SST Driver v")[-1].split()[0]
+    return None
+
+
+def dump():
+    """
+    Everything worth pasting into a bug report.
+
+    Collected in one go so the reporter does not have to know which of two
+    dozen sysctls matter - a report missing the one relevant line costs a
+    round trip, and people reasonably do not want to guess.
+    """
+    lines = []
+
+    v = driver_version()
+    lines.append(f"driver:  acpi_intel_sst {v or 'unknown'}")
+
+    for cmd, label in (
+        (["uname", "-a"], "system"),
+        (["sysctl", "-n", "hw.model"], "cpu"),
+        (["kenv", "smbios.system.product"], "machine"),
+        (["kenv", "smbios.bios.version"], "bios"),
+    ):
+        r = _run(cmd)
+        if r.returncode == 0 and r.stdout.strip():
+            lines.append(f"{label}:  {r.stdout.strip()}")
+
+    lines.append("")
+    lines.append("--- sysctl ---")
+    r = _run(["sysctl", BASE])
+    if r.returncode == 0:
+        for ln in r.stdout.splitlines():
+            if "%" not in ln.split(":")[0]:
+                lines.append(ln)
+
+    lines.append("")
+    lines.append("--- recent driver messages ---")
+    r = _run(["dmesg"])
+    if r.returncode == 0:
+        hits = [ln for ln in r.stdout.splitlines() if "acpi_intel_sst" in ln]
+        lines.extend(hits[-25:] if len(hits) > 25 else hits)
+
+    r = _run(["cat", "/dev/sndstat"])
+    if r.returncode == 0:
+        lines.append("")
+        lines.append("--- sndstat ---")
+        lines.extend(r.stdout.strip().splitlines())
+
+    return "\n".join(lines)

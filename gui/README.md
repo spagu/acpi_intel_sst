@@ -2,6 +2,26 @@
 
 A GTK3 control panel for the `acpi_intel_sst` driver.
 
+## Screenshots
+
+| | |
+|---|---|
+| ![Equaliser](../docs/screenshots/en-equaliser.png) | ![Limiter](../docs/screenshots/en-limiter.png) |
+| Equaliser — live response curve | Limiter — meters, transfer curve |
+| ![Ramps](../docs/screenshots/en-ramps.png) | ![Jack](../docs/screenshots/en-jack.png) |
+| Ramps — shape over time | Jack — detection state |
+| ![Diagnostics](../docs/screenshots/en-diagnostics.png) | ![Info](../docs/screenshots/en-info.png) |
+| Diagnostics — report to paste into an issue | Info — version, links, licence |
+
+Regenerate them with:
+
+```sh
+python3 sst_panel.py --lang en --screenshot ../docs/screenshots
+```
+
+The panel photographs its own window through GTK, so no screenshot tool needs
+to be installed — there was none on the machine this was developed on.
+
 ## Why
 
 The driver exposes 26 sysctls: a parametric equaliser, a limiter, volume

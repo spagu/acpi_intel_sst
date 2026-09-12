@@ -8,7 +8,8 @@
 PREFIX?=	/usr/local
 LIBDIR=		$(PREFIX)/lib/sst-panel
 LANGS=		pl de fr zh
-PY=		sst_panel.py sst_sysctl.py sst_i18n.py sst_meters.py sst_curves.py
+PY=		sst_panel.py sst_sysctl.py sst_i18n.py sst_meters.py sst_curves.py \
+		sst_help.py
 
 mo:
 	@for l in $(LANGS); do \
@@ -26,6 +27,7 @@ check: mo
 install: mo
 	install -d $(DESTDIR)$(LIBDIR)
 	install -m 644 $(PY) $(DESTDIR)$(LIBDIR)/
+	-install -m 644 FreeBSD_SST_Audio.png $(DESTDIR)$(LIBDIR)/
 	install -d $(DESTDIR)$(PREFIX)/share/applications
 	install -m 644 sst-panel.desktop $(DESTDIR)$(PREFIX)/share/applications/
 	@for l in $(LANGS); do \
