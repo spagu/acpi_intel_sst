@@ -140,15 +140,17 @@ jobs:
                 https://git.FreeBSD.org/src.git /usr/src
             fi
             uname -a
-            make -C src clean || true
-            make -C src
+            make clean || true
+            make
 
       - name: Upload built module
         if: always()
         uses: actions/upload-artifact@v7
         with:
           name: acpi_intel_sst-${{ matrix.osversion }}
-          path: src/acpi_intel_sst.ko
+          path: |
+            src/acpi_intel_sst.ko
+            firmware/acpi_intel_sst_fw.ko
           if-no-files-found: warn
 
   unit-tests:

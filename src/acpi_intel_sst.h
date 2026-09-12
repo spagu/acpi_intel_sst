@@ -163,6 +163,7 @@ struct sst_softc {
 
 	/* Debug verbosity (0=quiet .. 3=trace, default 1) */
 	int			debug_level;
+	uint32_t		dsp_recoveries;		/* sst_dsp_recover() runs */
 };
 
 /*
@@ -223,6 +224,9 @@ sst_dsp_read(struct sst_softc *sc, uint32_t offset)
 int	sst_dsp_stall(struct sst_softc *sc, bool stall);
 int	sst_dsp_reset(struct sst_softc *sc, bool reset);
 void	sst_dsp_set_regs_defaults(struct sst_softc *sc);
+
+/* acpi_intel_sst.c */
+int	sst_dsp_recover(struct sst_softc *sc);
 
 /* sst_power.c */
 int	sst_reset(struct sst_softc *sc);

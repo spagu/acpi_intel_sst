@@ -155,6 +155,9 @@
 #define SST_IPC_REPLY_FAILURE		6
 #define SST_IPC_REPLY_INVALID_REQ	7
 
+/* sst_ipc_send() returns the reply status verbatim as its error code */
+const char *sst_ipc_status_name(int error);
+
 /*
  * FW_READY Mailbox (from Linux catpt messages.h: struct catpt_fw_ready)
  * DSP writes this to the outbox (DRAM) on boot completion.

@@ -287,6 +287,22 @@ sst_wpt_power_down(struct sst_softc *sc)
  * 6-10. Register defaults, MCLK, clock, reset - done in dsp_init section
  * 11. Re-enable DCLCGE
  */
+/*
+ * Read the first word of every SRAM bank (see step 5c below).
+ */
+static void
+sst_sram_touch_banks(struct sst_softc *sc)
+{
+	bus_size_t off;
+
+	for (off = SST_DRAM_OFFSET; off < SST_DRAM_OFFSET + SST_DRAM_SIZE;
+	    off += SST_MEMBLOCK_SIZE)
+		(void)bus_read_4(sc->mem_res, off);
+	for (off = SST_IRAM_OFFSET; off < SST_IRAM_OFFSET + SST_IRAM_SIZE;
+	    off += SST_MEMBLOCK_SIZE)
+		(void)bus_read_4(sc->mem_res, off);
+}
+
 int
 sst_wpt_power_up(struct sst_softc *sc)
 {
@@ -371,6 +387,16 @@ sst_wpt_power_up(struct sst_softc *sc)
 	DELAY(60);
 	vdrtctl0 = bus_read_4(sc->shim_res, SST_PCI_VDRTCTL0);
 	sst_dbg(sc, SST_DBG_TRACE, "  Post-IRAM PGE: V0=0x%08x\n", vdrtctl0);
+
+	/*
+	 * 5c. Touch every bank once before anything is written to it.
+	 * Linux catpt_dsp_set_srampge(): "Dummy read as the very first
+	 * access after block enable to prevent byte loss in future
+	 * operations."  Without it the first firmware words written
+	 * into a freshly enabled bank can be dropped (issue #51).
+	 */
+	if (sc->mem_res != NULL)
+		sst_sram_touch_banks(sc);
 
 	/*
 	 * NOTE: Linux catpt does register defaults, MCLK restore,

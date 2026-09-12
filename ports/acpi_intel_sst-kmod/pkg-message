@@ -31,8 +31,15 @@ Intel SST Audio Driver - Post-Install Configuration
        # Disable GPU HDMI audio controller (conflicts with SST IRQ)
        hint.hdac.0.disabled="1"
 
-       # Load SST driver at boot
+       # Load SST driver at boot (firmware module first: on a ZFS
+       # root /boot/firmware is not readable this early)
+       acpi_intel_sst_fw_load="YES"
        acpi_intel_sst_load="YES"
+
+   Alternatively load the driver after boot from /etc/rc.conf, which
+   needs no firmware module:
+
+       kld_list="acpi_intel_sst"
 
        # Prevent ig4 from claiming I2C0 (used by SST for codec control)
        ig4_load="NO"

@@ -5,6 +5,51 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.67.0] - 2026-09-12
+
+Bug-fix release for issue #51 (no audio after a cold boot until the
+module is reloaded).
+
+### Fixed
+
+- **Firmware written into freshly ungated SRAM is verified.** Every
+  block is read back word by word after the write; a mismatch triggers
+  one rewrite and a second mismatch fails the load (`EIO`) instead of
+  booting a corrupt image that reports success everywhere and refuses
+  every stream allocation. Each SRAM bank is read once after ungating,
+  as Linux `catpt_dsp_set_srampge()` does to prevent byte loss on the
+  first write.
+- **Runtime DSP self-recovery.** A stream start refused by the DSP
+  (any catpt reply status, typically `out of resources`) or left
+  unanswered now triggers the suspend/resume sequence from inside the
+  trigger worker: power down, WPT power-up, firmware rewrite, boot,
+  topology, codec re-init, then every stream sound(4) still considers
+  running is restarted. Attempts are spaced 30 s apart. The count is
+  exported as `dev.acpi_intel_sst.N.dsp_recoveries`.
+- `sst_ipc_alloc_stream()` dumped the request payload with plain
+  `printf` at every debug level.
+- Stream allocation errors name the DSP status (`out of resources`)
+  instead of guessing `INVALID_PARAM?`.
+
+### Added
+
+- `firmware/acpi_intel_sst_fw.ko`: the firmware wrapped as a kernel
+  module so `acpi_intel_sst_fw_load="YES"` in `loader.conf` makes the
+  driver loadable at boot on a ZFS root, where `/boot/firmware` is not
+  readable yet. A top-level `Makefile` builds `src/` and `firmware/`;
+  the port installs both modules.
+- `src/sst_recover_policy.h` with host-side tests (`test_recover`),
+  covered 100%.
+
+### Changed
+
+- `sst_pcm_suspend()` takes a `drain_triggers` flag; the ACPI suspend
+  path passes `true`, the recovery task (already on the trigger queue)
+  passes `false`.
+- README, `pkg-message` and the manual page recommend
+  `acpi_intel_sst_fw_load` before `acpi_intel_sst_load`, or `kld_list`
+  in `rc.conf`.
+
 ## [0.66.0] - 2026-09-12
 
 Bug-fix release for the two issues reported against v0.65.0 on

@@ -308,6 +308,12 @@ Cumulative headphone insertion count (read-only).
 Cumulative microphone insertion count (read-only).
 .It Va dev.acpi_intel_sst.%d.jack.poll_count
 Jack polling cycle count (read-only).
+.It Va dev.acpi_intel_sst.%d.dsp_recoveries
+Number of runtime DSP reinitializations (read-only).
+The driver reinitializes the DSP when it refuses a stream allocation
+or stops answering, which happens on the first attach after a cold
+boot on some machines, and restarts the affected stream.
+Attempts are at least 30 seconds apart.
 .It Va dev.acpi_intel_sst.%d.codec.i2c_errors
 Failed I2C transactions with the codec since it was last initialized
 (read-only).
@@ -355,7 +361,17 @@ I2C driver from claiming the I2C bus used by the SST driver for codec control.
 .Sh FILES
 .Bl -tag -width indent
 .It Pa /boot/firmware/intel/IntcSST2.bin
-Intel SST DSP firmware (required).
+Intel SST DSP firmware, used when the driver is loaded after the root
+file system is mounted
+.Pq Va kld_list , Xr kldload 8 .
+.It Pa /boot/modules/acpi_intel_sst_fw.ko
+The same firmware wrapped as a kernel module.
+Required, and to be listed before the driver, when the driver is loaded
+from
+.Xr loader.conf 5 :
+at that point
+.Pa /boot/firmware
+is not readable on a ZFS root.
 .It Pa /boot/acpi_dsdt.aml
 Patched DSDT with ADSP device enabled (required on Dell XPS 13 9343).
 .It Pa /dev/dsp0.0

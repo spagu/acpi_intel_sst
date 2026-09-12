@@ -1564,11 +1564,16 @@ sst_acpi_detach(device_t dev)
  * Suspend / Resume
  * ================================================================ */
 
+/*
+ * Tear the DSP down: used by ACPI suspend and by runtime recovery.
+ *
+ * drain_triggers must be false when called from the PCM trigger
+ * worker itself (sst_dsp_recover), which cannot wait for its own
+ * queue; see sst_pcm_suspend().
+ */
 static int
-sst_acpi_suspend(device_t dev)
+sst_suspend_common(struct sst_softc *sc, bool drain_triggers)
 {
-	struct sst_softc *sc = device_get_softc(dev);
-
 	sst_dbg(sc, SST_DBG_LIFE, "Suspending...\n");
 
 	/*
@@ -1587,7 +1592,7 @@ sst_acpi_suspend(device_t dev)
 	sst_jack_disable(sc);
 
 	/* 2. Tear down active PCM streams */
-	sst_pcm_suspend(sc);
+	sst_pcm_suspend(sc, drain_triggers);
 
 	/* 3. Stop SSP ports */
 	sst_ssp_stop(sc, 0);
@@ -1617,10 +1622,14 @@ sst_acpi_suspend(device_t dev)
 	return (0);
 }
 
+/*
+ * Bring the DSP back after sst_suspend_common(): power, firmware,
+ * topology, codec, mixer state.
+ */
 static int
-sst_acpi_resume(device_t dev)
+sst_resume_common(struct sst_softc *sc)
 {
-	struct sst_softc *sc = device_get_softc(dev);
+	device_t dev = sc->dev;
 	int error;
 
 	sst_dbg(sc, SST_DBG_LIFE, "Resuming...\n");
@@ -1710,6 +1719,52 @@ sst_acpi_resume(device_t dev)
 
 	sc->state = SST_STATE_RUNNING;
 	sst_dbg(sc, SST_DBG_LIFE, "Resumed\n");
+	return (0);
+}
+
+static int
+sst_acpi_suspend(device_t dev)
+{
+	return (sst_suspend_common(device_get_softc(dev), true));
+}
+
+static int
+sst_acpi_resume(device_t dev)
+{
+	return (sst_resume_common(device_get_softc(dev)));
+}
+
+/*
+ * Runtime DSP recovery (issue #51).
+ *
+ * After a cold boot the first attach can leave the DSP refusing every
+ * ALLOC_STREAM with "out of resources" although firmware boot, the
+ * capability probe and the topology all reported success; unloading
+ * and reloading the module always cured it.  This performs the same
+ * power-down / power-up / firmware reload / codec re-init cycle from
+ * inside the driver.  Called from the PCM trigger worker with no
+ * sound(4) lock held; the caller re-issues the pending trigger.
+ */
+int
+sst_dsp_recover(struct sst_softc *sc)
+{
+	int error;
+
+	device_printf(sc->dev, "DSP recovery: reinitializing DSP "
+	    "(recovery #%u)\n", sc->dsp_recoveries + 1);
+
+	error = sst_suspend_common(sc, false);
+	if (error == 0 && sc->state == SST_STATE_SUSPENDED)
+		error = sst_resume_common(sc);
+	sc->dsp_recoveries++;
+
+	if (error != 0 || sc->state != SST_STATE_RUNNING) {
+		device_printf(sc->dev,
+		    "DSP recovery failed: %d (state %d)\n", error, sc->state);
+		return (error != 0 ? error : ENXIO);
+	}
+
+	device_printf(sc->dev, "DSP recovery complete\n");
 	return (0);
 }
 

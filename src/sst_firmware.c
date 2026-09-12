@@ -69,6 +69,58 @@ sst_fw_validate_header(struct sst_softc *sc, const struct sst_fw_header *hdr,
  * Linux catpt uses DMA for this, but MMIO writes should also work
  * (the older sst-dsp.c driver uses memcpy_toio for SRAM access).
  */
+/*
+ * Copy a block into DSP SRAM.
+ *
+ * IMPORTANT: Use 32-bit (DWORD) writes, not byte writes!  PCH SRAM
+ * controllers on Intel Broadwell may not support sub-DWORD writes via
+ * MMIO (bus_write_region_1 byte writes do not persist).  A trailing
+ * partial word is zero-padded.
+ */
+static void
+sst_fw_write_block(struct sst_softc *sc, bus_addr_t offset,
+    const uint8_t *data, uint32_t size)
+{
+	uint32_t dwords = size / 4;
+	uint32_t remainder = size % 4;
+	uint32_t k, val;
+
+	for (k = 0; k < dwords; k++) {
+		memcpy(&val, data + (k * 4), 4);
+		bus_write_4(sc->mem_res, offset + (k * 4), val);
+	}
+	if (remainder > 0) {
+		val = 0;
+		memcpy(&val, data + (dwords * 4), remainder);
+		bus_write_4(sc->mem_res, offset + (dwords * 4), val);
+	}
+}
+
+/*
+ * Read a block back and count the words that differ from the image.
+ */
+static uint32_t
+sst_fw_verify_block(struct sst_softc *sc, bus_addr_t offset,
+    const uint8_t *data, uint32_t size)
+{
+	uint32_t dwords = size / 4;
+	uint32_t remainder = size % 4;
+	uint32_t k, val, bad = 0;
+
+	for (k = 0; k < dwords; k++) {
+		memcpy(&val, data + (k * 4), 4);
+		if (bus_read_4(sc->mem_res, offset + (k * 4)) != val)
+			bad++;
+	}
+	if (remainder > 0) {
+		val = 0;
+		memcpy(&val, data + (dwords * 4), remainder);
+		if (bus_read_4(sc->mem_res, offset + (dwords * 4)) != val)
+			bad++;
+	}
+	return (bad);
+}
+
 static int
 sst_fw_load_block(struct sst_softc *sc, const struct sst_block_header *blk,
 		  const uint8_t *data)
@@ -76,7 +128,8 @@ sst_fw_load_block(struct sst_softc *sc, const struct sst_block_header *blk,
 	bus_addr_t offset;
 	size_t max_size;
 	const char *type_name;
-	uint32_t readback;
+	uint32_t bad;
+	int attempt;
 
 	switch (blk->ram_type) {
 	case SST_BLK_TYPE_IRAM:
@@ -113,57 +166,34 @@ sst_fw_load_block(struct sst_softc *sc, const struct sst_block_header *blk,
 	    (unsigned long)offset);
 
 	/*
-	 * Write block data to DSP SRAM.
-	 *
-	 * IMPORTANT: Use 32-bit (DWORD) writes, not byte writes!
-	 * PCH SRAM controllers on Intel Broadwell may not support
-	 * sub-DWORD writes via MMIO. bus_write_region_1 uses byte
-	 * writes that don't persist in SRAM.
-	 *
-	 * Write aligned 32-bit words first, then handle any remainder.
+	 * Write the block, then read every word back.  SRAM banks that
+	 * were power-gated a moment ago can drop bytes of the first
+	 * writes after being enabled (Linux catpt works around the same
+	 * hardware quirk with a dummy read per bank); the DSP would then
+	 * boot from a corrupt image and refuse every stream allocation
+	 * while reporting success everywhere else (issue #51).  One
+	 * rewrite is attempted before giving up.
 	 */
-	{
-		uint32_t dwords = blk->size / 4;
-		uint32_t remainder = blk->size % 4;
-		uint32_t k;
-		const uint8_t *src = data;
-
-		/* Write 32-bit words */
-		for (k = 0; k < dwords; k++) {
-			uint32_t val;
-			memcpy(&val, src + (k * 4), 4);
-			bus_write_4(sc->mem_res, offset + (k * 4), val);
-		}
-
-		/* Handle remainder bytes (pack into a 32-bit write) */
-		if (remainder > 0) {
-			uint32_t val = 0;
-			memcpy(&val, src + (dwords * 4), remainder);
-			bus_write_4(sc->mem_res, offset + (dwords * 4), val);
-		}
-	}
-
-	/* Readback verification - check first and last 4 bytes */
-	if (blk->size >= 4) {
-		readback = bus_read_4(sc->mem_res, offset);
-		if (readback == SST_INVALID_REG_VALUE) {
+	for (attempt = 0; attempt < 2; attempt++) {
+		sst_fw_write_block(sc, offset, data, blk->size);
+		bad = sst_fw_verify_block(sc, offset, data, blk->size);
+		if (bad == 0)
+			return (0);
+		if (bus_read_4(sc->mem_res, offset) == SST_INVALID_REG_VALUE) {
 			device_printf(sc->dev,
-			    "  WARNING: Readback 0xFFFFFFFF at 0x%lx"
-			    " - SRAM may not be accessible!\n",
-			    (unsigned long)offset);
-		} else {
-			uint32_t expected;
-			memcpy(&expected, data, 4);
-			if (readback != expected) {
-				device_printf(sc->dev,
-				    "  WARNING: Readback mismatch at 0x%lx:"
-				    " wrote=0x%08x read=0x%08x\n",
-				    (unsigned long)offset, expected, readback);
-			}
+			    "  %s block at 0x%lx reads 0xFFFFFFFF - SRAM"
+			    " not accessible\n",
+			    type_name, (unsigned long)offset);
+			return (EIO);
 		}
+		device_printf(sc->dev,
+		    "  %s block at 0x%lx: %u of %u words differ after"
+		    " write%s\n", type_name, (unsigned long)offset, bad,
+		    (blk->size + 3) / 4,
+		    attempt == 0 ? ", rewriting" : "");
 	}
 
-	return (0);
+	return (EIO);
 }
 
 /*

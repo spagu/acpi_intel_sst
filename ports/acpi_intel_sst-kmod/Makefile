@@ -1,6 +1,6 @@
 PORTNAME=	acpi_intel_sst-kmod
 DISTVERSIONPREFIX=	v
-DISTVERSION=	0.66.0
+DISTVERSION=	0.67.0
 CATEGORIES=	audio
 MASTER_SITES=	GH
 
@@ -27,17 +27,17 @@ USE_GITHUB=	yes
 GH_ACCOUNT=	spagu
 GH_PROJECT=	acpi_intel_sst
 
-WRKSRC_SUBDIR=	src
-
+# The top-level Makefile builds src/ (driver) and firmware/ (firmware
+# module for loader.conf preloading on ZFS roots, see issue #51).
 SST_FWDIR=	/boot/firmware/intel
 
 post-install:
-	${INSTALL_MAN} ${WRKSRC}/../man/acpi_intel_sst.4 \
+	${INSTALL_MAN} ${WRKSRC}/man/acpi_intel_sst.4 \
 		${STAGEDIR}${PREFIX}/share/man/man4/
 	${MKDIR} ${STAGEDIR}${SST_FWDIR}
-	${INSTALL_DATA} ${WRKSRC}/../firmware/ubuntu/IntcSST2.bin \
+	${INSTALL_DATA} ${WRKSRC}/firmware/ubuntu/IntcSST2.bin \
 		${STAGEDIR}${SST_FWDIR}/IntcSST2.bin
-	${INSTALL_DATA} ${WRKSRC}/../firmware/ubuntu/LICENSE.IntcSST2 \
+	${INSTALL_DATA} ${WRKSRC}/firmware/ubuntu/LICENSE.IntcSST2 \
 		${STAGEDIR}${SST_FWDIR}/LICENSE.IntcSST2
 
 .include <bsd.port.mk>

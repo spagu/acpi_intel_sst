@@ -1976,6 +1976,11 @@ sst_topology_sysctl_init(struct sst_softc *sc)
 	    "debug", CTLFLAG_RW, &sc->debug_level, 0,
 	    "Debug verbosity (0=quiet, 1=lifecycle, 2=operational, 3=trace)");
 
+	/* Runtime DSP reinitializations after refused stream allocations */
+	SYSCTL_ADD_UINT(ctx, SYSCTL_CHILDREN(tree), OID_AUTO,
+	    "dsp_recoveries", CTLFLAG_RD, &sc->dsp_recoveries, 0,
+	    "DSP reinitializations after a refused stream allocation");
+
 	/* Volume ramp-in controls */
 	SYSCTL_ADD_INT(ctx, SYSCTL_CHILDREN(tree), OID_AUTO,
 	    "ramp_ms", CTLFLAG_RW, &sc->pcm.ramp_ms, 0,
