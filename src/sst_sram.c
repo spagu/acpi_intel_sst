@@ -42,7 +42,9 @@
 int
 sst_sram_probe(struct sst_softc *sc)
 {
-	uint32_t iram, dram, csr;
+	uint32_t iram;
+	uint32_t dram;
+	uint32_t csr;
 
 	if (sc->mem_res == NULL)
 		return (ENODEV);

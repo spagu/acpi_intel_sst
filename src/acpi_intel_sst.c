@@ -224,6 +224,50 @@ sst_dsp_ensure_memory(struct sst_softc *sc)
 }
 
 /*
+ * sst_dsp_post_boot - setup that follows a successful FW_READY, shared
+ * by attach and resume: version, DRAM module regions, stage
+ * capability probe, default topology.
+ */
+static void
+sst_dsp_post_boot(struct sst_softc *sc)
+{
+	sst_ipc_get_fw_version(sc, NULL);
+	sst_fw_alloc_module_regions(sc);
+	sst_ipc_probe_stage_caps(sc);
+	sst_topology_load_default(sc);
+}
+
+/*
+ * sst_dsp_load_and_boot - attach-time firmware bring-up
+ *
+ * Probes the memory, writes the image, boots the core and runs the
+ * post-boot setup.  A failure is logged and leaves the device attached
+ * without audio (fw.state != RUNNING) so the sysctl tree stays
+ * available for diagnostics.
+ */
+static void
+sst_dsp_load_and_boot(struct sst_softc *sc)
+{
+	int error;
+
+	error = sst_dsp_ensure_memory(sc);
+	if (error == 0)
+		error = sst_fw_load(sc);
+	if (error != 0) {
+		device_printf(sc->dev, "Firmware load failed: %d\n", error);
+		return;
+	}
+
+	error = sst_fw_boot(sc);
+	if (error != 0) {
+		device_printf(sc->dev, "DSP boot failed: %d\n", error);
+		return;
+	}
+
+	sst_dsp_post_boot(sc);
+}
+
+/*
  * sst_dsp_set_regs_defaults - Reset SHIM registers to hardware defaults
  * Based on Linux catpt catpt_dsp_set_regs_defaults()
  *
@@ -1178,25 +1222,7 @@ dsp_init:
 		    pre_csr, !!(pre_csr & SST_CSR_STALL),
 		    !!(pre_csr & SST_CSR_RST));
 	}
-	/* Memory detached from the bus: reset the core before writing */
-	error = sst_dsp_ensure_memory(sc);
-	if (error == 0)
-		error = sst_fw_load(sc);
-	if (error) {
-		device_printf(dev, "Firmware load failed: %d\n", error);
-		error = 0;
-	} else {
-		error = sst_fw_boot(sc);
-		if (error) {
-			device_printf(dev, "DSP boot failed: %d\n", error);
-			error = 0;
-		} else {
-			sst_ipc_get_fw_version(sc, NULL);
-			sst_fw_alloc_module_regions(sc);
-			sst_ipc_probe_stage_caps(sc);
-			sst_topology_load_default(sc);
-		}
-	}
+	sst_dsp_load_and_boot(sc);
 
 	/*
 	 * Configure SSP device format (once, before any stream).
@@ -1478,28 +1504,8 @@ sst_pci_attach(device_t dev)
 			goto fail;
 		}
 
-		/* Load firmware (after checking the memory is reachable) */
-		error = sst_dsp_ensure_memory(sc);
-		if (error == 0)
-			error = sst_fw_load(sc);
-		if (error) {
-			device_printf(dev, "Firmware load failed: %d\n", error);
-			error = 0; /* Continue without firmware for debugging */
-		} else {
-			/* Boot DSP with loaded firmware */
-			error = sst_fw_boot(sc);
-			if (error) {
-				device_printf(dev, "DSP boot failed: %d\n", error);
-				error = 0; /* Continue for debugging */
-			} else {
-				/* Get firmware version */
-				sst_ipc_get_fw_version(sc, NULL);
-				sst_fw_alloc_module_regions(sc);
-				sst_ipc_probe_stage_caps(sc);
-				/* Load default audio topology */
-				sst_topology_load_default(sc);
-			}
-		}
+		/* Load and boot firmware; failures keep a diagnostic attach */
+		sst_dsp_load_and_boot(sc);
 
 		/* Register PCM device if firmware is running */
 		if (sc->fw.state == SST_FW_STATE_RUNNING) {
@@ -1763,13 +1769,8 @@ sst_resume_common(struct sst_softc *sc)
 		return (error);
 	}
 
-	/* 4. Post-boot setup (same as initial attach) */
-	sst_ipc_get_fw_version(sc, NULL);
-	sst_fw_alloc_module_regions(sc);
-	sst_ipc_probe_stage_caps(sc);
-
-	/* 5. Rebuild audio pipeline */
-	sst_topology_load_default(sc);
+	/* 4-5. Post-boot setup and pipeline rebuild (same as attach) */
+	sst_dsp_post_boot(sc);
 
 	/* 6. SET_DEVICE_FORMATS for SSP0 */
 	{
