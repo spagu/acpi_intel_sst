@@ -271,7 +271,8 @@ sst_acpi_attach(device_t dev)
 	sc->irq_cookie = NULL;
 	sc->attached = false;
 	sc->state = SST_STATE_NONE;
-	sc->debug_level = SST_DBG_LIFE;
+	/* Quiet by default: errors and attach/detach only (issue #49) */
+	sc->debug_level = SST_DBG_QUIET;
 
 	/* Allow boot-time override via device.hints */
 	resource_int_value(device_get_name(dev), device_get_unit(dev),
@@ -1165,6 +1166,7 @@ dsp_init:
 	sst_topology_sysctl_init(sc);
 
 	/* RT286 codec initialization and output enable */
+	sst_codec_sysctl_init(sc);
 	if (sst_codec_init(sc) == 0) {
 		sst_codec_enable_speaker(sc);
 		sst_codec_enable_headphone(sc);
@@ -1445,6 +1447,7 @@ sst_pci_attach(device_t dev)
 		sst_topology_sysctl_init(sc);
 
 		/* RT286 codec initialization and output enable */
+		sst_codec_sysctl_init(sc);
 		if (sst_codec_init(sc) == 0) {
 			sst_codec_enable_speaker(sc);
 			sst_codec_enable_headphone(sc);

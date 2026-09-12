@@ -96,7 +96,7 @@ All parameters live under `dev.acpi_intel_sst.0.*`. Values take effect immediate
 
 | Sysctl | RW | Type | Range | Default | Description |
 |:-------|:--:|:-----|:------|:--------|:------------|
-| `debug` | RW | int | 0-3 | 1 | Debug verbosity level |
+| `debug` | RW | int | 0-3 | 0 | Debug verbosity level |
 
 **Debug levels:**
 
@@ -108,6 +108,18 @@ All parameters live under `dev.acpi_intel_sst.0.*`. Values take effect immediate
 | 3 | `SST_DBG_TRACE` | Trace: poll cycles, register dumps, timing |
 
 **Source:** `sc->debug_level` in `acpi_intel_sst.h`
+
+At the default level a healthy boot prints only attach, firmware version, codec identification and PCM registration. Per-attempt I2C diagnostics (`I2C write abort`, `read write-phase failed`) are printed at level 2 and above.
+
+### Codec
+
+| Sysctl | RW | Type | Description |
+|:-------|:--:|:-----|:------------|
+| `codec.i2c_errors` | RO | uint | Failed I2C transactions since the codec was last initialized (reset by suspend/resume) |
+
+A failing codec bus is reported once when the failure streak begins (`codec: I2C read reg=... failed`) and once when it recovers (`codec: I2C recovered after N failed transactions`). The counter keeps growing in between, so a large value with no recovery line means the codec is still unreachable.
+
+**Source:** `sst_codec.c`, `sst_errstat.h`
 
 ### DSP Audio Parameters
 
@@ -231,7 +243,7 @@ The ramp engine runs at 10 ms tick intervals (`SST_RAMP_TICK_MS`). A 50 ms ramp 
 | `jack.mic_insertions` | RO | uint | Microphone insertion count (lifetime) |
 | `jack.poll_count` | RO | uint | Jack polling cycle count |
 
-Jack detection uses GPIO polling with debounce:
+Jack detection reads the codec pin-sense verb over I2C with debounce:
 
 | Parameter | Value |
 |:----------|:------|
@@ -239,14 +251,7 @@ Jack detection uses GPIO polling with debounce:
 | Debounce time | 100 ms (`SST_JACK_DEBOUNCE_MS`) |
 | Debounce count | 3 stable readings (`SST_JACK_DEBOUNCE_COUNT`) |
 
-GPIO pin mapping:
-
-| GPIO | Function |
-|:----:|:---------|
-| 0 | Headphone detect |
-| 1 | Microphone detect |
-| 2 | Headphone mute |
-| 3 | Speaker mute |
+Each poll is one codec read per jack (`GET_PIN_SENSE` on the headphone and microphone NIDs). When the codec does not answer, the previous state is kept and the failure is counted in `codec.i2c_errors`.
 
 **Source:** `sst_jack.c`, `sst_jack.h`
 

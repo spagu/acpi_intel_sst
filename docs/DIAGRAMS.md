@@ -163,6 +163,9 @@ sequenceDiagram
 
     App->>SND: write(/dev/dsp, audio_data)
     SND->>PCM: sst_chan_trigger(START)
+    Note over SND,PCM: channel mutexes held: record request,<br/>enqueue on the trigger taskqueue, return
+    PCM-->>SND: 0
+    PCM->>PCM: sst_pcm_trig_task() (no sound(4) lock held)
 
     PCM->>IPC: ALLOC_STREAM
     Note over IPC: type=SYSTEM, path=SSP0_OUT<br/>format=48kHz/16bit/2ch<br/>page table PFNs
@@ -190,6 +193,7 @@ sequenceDiagram
 
     App->>SND: close()
     SND->>PCM: sst_chan_trigger(STOP)
+    PCM->>PCM: sst_pcm_trig_task() (last request wins)
     PCM->>SSP: sst_ssp_stop()
     PCM->>IPC: PAUSE → RESET → FREE stream
 ```
