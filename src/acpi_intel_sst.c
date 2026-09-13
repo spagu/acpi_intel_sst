@@ -291,6 +291,57 @@ sst_dsp_post_boot(struct sst_softc *sc)
 }
 
 /*
+ * sst_subsystems_init - bring up everything the firmware needs
+ *
+ * Shared by the ACPI and PCI attach paths, which differ only in how
+ * they find the device.  Order matters: the clocks must be configured
+ * before any firmware is written, and the topology needs the PCM
+ * channels to exist.
+ */
+static int
+sst_subsystems_init(struct sst_softc *sc)
+{
+	device_t dev = sc->dev;
+	int error;
+
+	error = sst_fw_init(sc);
+	if (error != 0) {
+		device_printf(dev, "Firmware init failed\n");
+		return (error);
+	}
+
+	/* Mask interrupts and reset the core, then set up its clocks */
+	sst_init(sc);
+	sst_shim_configure(sc);
+
+	error = sst_dma_init(sc);
+	if (error != 0) {
+		device_printf(dev, "DMA init failed\n");
+		return (error);
+	}
+
+	error = sst_ssp_init(sc);
+	if (error != 0) {
+		device_printf(dev, "SSP init failed\n");
+		return (error);
+	}
+
+	error = sst_pcm_init(sc);
+	if (error != 0) {
+		device_printf(dev, "PCM init failed\n");
+		return (error);
+	}
+
+	error = sst_topology_init(sc);
+	if (error != 0) {
+		device_printf(dev, "Topology init failed\n");
+		return (error);
+	}
+
+	return (0);
+}
+
+/*
  * sst_dsp_load_and_boot - attach-time firmware bring-up
  *
  * Probes the memory, writes the image, boots the core and runs the
@@ -1172,39 +1223,9 @@ dsp_init:
 		}
 	}
 
-	error = sst_fw_init(sc);
-	if (error) {
-		device_printf(dev, "Firmware init failed\n");
+	error = sst_subsystems_init(sc);
+	if (error != 0)
 		goto fail;
-	}
-
-	sst_init(sc);
-
-	sst_shim_configure(sc);
-
-	error = sst_dma_init(sc);
-	if (error) {
-		device_printf(dev, "DMA init failed\n");
-		goto fail;
-	}
-
-	error = sst_ssp_init(sc);
-	if (error) {
-		device_printf(dev, "SSP init failed\n");
-		goto fail;
-	}
-
-	error = sst_pcm_init(sc);
-	if (error) {
-		device_printf(dev, "PCM init failed\n");
-		goto fail;
-	}
-
-	error = sst_topology_init(sc);
-	if (error) {
-		device_printf(dev, "Topology init failed\n");
-		goto fail;
-	}
 
 	/*
 	 * Load firmware with DSP stalled but NOT in reset.
@@ -1424,51 +1445,16 @@ sst_pci_attach(device_t dev)
 			}
 		}
 
-		/* Initialize firmware subsystem */
-		error = sst_fw_init(sc);
-		if (error) {
-			device_printf(dev, "Firmware init failed\n");
-			goto fail;
-		}
-
-		/* Basic DSP init (mask interrupts, reset) */
-		sst_init(sc);
-
 		/*
-		 * Same sequence as the ACPI path.  The PCI copy used to
-		 * re-enable DCLCGE here, which blocks the MMIO writes the
-		 * firmware loader depends on; sst_fw_boot() turns it back
-		 * on once the image is in SRAM.
+		 * Same bring-up as the ACPI path.  The PCI copy used to
+		 * re-enable DCLCGE in the middle of it, which blocks the
+		 * MMIO writes the firmware loader depends on;
+		 * sst_fw_boot() turns clock gating back on once the image
+		 * is in SRAM.
 		 */
-		sst_shim_configure(sc);
-
-		/* Initialize DMA subsystem */
-		error = sst_dma_init(sc);
-		if (error) {
-			device_printf(dev, "DMA init failed\n");
+		error = sst_subsystems_init(sc);
+		if (error != 0)
 			goto fail;
-		}
-
-		/* Initialize SSP (I2S) subsystem */
-		error = sst_ssp_init(sc);
-		if (error) {
-			device_printf(dev, "SSP init failed\n");
-			goto fail;
-		}
-
-		/* Initialize PCM subsystem */
-		error = sst_pcm_init(sc);
-		if (error) {
-			device_printf(dev, "PCM init failed\n");
-			goto fail;
-		}
-
-		/* Initialize topology (audio pipeline) */
-		error = sst_topology_init(sc);
-		if (error) {
-			device_printf(dev, "Topology init failed\n");
-			goto fail;
-		}
 
 		/* Load and boot firmware; failures keep a diagnostic attach */
 		sst_dsp_load_and_boot(sc);
