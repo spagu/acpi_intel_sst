@@ -63,6 +63,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   past the third, put the kernel's own `Invalid argument` in the status bar.
   The list now names what the driver actually implements.
 
+## [0.69.0] - 2026-09-13
+
+Closes the last part of issue #51 that no software recovery could reach.
+Both fixes were found and verified on the reporting hardware (Dell
+Broadwell-U, RT286, FreeBSD 15.1-RELEASE-p3).
+
+### Fixed
+
+- **Audio was silent after every resume, and the driver said why.**
+  `sst_resume_common()` wrote the firmware into SRAM without first
+  configuring the clocks, which attach does through a block it kept to
+  itself: register defaults, MCLK, high-clock select and the 24 MHz SSP
+  bank clocks. Writes into unclocked SRAM do not stick, so the readback
+  check added in 0.67.0 failed the whole reload:
+
+  ```
+  acpi_intel_sst0: Firmware reload failed: 5
+  acpi_intel_sst0: Resume: firmware reload failed: 5
+  ```
+
+  That block is now `sst_shim_configure()`, called by both attach paths
+  and by resume. The PCI copy also re-enabled DCLCGE before the
+  firmware was written, which blocks exactly those MMIO writes; it no
+  longer does, and `sst_fw_boot()` remains the one place that turns
+  clock gating back on.
+
+- **The DSP refused every stream until a reboot.** After a recovery or
+  a module reload the firmware booted, answered FW_READY and then
+  rejected each `ALLOC_STREAM` with `out of resources`, with no way
+  back short of rebooting. The firmware image covers only the blocks it
+  declares, so a rewrite left the previous instance's runtime
+  bookkeeping in DRAM and the new instance believed its streams were
+  already taken. `sst_fw_parse()` now zeroes IRAM and DRAM first, the
+  way a cold boot hands them over. Measured on hardware stuck in that
+  state: peak meters flat at 0 before, 3334/3334 immediately after.
+
 ## [0.68.0] - 2026-09-12
 
 ### Added

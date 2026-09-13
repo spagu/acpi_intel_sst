@@ -82,6 +82,36 @@ sst_sram_probe(struct sst_softc *sc)
 }
 
 /*
+ * sst_sram_clear - zero IRAM and DRAM before a firmware rewrite
+ *
+ * A cold boot hands the firmware blank SRAM.  A reload does not: the
+ * image only covers the blocks it declares, so the firmware's runtime
+ * heap in DRAM keeps whatever the previous instance left there.  The
+ * DSP then boots, answers FW_READY and still refuses every
+ * ALLOC_STREAM with "out of resources", because its own bookkeeping
+ * says the streams are already taken (issue #51).
+ *
+ * Must be called with the core stalled and DCLCGE disabled, i.e. from
+ * the same place the firmware is written.
+ */
+void
+sst_sram_clear(struct sst_softc *sc)
+{
+	bus_size_t off;
+
+	if (sc->mem_res == NULL)
+		return;
+
+	for (off = 0; off < SST_DRAM_SIZE; off += 4)
+		bus_write_4(sc->mem_res, SST_DRAM_OFFSET + off, 0);
+	for (off = 0; off < SST_IRAM_SIZE; off += 4)
+		bus_write_4(sc->mem_res, SST_IRAM_OFFSET + off, 0);
+
+	sst_dbg(sc, SST_DBG_OPS, "SRAM cleared (%zu KB DRAM, %zu KB IRAM)\n",
+	    (size_t)SST_DRAM_SIZE / 1024, (size_t)SST_IRAM_SIZE / 1024);
+}
+
+/*
  * sst_sram_sanitize - Dummy readback after SRAM power-up
  *
  * From Linux catpt dsp.c catpt_dsp_set_srampge():

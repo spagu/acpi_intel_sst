@@ -325,6 +325,19 @@ sst_fw_parse(struct sst_softc *sc)
 	uint32_t i;
 	int error;
 
+	/*
+	 * Hand the firmware blank SRAM, the way a cold boot does.
+	 *
+	 * The image covers only the blocks it declares; the firmware's
+	 * runtime heap in DRAM is not part of it.  Rewriting the image
+	 * over a DSP that has already run therefore leaves the previous
+	 * instance's bookkeeping in place, and the freshly booted
+	 * firmware answers FW_READY but refuses every ALLOC_STREAM with
+	 * "out of resources" (issue #51).  The core is stalled and
+	 * DCLCGE is off at every call site, so the writes land.
+	 */
+	sst_sram_clear(sc);
+
 	hdr = (const struct sst_fw_header *)sc->fw.data;
 
 	error = sst_fw_validate_header(sc, hdr, sc->fw.size);

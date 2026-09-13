@@ -158,6 +158,59 @@ sst_dsp_reset(struct sst_softc *sc, bool reset)
 }
 
 /*
+ * sst_shim_configure - clocks and SHIM state required before firmware
+ *
+ * Based on Linux catpt catpt_dsp_power_up():
+ * 1. Set register defaults (with STALL+RST in CSR)
+ * 2. Restore MCLK
+ * 3. Select high clock (not LP clock)
+ * 4. Set 24MHz SSP bank clocks via SHIM CSR SBCS bits
+ * 5. Clear RST (leave STALL set)
+ * 6. Leave DCLCGE disabled - it blocks the MMIO writes this driver
+ *    uses to load firmware; sst_fw_boot() re-enables it afterwards
+ * 7. Unmask the IPC interrupts in IMRX
+ *
+ * Every path that writes firmware must run this first.  Resume used to
+ * skip it and wrote into unclocked SRAM, where the data did not stick:
+ * the readback check then failed the whole reload with EIO and the
+ * device came back silent until the module was reloaded.
+ */
+void
+sst_shim_configure(struct sst_softc *sc)
+{
+	uint32_t csr;
+
+	/* Step 1: SHIM register defaults (puts DSP in STALL+RST) */
+	sst_dsp_set_regs_defaults(sc);
+
+	/* Step 2: Restore MCLK via CLKCTL SMOS bits */
+	sst_shim_update_bits(sc, SST_SHIM_CLKCTL,
+	    SST_CLKCTL_SMOS_MASK, SST_CLKCTL_SMOS_MASK);
+
+	/* Step 3: Select high clock (clear LPCS in CSR) */
+	sst_shim_update_bits(sc, SST_SHIM_CSR, SST_CSR_LPCS, 0);
+
+	/* Step 4: Set 24MHz SSP bank clocks (SBCS0 + SBCS1) */
+	sst_shim_update_bits(sc, SST_SHIM_CSR,
+	    SST_CSR_SBCS0 | SST_CSR_SBCS1,
+	    SST_CSR_SBCS0 | SST_CSR_SBCS1);
+
+	/* Step 5: Clear RST, leave STALL set */
+	sst_dsp_reset(sc, false);
+
+	csr = sst_shim_read(sc, SST_SHIM_CSR);
+	sst_dbg(sc, SST_DBG_OPS,
+	    "  After de-assert RST: CSR=0x%08x (STALL=%d RST=%d)\n",
+	    csr, !!(csr & SST_CSR_STALL), !!(csr & SST_CSR_RST));
+
+	/* Step 7: Unmask IPC doorbell and completion interrupts */
+	sst_shim_update_bits(sc, SST_SHIM_IMRX,
+	    SST_IMC_IPCDB | SST_IMC_IPCCD, 0);
+
+	sst_dbg(sc, SST_DBG_OPS, "SHIM configured (catpt boot sequence)\n");
+}
+
+/*
  * sst_dsp_core_reset - put the DSP core through a full reset
  *
  * The VDRTCTL power-up sequence controls power and clock gating.  It cannot
@@ -1127,58 +1180,7 @@ dsp_init:
 
 	sst_init(sc);
 
-	/*
-	 * Configure SHIM for Broadwell-U (catpt) boot sequence.
-	 *
-	 * Based on Linux catpt catpt_dsp_power_up():
-	 * 1. Set register defaults (with STALL+RST in CSR)
-	 * 2. Restore MCLK
-	 * 3. Select high clock (not LP clock)
-	 * 4. Set 24MHz SSP bank clocks via SHIM CSR SBCS bits
-	 * 5. Clear RST (leave STALL set)
-	 * 6. Enable DCLCGE
-	 * 7. Clear IPC interrupt deassert (unmask IPC interrupts in IMC)
-	 */
-	{
-		uint32_t csr;
-
-		/* Step 1: Set SHIM register defaults (puts DSP in STALL+RST) */
-		sst_dsp_set_regs_defaults(sc);
-
-		/* Step 2: Restore MCLK via CLKCTL SMOS bits */
-		sst_shim_update_bits(sc, SST_SHIM_CLKCTL,
-		    SST_CLKCTL_SMOS_MASK, SST_CLKCTL_SMOS_MASK);
-
-		/* Step 3: Select high clock (clear LPCS in CSR) */
-		sst_shim_update_bits(sc, SST_SHIM_CSR, SST_CSR_LPCS, 0);
-
-		/* Step 4: Set 24MHz SSP bank clocks (SBCS0 + SBCS1) */
-		sst_shim_update_bits(sc, SST_SHIM_CSR,
-		    SST_CSR_SBCS0 | SST_CSR_SBCS1,
-		    SST_CSR_SBCS0 | SST_CSR_SBCS1);
-
-		/* Step 5: Clear RST (leave STALL set - DSP stalled but not reset) */
-		sst_dsp_reset(sc, false);
-
-		csr = sst_shim_read(sc, SST_SHIM_CSR);
-		sst_dbg(sc, SST_DBG_OPS, "  After de-assert RST: CSR=0x%08x "
-		    "(STALL=%d RST=%d)\n",
-		    csr, !!(csr & SST_CSR_STALL), !!(csr & SST_CSR_RST));
-
-		/*
-		 * Step 6: Do NOT re-enable DCLCGE yet!
-		 * DCLCGE blocks MMIO writes to SRAM. Since we load firmware
-		 * via MMIO (not DMA like Linux catpt), DCLCGE must stay
-		 * disabled until after firmware is loaded.
-		 * Re-enabled in sst_fw_boot() after successful load.
-		 */
-
-		/* Step 7: Clear IPC interrupt deassert (unmask IPC in IMC) */
-		sst_shim_update_bits(sc, SST_SHIM_IMRX,
-		    SST_IMC_IPCDB | SST_IMC_IPCCD, 0);
-
-		sst_dbg(sc, SST_DBG_OPS, "SHIM configured (catpt boot sequence)\n");
-	}
+	sst_shim_configure(sc);
 
 	error = sst_dma_init(sc);
 	if (error) {
@@ -1433,48 +1435,12 @@ sst_pci_attach(device_t dev)
 		sst_init(sc);
 
 		/*
-		 * Configure SHIM for catpt boot (PCI attach path)
-		 * Same sequence as ACPI attach.
+		 * Same sequence as the ACPI path.  The PCI copy used to
+		 * re-enable DCLCGE here, which blocks the MMIO writes the
+		 * firmware loader depends on; sst_fw_boot() turns it back
+		 * on once the image is in SRAM.
 		 */
-		{
-			uint32_t csr_val;
-
-			sst_dsp_set_regs_defaults(sc);
-
-			/* Restore MCLK */
-			sst_shim_update_bits(sc, SST_SHIM_CLKCTL,
-			    SST_CLKCTL_SMOS_MASK, SST_CLKCTL_SMOS_MASK);
-
-			/* Select high clock */
-			sst_shim_update_bits(sc, SST_SHIM_CSR,
-			    SST_CSR_LPCS, 0);
-
-			/* Set 24MHz SSP bank clocks */
-			sst_shim_update_bits(sc, SST_SHIM_CSR,
-			    SST_CSR_SBCS0 | SST_CSR_SBCS1,
-			    SST_CSR_SBCS0 | SST_CSR_SBCS1);
-
-			/* Clear RST */
-			sst_dsp_reset(sc, false);
-
-			/* Re-enable DCLCGE */
-			{
-				uint32_t vdrtctl2 = bus_read_4(sc->shim_res,
-				    SST_PCI_VDRTCTL2);
-				vdrtctl2 |= SST_VDRTCTL2_DCLCGE;
-				bus_write_4(sc->shim_res,
-				    SST_PCI_VDRTCTL2, vdrtctl2);
-			}
-
-			/* Clear IPC interrupt deassert */
-			sst_shim_update_bits(sc, SST_SHIM_IMRX,
-			    SST_IMC_IPCDB | SST_IMC_IPCCD, 0);
-
-			csr_val = sst_shim_read(sc, SST_SHIM_CSR);
-			sst_dbg(sc, SST_DBG_OPS,
-			    "SHIM configured (catpt): CSR=0x%08x\n",
-			    csr_val);
-		}
+		sst_shim_configure(sc);
 
 		/* Initialize DMA subsystem */
 		error = sst_dma_init(sc);
@@ -1750,6 +1716,15 @@ sst_resume_common(struct sst_softc *sc)
 		sc->state = SST_STATE_ERROR;
 		return (ENXIO);
 	}
+
+	/*
+	 * 2b. Clocks and SHIM state, exactly as attach does before it
+	 * writes firmware.  Without this the image goes into unclocked
+	 * SRAM, the readback check fails the reload with EIO and audio
+	 * stays dead until the module is reloaded by hand.
+	 */
+	sst_shim_configure(sc);
+
 	sc->ipc.ready = false;
 	sc->ipc.state = SST_IPC_STATE_IDLE;
 
