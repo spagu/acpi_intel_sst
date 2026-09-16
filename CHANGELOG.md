@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Nothing in the system could change the volume, mute included.** Three
+  defects stacked, each hiding the next. The volume that is actually heard
+  is the codec's converter gain (DAC0 for the speaker, DAC1 for the
+  headphone); the driver wrote a constant at init and never touched it
+  again, so the DSP's `SET_VOLUME` moved a number that reaches nothing
+  analogue. The pin amplifiers, tried first, accept the write and
+  acknowledge it without changing anything audible - `0x06` and `0x7f`
+  sound identical - so only their mute bit is useful. And the gain went to
+  whichever output was *enabled* at init rather than the one the jack state
+  had *routed* to, which on a machine with no headphones plugged in meant
+  it went to the headphone pin. Confirmed by ear across the full range.
+- **The volume slider moved and nothing happened.** Two defects, one on top
+  of the other. The throttle that protects the DSP from a flood of
+  `SET_VOLUME` messages tested `(ticks - last) >= interval`, but FreeBSD
+  starts `ticks` just short of overflow on purpose: within a minute of boot
+  that difference is about -2.1e9, the test is false from then on and the
+  throttle never opens again. Underneath it, a change was only ever sent by
+  the poll timer, so nothing pushed it out at the moment the slider moved.
+  The comparison now treats a negative difference as "long ago"
+  (`src/sst_rate_limit.h`, with `tests/unit/test_rate_limit.c` covering the
+  wrap), and `mixer_set` hands the change to the worker itself. On hardware
+  a volume change during playback now sends exactly two IPC messages, one
+  per channel, where it sent none before.
+
 ## [0.69.2] - 2026-09-16
 
 ### Fixed

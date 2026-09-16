@@ -90,6 +90,10 @@
 #define RT286_SET_AMP_OUT_R(nid)  (((uint32_t)(nid) << 20) | 0x39000)
 #define RT286_SET_AMP_OUT_LR(nid) (((uint32_t)(nid) << 20) | 0x3B000)
 
+/* Amplifier payload: bit 7 mutes, bits 6:0 carry the gain index. */
+#define RT286_AMP_MUTE		0x80
+#define RT286_AMP_GAIN_MAX	0x7f
+
 /* Connection Select (verb 0x701) */
 #define RT286_SET_CONNECT(nid)	(((uint32_t)(nid) << 20) | 0x70100)
 
@@ -190,6 +194,7 @@ struct sst_codec {
 	bool			initialized;	/* Codec init complete */
 	bool			speaker_active;	/* Speaker output enabled */
 	bool			hp_active;	/* Headphone output enabled */
+	bool			hp_routed;	/* Headphones are the live output */
 	int			mic_refs;	/* Active capture streams */
 	uint32_t		vendor_id;	/* Detected vendor ID */
 	struct sst_errstat	i2c_err;	/* (c) I2C failure accounting */
@@ -215,5 +220,14 @@ int	sst_codec_pin_present(struct sst_softc *sc, uint32_t nid, bool *present);
 
 /* Output routing follow-up for jack events */
 int	sst_codec_set_hp_route(struct sst_softc *sc, bool hpInserted);
+
+/*
+ * Output volume, in percent per channel, with mute.  The DSP's own
+ * SET_VOLUME leaves the analogue path untouched on this hardware - the
+ * mixer moved and nothing changed, mute included - so the gain that is
+ * actually heard is the codec's output amplifier.
+ */
+int	sst_codec_set_volume(struct sst_softc *sc, int left_pct, int right_pct,
+	    bool mute);
 
 #endif /* _SST_CODEC_H_ */

@@ -28,9 +28,9 @@ LDFLAGS?=	-fsanitize=undefined
 CPPFLAGS+=	-I../../src
 
 TESTS=		test_fw_bounds test_trig_state test_errstat test_recover \
-		test_ipc_gate
+		test_ipc_gate test_rate_limit
 SHARED_HDRS=	sst_trig_state.h sst_errstat.h sst_recover_policy.h \
-		sst_ipc_gate.h
+		sst_ipc_gate.h sst_rate_limit.h
 COVERAGE_MIN?=	96
 
 .PHONY: test coverage clean
@@ -53,10 +53,14 @@ test_recover: test_recover.c ../../src/sst_recover_policy.h
 test_ipc_gate: test_ipc_gate.c ../../src/sst_ipc_gate.h
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ test_ipc_gate.c $(LDFLAGS)
 
+test_rate_limit: test_rate_limit.c ../../src/sst_rate_limit.h
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ test_rate_limit.c $(LDFLAGS)
+
 # Line coverage of the headers shared with the driver (gcc + gcov).
 coverage:
 	@rm -rf cov && mkdir -p cov
-	@for t in test_trig_state test_errstat test_recover test_ipc_gate; do \
+	@for t in test_trig_state test_errstat test_recover test_ipc_gate \
+	    test_rate_limit; do \
 		$(CC) $(CPPFLAGS) -std=c11 -Wall -Wextra -O0 --coverage \
 		    -o cov/$$t $$t.c && (cd cov && ./$$t >/dev/null); \
 	done

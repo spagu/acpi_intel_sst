@@ -1002,6 +1002,84 @@ sst_codec_pin_present(struct sst_softc *sc, uint32_t nid, bool *present)
 }
 
 /*
+ * Percent to amplifier gain index.
+ *
+ * The pin amplifier steps run from 0x00 up to RT286_AMP_GAIN_MAX on a
+ * decibel scale, so a linear map from percent to index is linear in dB -
+ * which is what a volume slider is expected to feel like.
+ */
+static uint32_t
+sst_codec_pct_to_gain(int pct)
+{
+
+	if (pct >= 100)
+		return (RT286_AMP_GAIN_MAX);
+	return ((uint32_t)pct * RT286_AMP_GAIN_MAX / 100);
+}
+
+/*
+ * sst_codec_set_volume - output gain on the pin that is currently routed
+ *
+ * HDA amplifier payload: bit 7 mutes, bits 6:0 are the gain index.  The
+ * driver wrote a constant 0x00 at init and never touched it again, which
+ * is why every volume control in the system moved without changing
+ * anything - mute included.  The DSP's own SET_VOLUME does not reach the
+ * analogue path on this hardware.
+ *
+ * Only the routed pin is touched; the other is kept muted by
+ * sst_codec_set_hp_route() and must stay that way.
+ *
+ * Runs from the PCM worker, never from a mixer callback: every write is
+ * an I2C transaction taking milliseconds.
+ */
+int
+sst_codec_set_volume(struct sst_softc *sc, int left_pct, int right_pct,
+    bool mute)
+{
+	struct sst_codec *codec = &sc->codec;
+	uint32_t nid, other, gain_l, gain_r;
+	int error = 0;
+
+	if (!codec->initialized)
+		return (ENXIO);
+
+	/*
+	 * hp_active only means the headphone output was brought up at init;
+	 * both outputs are.  What matters here is which one the jack state
+	 * routed the sound to, which is hp_routed.  Getting this wrong sends
+	 * the gain to a muted pin and the volume control does nothing - the
+	 * exact symptom this function exists to fix.
+	 */
+	/*
+	 * Gain goes on the converter, not on the pin.  The pin amplifiers
+	 * on this codec take the write and acknowledge it without changing
+	 * anything audible (measured: 0x06 and 0x7f sound identical), so
+	 * only their mute bit is useful, and routing already owns that.
+	 * DAC0 feeds the speaker, DAC1 the headphone.
+	 */
+	nid = codec->hp_routed ? RT286_NID_DAC1 : RT286_NID_DAC0;
+	other = codec->hp_routed ? RT286_NID_SPK : RT286_NID_HP;
+	gain_l = (mute || left_pct <= 0) ? RT286_AMP_MUTE :
+	    sst_codec_pct_to_gain(left_pct);
+	gain_r = (mute || right_pct <= 0) ? RT286_AMP_MUTE :
+	    sst_codec_pct_to_gain(right_pct);
+
+	error |= sst_codec_write(sc, RT286_SET_AMP_OUT_L(nid), gain_l);
+	error |= sst_codec_write(sc, RT286_SET_AMP_OUT_R(nid), gain_r);
+	/* and the one that is not playing stays silent */
+	error |= sst_codec_write(sc, RT286_SET_AMP_OUT_LR(other),
+	    RT286_AMP_MUTE);
+
+	sst_dbg(sc, SST_DBG_OPS,
+	    "codec: volume %d%%:%d%% -> gain 0x%02x:0x%02x on %s%s\n",
+	    left_pct, right_pct, gain_l, gain_r,
+	    codec->hp_routed ? "headphone" : "speaker",
+	    mute ? " (muted)" : "");
+
+	return (error ? EIO : 0);
+}
+
+/*
  * sst_codec_set_hp_route - follow a headphone insertion event
  *
  * Headphones in: mute the speaker amp, unmute the HP amp.
@@ -1032,6 +1110,8 @@ sst_codec_set_hp_route(struct sst_softc *sc, bool hpInserted)
 		error |= sst_codec_write(sc,
 		    RT286_SET_AMP_OUT_R(RT286_NID_SPK), 0x00);
 	}
+
+	codec->hp_routed = hpInserted;
 
 	sst_dbg(sc, SST_DBG_OPS, "codec: route -> %s%s\n",
 	    hpInserted ? "headphone" : "speaker",

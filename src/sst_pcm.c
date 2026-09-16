@@ -23,6 +23,7 @@
 
 #include "acpi_intel_sst.h"
 #include "sst_pcm.h"
+#include "sst_rate_limit.h"
 #include "sst_topology.h"
 
 /*
@@ -76,6 +77,7 @@ static void sst_pcm_trig_task(void *arg, int pending);
 static void sst_pcm_trig_drain(struct sst_pcm_channel *ch);
 static void sst_pcm_recover_task(void *arg, int pending);
 static void sst_pcm_request_recovery(struct sst_softc *sc, int error);
+static bool sst_vol_rate_ok(struct sst_softc *sc);
 static uint32_t sst_chan_getptr(kobj_t obj, void *data);
 static struct pcmchan_caps *sst_chan_getcaps(kobj_t obj, void *data);
 
@@ -1061,6 +1063,15 @@ sst_pcm_work(void *arg, int pending __unused)
 			vsp.mute = sc->pcm.mic_mute;
 		}
 		sst_ipc_stream_set_params(sc, &vsp);
+
+		/*
+		 * The DSP's SET_VOLUME does not reach the analogue path on
+		 * this hardware, so the gain that is actually heard is the
+		 * codec's.  Playback only: capture gain is a different pin.
+		 */
+		if (ch->dir == PCMDIR_PLAY)
+			sst_codec_set_volume(sc, sc->pcm.vol_left,
+			    sc->pcm.vol_right, sc->pcm.mute);
 	}
 }
 
@@ -1145,8 +1156,7 @@ sst_pcm_poll(void *arg)
 		bool *flag = (ch->dir == PCMDIR_PLAY) ?
 		    &sc->pcm.vol_pending : &sc->pcm.cap_vol_pending;
 
-		if (*flag && (ticks - sc->pcm.vol_ticks) >=
-		    SST_VOL_RATE_TICKS) {
+		if (*flag && sst_vol_rate_ok(sc)) {
 			*flag = false;
 			sc->pcm.vol_ticks = ticks;
 			ch->need_vol_flush = true;
@@ -1950,6 +1960,65 @@ sst_mixer_init(struct snd_mixer *m)
  * value and raise a *_pending flag; sst_pcm_work() applies it from a
  * taskqueue thread, rate-limited to SST_VOL_RATE_TICKS.
  */
+/*
+ * Has enough time passed since the last SET_VOLUME to send another?
+ *
+ * The comparison has to be signed and has to treat a negative difference
+ * as "long ago".  FreeBSD starts `ticks` just short of overflow on
+ * purpose, so it is large and positive at boot and wraps to large and
+ * negative within the first minute.  The old test read
+ *
+ *	(ticks - sc->pcm.vol_ticks) >= SST_VOL_RATE_TICKS
+ *
+ * which is false for every wrapped value once vol_ticks is stale or has
+ * never been set (dt around -2.1e9 in the trace).  Volume updates were
+ * then throttled forever: the mixer moved, the DSP never heard about it.
+ */
+static bool
+sst_vol_rate_ok(struct sst_softc *sc)
+{
+
+	return (sst_rate_elapsed(ticks, sc->pcm.vol_ticks,
+	    SST_VOL_RATE_TICKS));
+}
+
+/*
+ * Hand a pending volume change to the worker now, instead of waiting for
+ * the poll timer to notice it.
+ *
+ * The timer only runs while a stream is running, and it ticks every
+ * SST_PCM_POLL_TICKS; a slider drag then moved the number in the mixer
+ * while the sound stayed where it was.  Called from mixer_set with the
+ * sound(4) mixer lock held, so it must not sleep: it only sets a flag and
+ * enqueues the task, and the throttle that protects the DSP from a flood
+ * of SET_VOLUME messages still applies.
+ */
+static void
+sst_pcm_flush_volume_now(struct sst_softc *sc, int dir)
+{
+	struct sst_pcm_channel *ch;
+	bool *flag;
+	int i, n;
+
+	if (!sst_vol_rate_ok(sc))
+		return;		/* too soon; the poll timer will carry it */
+
+	n = (dir == PCMDIR_PLAY) ? SST_PCM_MAX_PLAY : SST_PCM_MAX_REC;
+	flag = (dir == PCMDIR_PLAY) ?
+	    &sc->pcm.vol_pending : &sc->pcm.cap_vol_pending;
+
+	for (i = 0; i < n; i++) {
+		ch = (dir == PCMDIR_PLAY) ? &sc->pcm.play[i] : &sc->pcm.rec[i];
+		if (ch->state != SST_PCM_STATE_RUNNING ||
+		    !ch->stream_allocated || !ch->work_task_valid)
+			continue;
+		ch->need_vol_flush = true;
+		*flag = false;
+		sc->pcm.vol_ticks = ticks;
+		taskqueue_enqueue(taskqueue_thread, &ch->work_task);
+	}
+}
+
 static int
 sst_mixer_set(struct snd_mixer *m, unsigned dev, unsigned left, unsigned right)
 {
@@ -1974,12 +2043,14 @@ sst_mixer_set(struct snd_mixer *m, unsigned dev, unsigned left, unsigned right)
 		 * deferred update.
 		 */
 		sc->pcm.vol_pending = true;
+		sst_pcm_flush_volume_now(sc, PCMDIR_PLAY);
 		break;
 
 	case SOUND_MIXER_MIC:
 		sc->pcm.cap_vol_left = left;
 		sc->pcm.cap_vol_right = right;
 		sc->pcm.cap_vol_pending = true;
+		sst_pcm_flush_volume_now(sc, PCMDIR_REC);
 		break;
 
 	case SOUND_MIXER_BASS: {
