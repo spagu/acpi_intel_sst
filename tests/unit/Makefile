@@ -19,7 +19,7 @@
 # "make coverage" reruns the tests with gcov and fails when any shared
 # header falls below COVERAGE_MIN percent of lines executed.
 #
-# Copyright (c) 2026 FreeBSD Foundation
+# Copyright (c) 2026 Tradik Limited
 # All rights reserved.
 
 CC?=		cc

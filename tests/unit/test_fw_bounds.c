@@ -11,7 +11,7 @@
  * predicates mirrored in sst_fw_predicates.h -- see that file's header
  * comment for the sync contract.
  *
- * Copyright (c) 2026 FreeBSD Foundation
+ * Copyright (c) 2026 Tradik Limited
  * All rights reserved.
  */
 

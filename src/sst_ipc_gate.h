@@ -34,7 +34,7 @@
  *	if (sst_ipc_gate_leave(&gate))
  *		cv_signal(&send_cv);
  *
- * Copyright (c) 2026 FreeBSD Foundation
+ * Copyright (c) 2026 Tradik Limited
  * All rights reserved.
  */
 

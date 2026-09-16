@@ -6,7 +6,7 @@
  * allocations after a cold boot; the driver reinitializes it, but
  * never in a tight loop).
  *
- * Copyright (c) 2026 FreeBSD Foundation
+ * Copyright (c) 2026 Tradik Limited
  * All rights reserved.
  */
 

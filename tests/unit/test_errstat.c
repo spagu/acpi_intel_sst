@@ -5,7 +5,7 @@
  * src/sst_errstat.h (issue #49: the codec I2C paths printed every
  * failed attempt; the driver now prints once per streak).
  *
- * Copyright (c) 2026 FreeBSD Foundation
+ * Copyright (c) 2026 Tradik Limited
  * All rights reserved.
  */
 

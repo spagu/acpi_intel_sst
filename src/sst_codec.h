@@ -4,7 +4,7 @@
  * RT286 (ALC3263) Codec Driver over I2C
  * Target: Intel Broadwell-U with Realtek RT286 on I2C0
  *
- * Copyright (c) 2026 FreeBSD Foundation
+ * Copyright (c) 2026 Tradik Limited
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without

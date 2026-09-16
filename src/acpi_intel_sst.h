@@ -4,7 +4,7 @@
  * Intel Smart Sound Technology (SST) ACPI Driver for FreeBSD
  * Target: Intel Broadwell-U (INT3438)
  *
- * Copyright (c) 2026 FreeBSD Foundation
+ * Copyright (c) 2026 Tradik Limited
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without

@@ -3,7 +3,7 @@
 # test_module.sh - Test script for acpi_intel_sst kernel module
 #
 # SPDX-License-Identifier: BSD-3-Clause
-# Copyright (c) 2026 FreeBSD Foundation
+# Copyright (c) 2026 Tradik Limited
 #
 # Usage: sudo ./tests/test_module.sh [--verbose]
 #

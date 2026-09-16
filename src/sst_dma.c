@@ -4,7 +4,7 @@
  * Intel SST DMA Controller Implementation
  * Target: Intel Haswell/Broadwell-U
  *
- * Copyright (c) 2026 FreeBSD Foundation
+ * Copyright (c) 2026 Tradik Limited
  * All rights reserved.
  *
  * Uses DesignWare DMA Controller (DW-DMAC) in linked-list mode

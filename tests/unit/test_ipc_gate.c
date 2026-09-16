@@ -10,7 +10,7 @@
  * the replacement, and this drives the exact code the driver runs with
  * a model of two senders meeting.
  *
- * Copyright (c) 2026 FreeBSD Foundation
+ * Copyright (c) 2026 Tradik Limited
  * All rights reserved.
  */
 

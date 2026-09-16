@@ -1,7 +1,7 @@
 # Firmware module for acpi_intel_sst
 #
 # SPDX-License-Identifier: BSD-3-Clause
-# Copyright (c) 2026 FreeBSD Foundation
+# Copyright (c) 2026 Tradik Limited
 #
 # Wraps IntcSST2.bin into acpi_intel_sst_fw.ko so the loader can
 # preload it from /boot/loader.conf:

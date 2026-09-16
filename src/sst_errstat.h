@@ -13,7 +13,7 @@
  * Included by src/sst_codec.c and by the host-side unit tests in
  * tests/unit, which is why it must not pull in kernel headers.
  *
- * Copyright (c) 2026 FreeBSD Foundation
+ * Copyright (c) 2026 Tradik Limited
  * All rights reserved.
  */
 

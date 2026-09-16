@@ -4,7 +4,7 @@
  * Host-side mirror of the firmware image bounds-checking predicates
  * used by src/sst_firmware.c.
  *
- * Copyright (c) 2026 FreeBSD Foundation
+ * Copyright (c) 2026 Tradik Limited
  * All rights reserved.
  *
  * IMPORTANT - KEEP IN SYNC

@@ -41,40 +41,40 @@ All source files in `src/` contain the following SPDX header:
 
 ```
 SPDX-License-Identifier: BSD-3-Clause
-Copyright (c) 2026 FreeBSD Foundation
+Copyright (c) 2026 Tradik Limited
 ```
 
 ### Implementation files (.c)
 
 | File | SPDX | Copyright |
 |------|------|-----------|
-| `src/acpi_intel_sst.c` | BSD-3-Clause | 2026 FreeBSD Foundation |
-| `src/sst_codec.c` | BSD-3-Clause | 2026 FreeBSD Foundation |
-| `src/sst_dma.c` | BSD-3-Clause | 2026 FreeBSD Foundation |
-| `src/sst_firmware.c` | BSD-3-Clause | 2026 FreeBSD Foundation |
-| `src/sst_ipc.c` | BSD-3-Clause | 2026 FreeBSD Foundation |
-| `src/sst_jack.c` | BSD-3-Clause | 2026 FreeBSD Foundation |
-| `src/sst_pch.c` | BSD-3-Clause | 2026 FreeBSD Foundation |
-| `src/sst_pcm.c` | BSD-3-Clause | 2026 FreeBSD Foundation |
-| `src/sst_power.c` | BSD-3-Clause | 2026 FreeBSD Foundation |
-| `src/sst_sram.c` | BSD-3-Clause | 2026 FreeBSD Foundation |
-| `src/sst_ssp.c` | BSD-3-Clause | 2026 FreeBSD Foundation |
-| `src/sst_topology.c` | BSD-3-Clause | 2026 FreeBSD Foundation |
+| `src/acpi_intel_sst.c` | BSD-3-Clause | 2026 Tradik Limited |
+| `src/sst_codec.c` | BSD-3-Clause | 2026 Tradik Limited |
+| `src/sst_dma.c` | BSD-3-Clause | 2026 Tradik Limited |
+| `src/sst_firmware.c` | BSD-3-Clause | 2026 Tradik Limited |
+| `src/sst_ipc.c` | BSD-3-Clause | 2026 Tradik Limited |
+| `src/sst_jack.c` | BSD-3-Clause | 2026 Tradik Limited |
+| `src/sst_pch.c` | BSD-3-Clause | 2026 Tradik Limited |
+| `src/sst_pcm.c` | BSD-3-Clause | 2026 Tradik Limited |
+| `src/sst_power.c` | BSD-3-Clause | 2026 Tradik Limited |
+| `src/sst_sram.c` | BSD-3-Clause | 2026 Tradik Limited |
+| `src/sst_ssp.c` | BSD-3-Clause | 2026 Tradik Limited |
+| `src/sst_topology.c` | BSD-3-Clause | 2026 Tradik Limited |
 
 ### Header files (.h)
 
 | File | SPDX | Copyright |
 |------|------|-----------|
-| `src/acpi_intel_sst.h` | BSD-3-Clause | 2026 FreeBSD Foundation |
-| `src/sst_codec.h` | BSD-3-Clause | 2026 FreeBSD Foundation |
-| `src/sst_dma.h` | BSD-3-Clause | 2026 FreeBSD Foundation |
-| `src/sst_firmware.h` | BSD-3-Clause | 2026 FreeBSD Foundation |
-| `src/sst_ipc.h` | BSD-3-Clause | 2026 FreeBSD Foundation |
-| `src/sst_jack.h` | BSD-3-Clause | 2026 FreeBSD Foundation |
-| `src/sst_pcm.h` | BSD-3-Clause | 2026 FreeBSD Foundation |
-| `src/sst_regs.h` | BSD-3-Clause | 2026 FreeBSD Foundation |
-| `src/sst_ssp.h` | BSD-3-Clause | 2026 FreeBSD Foundation |
-| `src/sst_topology.h` | BSD-3-Clause | 2026 FreeBSD Foundation |
+| `src/acpi_intel_sst.h` | BSD-3-Clause | 2026 Tradik Limited |
+| `src/sst_codec.h` | BSD-3-Clause | 2026 Tradik Limited |
+| `src/sst_dma.h` | BSD-3-Clause | 2026 Tradik Limited |
+| `src/sst_firmware.h` | BSD-3-Clause | 2026 Tradik Limited |
+| `src/sst_ipc.h` | BSD-3-Clause | 2026 Tradik Limited |
+| `src/sst_jack.h` | BSD-3-Clause | 2026 Tradik Limited |
+| `src/sst_pcm.h` | BSD-3-Clause | 2026 Tradik Limited |
+| `src/sst_regs.h` | BSD-3-Clause | 2026 Tradik Limited |
+| `src/sst_ssp.h` | BSD-3-Clause | 2026 Tradik Limited |
+| `src/sst_topology.h` | BSD-3-Clause | 2026 Tradik Limited |
 
 ### Generated headers (no license header)
 
@@ -94,8 +94,8 @@ Copyright (c) 2026 FreeBSD Foundation
 
 | File | SPDX | Copyright |
 |------|------|-----------|
-| `scripts/sst_report.sh` | BSD-3-Clause | 2026 FreeBSD Foundation |
-| `tests/test_module.sh` | BSD-3-Clause | 2026 FreeBSD Foundation |
+| `scripts/sst_report.sh` | BSD-3-Clause | 2026 Tradik Limited |
+| `tests/test_module.sh` | BSD-3-Clause | 2026 Tradik Limited |
 
 ---
 

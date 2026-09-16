@@ -1,7 +1,7 @@
 # Top-level Makefile for acpi_intel_sst
 #
 # SPDX-License-Identifier: BSD-3-Clause
-# Copyright (c) 2026 FreeBSD Foundation
+# Copyright (c) 2026 Tradik Limited
 #
 #   make            - build the driver (src/) and the firmware module
 #                     (firmware/), in that order

@@ -8,7 +8,7 @@
  * The header is shared with the driver, so this exercises the exact
  * code sst_pcm.c runs, driven by a small model of the worker loop.
  *
- * Copyright (c) 2026 FreeBSD Foundation
+ * Copyright (c) 2026 Tradik Limited
  * All rights reserved.
  */
 

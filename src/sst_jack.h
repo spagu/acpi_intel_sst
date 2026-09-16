@@ -4,7 +4,7 @@
  * Intel SST Jack Detection Driver
  * Target: Intel Haswell/Broadwell-U with Realtek ALC3263
  *
- * Copyright (c) 2026 FreeBSD Foundation
+ * Copyright (c) 2026 Tradik Limited
  * All rights reserved.
  */
 

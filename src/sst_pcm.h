@@ -4,7 +4,7 @@
  * Intel SST PCM Driver - sound(4) Integration
  * Target: Intel Haswell/Broadwell-U
  *
- * Copyright (c) 2026 FreeBSD Foundation
+ * Copyright (c) 2026 Tradik Limited
  * All rights reserved.
  */
 
