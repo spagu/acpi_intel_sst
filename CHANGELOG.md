@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **A failed trigger wedged playback for the life of the module** (#54).
+  `chn_start()` in sound(4) sets `CHN_F_TRIGGERED` before calling
+  `channel_trigger` and does not clear it when the method returns an error.
+  `CHN_STARTED()` is then true forever: every later `chn_start()` bails out
+  with `EINVAL` without reaching the driver, and every writer blocks in
+  `chn_write()` waiting for space in a buffer nothing drains. The driver
+  returned `ENXIO` whenever the DSP was not running yet, so one transient
+  failure silenced the device until the module was unloaded.
+  `channel_trigger` now accepts a START in that case, kicks recovery and
+  reports the outcome from the deferred body. Confirmed on hardware: the
+  playback channel used to be left `TRIGGERED` after the first stream and
+  now comes back clean.
+
+### Added
+- A trace-level log line for every `channel_trigger` call, including the
+  paths that used to return `ENXIO` without a word. That silence is what
+  hid the stuck flag; at `debug=3` the log now shows what sound(4) asks
+  for and when.
+
 ## [0.69.1] - 2026-09-16
 
 ### Changed

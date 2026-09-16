@@ -1356,18 +1356,42 @@ sst_chan_trigger(kobj_t obj, void *data, int go)
 	struct sst_pcm_channel *ch = data;
 	struct sst_softc *sc = ch->sc;
 
+	sst_dbg(sc, SST_DBG_TRACE, "PCM: trigger 0x%x on %s channel\n", go,
+	    (ch->dir == PCMDIR_PLAY) ? "playback" : "capture");
+
 	if (go != PCMTRIG_START && go != PCMTRIG_STOP && go != PCMTRIG_ABORT)
 		return (0);
 
-	/* Cheap synchronous check: report the obvious failure now */
+	/*
+	 * Never fail a START back to sound(4).
+	 *
+	 * chn_start() sets CHN_F_TRIGGERED *before* calling this method and
+	 * does not clear it when the method returns an error.  CHN_STARTED()
+	 * is then true for the rest of the channel's life, every later
+	 * chn_start() bails out with EINVAL without ever reaching the driver,
+	 * and every writer blocks in chn_write() waiting for space in a
+	 * buffer nothing drains.  One transient failure - a DSP that is not
+	 * running yet, a worker that went away - wedges playback until the
+	 * module is unloaded.
+	 *
+	 * So the failure is handled here instead: kick recovery and accept
+	 * the trigger.  The deferred body reports what happened, and if the
+	 * DSP cannot be brought back the channel simply stays silent, which
+	 * sound(4) handles through its own interrupt timeout.
+	 */
 	if (go == PCMTRIG_START && sc->fw.state != SST_FW_STATE_RUNNING) {
 		device_printf(sc->dev,
-		    "PCM trigger: DSP firmware not running\n");
-		return (ENXIO);
+		    "PCM trigger: DSP firmware not running, requesting "
+		    "recovery\n");
+		sst_pcm_request_recovery(sc, ENXIO);
+		return (0);
 	}
 
-	if (!ch->trig_task_valid || sc->pcm.trig_tq == NULL)
-		return (ENXIO);
+	if (!ch->trig_task_valid || sc->pcm.trig_tq == NULL) {
+		sst_dbg(sc, SST_DBG_LIFE,
+		    "PCM: trigger 0x%x dropped: worker not available\n", go);
+		return (0);
+	}
 
 	mtx_lock(&sc->sc_mtx);
 	ch->trig_want = go;
