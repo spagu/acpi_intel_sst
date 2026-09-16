@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.69.3] - 2026-09-16
+
 ### Fixed
 - **Nothing in the system could change the volume, mute included.** Three
   defects stacked, each hiding the next. The volume that is actually heard
