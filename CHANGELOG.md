@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.69.1] - 2026-09-16
+
+### Changed
+- **The copyright is Tradik Limited, not the FreeBSD Foundation.** This
+  work was not Foundation-sponsored and the headers had no business
+  saying so. Every source file, the `LICENSE` and the licence table in
+  the documentation now name the actual holder. The licence itself does
+  not change: BSD-3-Clause throughout.
+
 ### Fixed
 
 - **Kernel panic when two IPC senders met** (#56). `sst_ipc_send()` held
