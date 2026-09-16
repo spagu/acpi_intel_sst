@@ -33,9 +33,10 @@ sst_ipc_init(struct sst_softc *sc)
 	if (sc->ipc.initialized)
 		return (0);
 
-	mtx_init(&sc->ipc.send_mtx, "sst_ipc_send", NULL, MTX_DEF);
 	mtx_init(&sc->ipc.lock, "sst_ipc", NULL, MTX_DEF);
 	cv_init(&sc->ipc.wait_cv, "sst_ipc_cv");
+	cv_init(&sc->ipc.send_cv, "sst_ipc_send");
+	sst_ipc_gate_init(&sc->ipc.gate);
 	sc->ipc.initialized = true;
 
 	sc->ipc.state = SST_IPC_STATE_IDLE;
@@ -70,9 +71,9 @@ sst_ipc_fini(struct sst_softc *sc)
 	if (!sc->ipc.initialized)
 		return;
 	sc->ipc.initialized = false;
+	cv_destroy(&sc->ipc.send_cv);
 	cv_destroy(&sc->ipc.wait_cv);
 	mtx_destroy(&sc->ipc.lock);
-	mtx_destroy(&sc->ipc.send_mtx);
 }
 
 /*
@@ -94,13 +95,30 @@ sst_ipc_send(struct sst_softc *sc, uint32_t header, void *data, size_t size)
 	 * Serialize IPC senders.
 	 *
 	 * cv_timedwait() releases ipc.lock while sleeping, which
-	 * allows a second sender (e.g. poll-timer stall recovery)
-	 * to enter and overwrite the shared state/mailbox.  The
-	 * send_mtx is held across the entire send-wait-complete
-	 * cycle so only one IPC transaction is in flight at a time.
+	 * allows a second sender (e.g. the volume ramp task or
+	 * poll-timer stall recovery) to enter and overwrite the
+	 * shared state/mailbox.  The gate keeps one transaction in
+	 * flight at a time; it is a flag plus a cv rather than a
+	 * mutex because this function sleeps, and sleeping with a
+	 * mutex held panics the machine as soon as a second sender
+	 * blocks on it (see sst_ipc_gate.h).
 	 */
-	mtx_lock(&sc->ipc.send_mtx);
 	mtx_lock(&sc->ipc.lock);
+	while (!sst_ipc_gate_try_enter(&sc->ipc.gate)) {
+		sst_ipc_gate_begin_wait(&sc->ipc.gate);
+		error = cv_timedwait(&sc->ipc.send_cv, &sc->ipc.lock,
+		    SST_IPC_GATE_TIMEOUT_MS * hz / 1000);
+		sst_ipc_gate_end_wait(&sc->ipc.gate);
+		if (error == EWOULDBLOCK) {
+			device_printf(sc->dev,
+			    "IPC: gate busy, dropping command 0x%08x\n",
+			    header);
+			sc->ipc.error_count++;
+			mtx_unlock(&sc->ipc.lock);
+			return (EBUSY);
+		}
+		error = 0;
+	}
 
 	/* Check if DSP is busy */
 	ipcx = sst_shim_read(sc, SST_SHIM_IPCX);
@@ -200,8 +218,9 @@ sst_ipc_send(struct sst_softc *sc, uint32_t header, void *data, size_t size)
 
 done:
 	sc->ipc.state = SST_IPC_STATE_IDLE;
+	if (sst_ipc_gate_leave(&sc->ipc.gate))
+		cv_signal(&sc->ipc.send_cv);
 	mtx_unlock(&sc->ipc.lock);
-	mtx_unlock(&sc->ipc.send_mtx);
 
 	return (error);
 }

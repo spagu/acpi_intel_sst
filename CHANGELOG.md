@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Kernel panic when two IPC senders met** (#56). `sst_ipc_send()` held
+  `ipc.send_mtx` across `cv_timedwait()`, so a sender slept owning a mutex.
+  The moment a second one blocked on it — the volume ramp task and the
+  trigger task both send, and PulseAudio starting a stream produces exactly
+  that pair — priority propagation found a sleeping owner and the machine
+  panicked with `sleeping thread holds sst_ipc_send`, about 90 seconds into
+  every boot. The serialization is now a flag plus `ipc.send_cv`, both under
+  `ipc.lock`, which the sender already drops while it sleeps; a sender that
+  waits longer than a full transaction gives up with `EBUSY` instead of
+  pinning a taskqueue thread. The decisions live in `src/sst_ipc_gate.h`
+  with `tests/unit/test_ipc_gate.c` as their specification. Same class of
+  bug as #48, one layer down.
+
 - **`acpi_intel_sst-kmod` port failed to build**: `LICENSE_FILE_BSD3CLAUSE`
   and `LICENSE_FILE_INTEL_FW` pointed one directory above `WRKSRC`. That
   path is right for `sst-panel`, which sets `WRKSRC_SUBDIR=gui`, but the

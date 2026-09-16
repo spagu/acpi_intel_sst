@@ -12,6 +12,9 @@
 #                      driver via src/sst_errstat.h (issue #49)
 #   test_recover     - DSP self-recovery policy, shared with the driver
 #                      via src/sst_recover_policy.h (issue #51)
+#   test_ipc_gate    - IPC sender serialization, shared with the driver
+#                      via src/sst_ipc_gate.h (panic: sleeping thread
+#                      holds sst_ipc_send)
 #
 # "make coverage" reruns the tests with gcov and fails when any shared
 # header falls below COVERAGE_MIN percent of lines executed.
@@ -24,8 +27,10 @@ CFLAGS?=	-std=c11 -Wall -Wextra -Werror -fsanitize=undefined -g -O1
 LDFLAGS?=	-fsanitize=undefined
 CPPFLAGS+=	-I../../src
 
-TESTS=		test_fw_bounds test_trig_state test_errstat test_recover
-SHARED_HDRS=	sst_trig_state.h sst_errstat.h sst_recover_policy.h
+TESTS=		test_fw_bounds test_trig_state test_errstat test_recover \
+		test_ipc_gate
+SHARED_HDRS=	sst_trig_state.h sst_errstat.h sst_recover_policy.h \
+		sst_ipc_gate.h
 COVERAGE_MIN?=	96
 
 .PHONY: test coverage clean
@@ -45,10 +50,13 @@ test_errstat: test_errstat.c ../../src/sst_errstat.h
 test_recover: test_recover.c ../../src/sst_recover_policy.h
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ test_recover.c $(LDFLAGS)
 
+test_ipc_gate: test_ipc_gate.c ../../src/sst_ipc_gate.h
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ test_ipc_gate.c $(LDFLAGS)
+
 # Line coverage of the headers shared with the driver (gcc + gcov).
 coverage:
 	@rm -rf cov && mkdir -p cov
-	@for t in test_trig_state test_errstat test_recover; do \
+	@for t in test_trig_state test_errstat test_recover test_ipc_gate; do \
 		$(CC) $(CPPFLAGS) -std=c11 -Wall -Wextra -O0 --coverage \
 		    -o cov/$$t $$t.c && (cd cov && ./$$t >/dev/null); \
 	done

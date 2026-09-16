@@ -104,8 +104,13 @@ struct sst_softc {
 	 *                     reply buffer.  Taken by the interrupt
 	 *                     handler; sleeping under it is allowed
 	 *                     only through cv_timedwait().
-	 * (I) ipc.send_mtx  - serializes IPC senders across the whole
-	 *                     send/wait/complete cycle.
+	 * (I) ipc.gate      - serializes IPC senders across the whole
+	 *                     send/wait/complete cycle.  A flag plus
+	 *                     ipc.send_cv, both under ipc.lock, not a
+	 *                     mutex: the sender sleeps inside that
+	 *                     cycle, and a mutex held across a sleep
+	 *                     panics the machine as soon as a second
+	 *                     sender blocks on it.  See sst_ipc_gate.h.
 	 * (c) codec.i2c_lock- one I2C transaction (or read pair) at a
 	 *                     time on the DesignWare controller.
 	 * (j) jack.lock     - jack state and the poll callout.
@@ -124,9 +129,10 @@ struct sst_softc {
 	 *    busy-wait for milliseconds.  Callouts and channel methods
 	 *    must defer such work to a taskqueue (taskqueue_thread, or
 	 *    pcm.trig_tq for the trigger body).
-	 * 2. Lock order when more than one is needed:
-	 *    ipc.send_mtx -> ipc.lock, and sc_mtx / i2c_lock / jack.lock
-	 *    are leaves taken last and never held across a sleep.
+	 * 2. Lock order when more than one is needed: sc_mtx /
+	 *    i2c_lock / jack.lock are leaves, taken last and never
+	 *    held across a sleep.  ipc.lock is the only lock a sender
+	 *    holds while waiting, and cv_timedwait() drops it.
 	 * 3. The ISR may run before attach finishes and after detach
 	 *    starts; it must check the per-subsystem "initialized"
 	 *    flags before touching their state.

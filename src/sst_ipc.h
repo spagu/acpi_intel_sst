@@ -11,6 +11,8 @@
 #ifndef _SST_IPC_H_
 #define _SST_IPC_H_
 
+#include "sst_ipc_gate.h"
+
 #include <sys/types.h>
 #include <sys/lock.h>
 #include <sys/mutex.h>
@@ -375,9 +377,10 @@ struct sst_ipc_msg {
  */
 struct sst_ipc {
 	bool			initialized;	/* Locks/cv valid */
-	struct mtx		send_mtx;	/* Serialize IPC senders */
+	struct sst_ipc_gate	gate;		/* Serialize IPC senders */
 	struct mtx		lock;		/* IPC state/ISR lock */
-	struct cv		wait_cv;	/* Wait condition */
+	struct cv		wait_cv;	/* Wait for DSP reply */
+	struct cv		send_cv;	/* Wait for the gate */
 	enum sst_ipc_state	state;		/* Current state */
 	bool			ready;		/* DSP ready flag */
 	bool			stuck_busy;	/* Timed-out cmd left BUSY set */

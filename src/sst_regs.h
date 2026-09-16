@@ -311,6 +311,12 @@
  * Timeouts
  */
 #define SST_IPC_TIMEOUT_MS	5000	/* 5 seconds */
+/*
+ * Waiting for the sender gate, not for the DSP.  One transaction longer
+ * than the reply timeout: a sender that is merely queued behind another
+ * must not give up while that one still has time to finish.
+ */
+#define SST_IPC_GATE_TIMEOUT_MS	(SST_IPC_TIMEOUT_MS + 1000)
 #define SST_BOOT_TIMEOUT_MS	5000	/* 5 seconds */
 #define SST_RESET_DELAY_US	1000	/* 1ms */
 #define SST_STALL_DELAY_US	100	/* 100us */

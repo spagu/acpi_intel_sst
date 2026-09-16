@@ -79,6 +79,7 @@ tests/unit/test_fw_bounds
 tests/unit/test_trig_state
 tests/unit/test_errstat
 tests/unit/test_recover
+tests/unit/test_ipc_gate
 tests/unit/cov/
 *.gcda
 *.gcno
