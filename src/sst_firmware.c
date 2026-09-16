@@ -438,13 +438,9 @@ sst_fw_alloc_module_regions(struct sst_softc *sc)
 			    roundup2(sc->fw.mod[i].persistent_size, 64);
 		}
 
-		/* Allocate scratch memory */
-		if (sc->fw.mod[i].scratch_size > 0) {
-			sc->fw.mod[i].scratch_offset =
-			    sc->fw.dram_alloc_next;
-			sc->fw.dram_alloc_next +=
-			    roundup2(sc->fw.mod[i].scratch_size, 64);
-		}
+		/* Scratch is shared; see below */
+		if (sc->fw.mod[i].scratch_size > sc->fw.scratch_size)
+			sc->fw.scratch_size = sc->fw.mod[i].scratch_size;
 
 		if (sc->fw.mod[i].persistent_size > 0 ||
 		    sc->fw.mod[i].scratch_size > 0) {
@@ -457,6 +453,21 @@ sst_fw_alloc_module_regions(struct sst_softc *sc)
 			    sc->fw.mod[i].scratch_offset,
 			    sc->fw.mod[i].scratch_size);
 		}
+	}
+
+	/*
+	 * One scratch area for all of them, after the persistent regions.
+	 * Per-module scratch would waste DRAM on a part where only one
+	 * module runs at a time, and the firmware expects a single area.
+	 */
+	if (sc->fw.scratch_size > 0) {
+		sc->fw.scratch_offset = sc->fw.dram_alloc_next;
+		sc->fw.dram_alloc_next += roundup2(sc->fw.scratch_size, 64);
+		for (i = 0; i < SST_MAX_MODULES; i++)
+			sc->fw.mod[i].scratch_offset = sc->fw.scratch_offset;
+		sst_dbg(sc, SST_DBG_OPS,
+		    "  Shared scratch @0x%x (%u bytes)\n",
+		    sc->fw.scratch_offset, sc->fw.scratch_size);
 	}
 
 	/* Warn if allocations reach the mailbox area */

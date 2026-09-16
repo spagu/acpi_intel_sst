@@ -115,6 +115,17 @@ struct sst_firmware {
 	/* DRAM bump allocator for module persistent/scratch memory */
 	uint32_t		dram_alloc_next;	/* Next free DRAM offset */
 
+	/*
+	 * One scratch area shared by every module, sized to the largest
+	 * scratch_size any of them asks for, exactly as Linux catpt does
+	 * (catpt_arm_stream_templates()).  Modules take turns on the DSP,
+	 * so they can share it, and ALLOC_STREAM must always be given one:
+	 * without it the firmware finds its own and runs out of resources
+	 * after the first stream.
+	 */
+	uint32_t		scratch_offset;		/* Shared, in DRAM */
+	uint32_t		scratch_size;
+
 	/* DSP processing stage capabilities (probed after boot) */
 	bool			has_volume;	/* SET_VOLUME stage (action 1) */
 	bool			has_biquad;	/* SET_BIQUAD stage (action 4) - HPF/EQ */

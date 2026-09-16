@@ -616,6 +616,14 @@ sst_chan_setformat(kobj_t obj, void *data, uint32_t format)
 {
 	struct sst_pcm_channel *ch = data;
 
+	/*
+	 * A stream kept across stop was allocated for the old format;
+	 * drop it so the next start allocates one that matches.
+	 */
+	if (ch->format != format && ch->stream_allocated &&
+	    ch->state != SST_PCM_STATE_RUNNING)
+		sst_pcm_free_dsp_stream(ch->sc, ch);
+
 	ch->format = format;
 	ch->channels = AFMT_CHANNEL(format);
 
@@ -635,6 +643,10 @@ sst_chan_setspeed(kobj_t obj, void *data, uint32_t speed)
 		speed = 8000;
 	if (speed > 192000)
 		speed = 192000;
+
+	if (ch->speed != speed && ch->stream_allocated &&
+	    ch->state != SST_PCM_STATE_RUNNING)
+		sst_pcm_free_dsp_stream(ch->sc, ch);
 
 	ch->speed = speed;
 
@@ -807,12 +819,17 @@ sst_pcm_alloc_dsp_stream(struct sst_softc *sc, struct sst_pcm_channel *ch)
 		    sc->fw.mod[mod_id].persistent_offset;
 		req.persistent_mem.size =
 		    sc->fw.mod[mod_id].persistent_size;
-		if (sc->fw.mod[mod_id].scratch_size > 0) {
-			req.scratch_mem.offset = SST_DSP_DRAM_OFFSET +
-			    sc->fw.mod[mod_id].scratch_offset;
-			req.scratch_mem.size =
-			    sc->fw.mod[mod_id].scratch_size;
-		}
+	}
+
+	/*
+	 * The scratch area goes with every stream, whatever module runs it:
+	 * the firmware refuses later allocations with "out of resources"
+	 * when it has to find scratch space itself (issue #54).
+	 */
+	if (sc->fw.scratch_size > 0) {
+		req.scratch_mem.offset = SST_DSP_DRAM_OFFSET +
+		    sc->fw.scratch_offset;
+		req.scratch_mem.size = sc->fw.scratch_size;
 	}
 
 	req.num_notifications = 0; /* Linux catpt sends 0 */
@@ -1544,11 +1561,16 @@ sst_chan_trigger_unlocked(struct sst_pcm_channel *ch, int go)
 		 * SET_DEVICE_FORMATS was already sent once at init
 		 * time (like Linux catpt_dai_pcm_new).
 		 */
-		error = sst_pcm_alloc_dsp_stream(sc, ch);
-		if (error) {
-			device_printf(sc->dev,
-			    "DSP stream alloc failed: %d\n", error);
-			return (error);
+		if (ch->stream_allocated) {
+			sst_dbg(sc, SST_DBG_OPS,
+			    "PCM: reusing DSP stream %u\n", ch->stream_id);
+		} else {
+			error = sst_pcm_alloc_dsp_stream(sc, ch);
+			if (error) {
+				device_printf(sc->dev,
+				    "DSP stream alloc failed: %d\n", error);
+				return (error);
+			}
 		}
 
 		/*
@@ -1741,9 +1763,17 @@ sst_chan_trigger_unlocked(struct sst_pcm_channel *ch, int go)
 				    "DSP stream pause failed: %d\n", error);
 		}
 
-		/* Free DSP stream */
-		if (ch->stream_allocated)
-			sst_pcm_free_dsp_stream(sc, ch);
+		/*
+		 * The stream stays allocated.
+		 *
+		 * The DSP does not give the resources back on FREE_STREAM:
+		 * the next ALLOC_STREAM answers "out of resources" and only
+		 * a platform reset clears it (issue #54).  Linux catpt never
+		 * hits this because it allocates in hw_params and frees in
+		 * hw_free - once per open, not once per start.  Same
+		 * lifecycle here: pause on stop, free when the channel goes
+		 * away or its format changes.
+		 */
 
 		/* Disable codec microphone path for capture */
 		if (ch->dir == PCMDIR_REC)

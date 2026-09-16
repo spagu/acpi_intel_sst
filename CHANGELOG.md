@@ -8,6 +8,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **The DSP refused every stream after the first** (#54). It does not give
+  the resources back on `FREE_STREAM`: the next `ALLOC_STREAM` answers "out
+  of resources" and only a platform reset clears it. Linux catpt never meets
+  this because it allocates in `hw_params` and frees in `hw_free` - once per
+  open, not once per start. The driver now does the same: stop pauses the
+  stream, and it is freed when the channel goes away or its format changes.
+  Measured on a Dell XPS 13 9343, 15 playbacks after a reboot each time:
+  **2 of 15 worked before, 12 of 15 after, and "out of resources" is gone**.
+- **`ALLOC_STREAM` was sent without a scratch area.** Modules 2 and 13 of
+  this firmware ask for 105472 and 56320 bytes of scratch, but playback runs
+  through module 11, which asks for none - so the request carried
+  `scratch=0x0/0` and the firmware had to find space itself. There is now one
+  shared scratch area, sized to the largest any module asks for and passed
+  with every allocation, exactly as catpt's `catpt_arm_stream_templates()`
+  does.
 - **A failed trigger wedged playback for the life of the module** (#54).
   `chn_start()` in sound(4) sets `CHN_F_TRIGGERED` before calling
   `channel_trigger` and does not clear it when the method returns an error.

@@ -1169,12 +1169,11 @@ sst_ipc_probe_stage_caps(struct sst_softc *sc)
 		req.persistent_mem.offset = SST_DSP_DRAM_OFFSET +
 		    sc->fw.mod[mod_id].persistent_offset;
 		req.persistent_mem.size = sc->fw.mod[mod_id].persistent_size;
-		if (sc->fw.mod[mod_id].scratch_size > 0) {
-			req.scratch_mem.offset = SST_DSP_DRAM_OFFSET +
-			    sc->fw.mod[mod_id].scratch_offset;
-			req.scratch_mem.size =
-			    sc->fw.mod[mod_id].scratch_size;
-		}
+	}
+	if (sc->fw.scratch_size > 0) {
+		req.scratch_mem.offset = SST_DSP_DRAM_OFFSET +
+		    sc->fw.scratch_offset;
+		req.scratch_mem.size = sc->fw.scratch_size;
 	}
 	req.num_notifications = 0;
 
