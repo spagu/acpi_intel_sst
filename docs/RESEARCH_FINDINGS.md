@@ -227,6 +227,55 @@ changed AND fw_ready bit (29) is set in the new message.
 | v0.51.0 | NID shift in codec verbs (<<20 not <<24) | Wrong codec regs |
 | v0.52.0 | Channel map, ISR flooding, I2C read protocol | Distortion |
 | v0.53.0 | Page table PFN format (packed 20-bit, not uint32) | Severe distortion |
+| v0.69.1 | `sst_ipc_send()` slept holding its mutex | Kernel panic |
+| v0.69.2 | Stream allocated per START, not per open | One playback per boot |
+| v0.69.2 | `ALLOC_STREAM` sent with no scratch area | Firmware improvises |
+| v0.69.2 | `channel_trigger` returned an error to sound(4) | Channel wedged |
+
+---
+
+## 6a. The Firmware Does Not Release a Freed Stream
+
+Measured on a Dell XPS 13 9343 with v0.69.1, with a reboot before each run
+so no earlier state could carry over.
+
+`ALLOC_STREAM` succeeds once. After `FREE_STREAM`, a request that is
+byte-for-byte identical - same module, same persistent region, same page
+table, same scratch - is refused:
+
+```
+IPC: Allocated stream hw_id=0                       <- first playback
+IPC: Freed stream 0
+IPC: Stream alloc send failed: 3 (out of resources) <- second, same request
+```
+
+Nothing in the driver clears it. A module reload does not; only a platform
+reset does. The resources stay booked inside the firmware.
+
+Linux catpt never meets this, and not because it does anything to recover:
+it allocates the stream in `hw_params` and frees it in `hw_free`, so one
+open of the PCM device costs exactly one allocation. This driver used to
+allocate on every `PCMTRIG_START`, which hit the leak on the second playback
+of a session.
+
+Since v0.69.2 the lifecycle matches catpt: STOP pauses the stream, and the
+stream is freed when the channel is freed or when its format or rate
+changes. Measured over 15 playbacks per run: 2 of 15 worked before, 12 of
+15 after, with no `out of resources` at all.
+
+What remains is a different and milder failure: the first few playbacks
+after a cold start can stall, and the rest then run clean.
+
+### Method notes
+
+Two properties of this machine invalidated whole rounds of measurement
+before they were noticed, and are worth knowing for any future work here:
+
+* **`dmesg` survives a reboot.** Reading it after a restart returns lines
+  from the previous boot. Clear it with `dmesg -c` before a measurement.
+* **Killing PulseAudio frees nothing.** The desktop session restarts it
+  within a second and it reopens `/dev/dsp0`, keeping a stream alive and
+  masking the fault. `pasuspender` holds it off the device properly.
 
 ---
 

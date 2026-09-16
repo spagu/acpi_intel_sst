@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.69.2] - 2026-09-16
+
 ### Fixed
 - **The DSP refused every stream after the first** (#54). It does not give
   the resources back on `FREE_STREAM`: the next `ALLOC_STREAM` answers "out
